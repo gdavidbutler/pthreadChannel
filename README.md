@@ -35,5 +35,5 @@ Find the API in chanSock.h:
 
 Use "make" to build.
 
-An example of using chan.h and chanFifo.h is provided in test/primes.c. It is modeled on [libtask's](https://swtch.com/libtask/) primes.c.
+An example of using chan.h and chanFifo.h is provided in test/primes.c. It is modeled on primes.c from [libtask](https://swtch.com/libtask/).
 It is more complex because of pthread's API and to demonstrate various combinations of options.

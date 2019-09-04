@@ -63,7 +63,7 @@ unsigned int Goal; /* use how far to go to size the queues */
  * Of course, if the meesage fits in a void*, then with proper casting, a value can be sent.
  * Not advised, but it can be done.
  */
-#define MEMORY 1 /* 0 or 1 to delegate malloc'd memory or cast unsigned long long to void* */
+#define MEMORY 1 /* 0 or 1 to delegate malloc'd memory or cast unsigned long to void* */
 
 void *
 primeT(
@@ -72,7 +72,7 @@ primeT(
 #if MEMORY
   unsigned int *ip;
 #else
-  unsigned long long ip;
+  unsigned long ip;
 #endif
   pthread_t t;
   unsigned int prime;
@@ -244,7 +244,7 @@ main(
 #if MEMORY
     unsigned int *ip;
 #else
-    unsigned long long ip;
+    unsigned long ip;
 #endif
 
 #if MEMORY
