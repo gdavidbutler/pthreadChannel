@@ -83,11 +83,10 @@ primeT(
   c[0].c = v;
   c[0].v = (void **)&ip;
   c[0].o = chanOpRecv;
+  c[1].c = 0;
   c[1].v = (void **)&ip;
   c[1].o = chanOpNoop;
-  r = chanPoll(0, sizeof(c) / sizeof(c[0]), c);
-  assert(r == 1);
-  if (!ip) /* end message */
+  if (!chanPoll(0, sizeof(c) / sizeof(c[0]), c))
     return 0;
 #if QUE
 #if MEMORY
@@ -100,7 +99,7 @@ primeT(
 #endif
     c[1].c = chanAlloc(realloc, free, 0, 0, 0);
   assert(c[1].c);
-  pthread_cleanup_push((void(*)(void*))chanDone, c[1].c);
+  pthread_cleanup_push((void(*)(void*))chanFree, c[1].c);
 #if MEMORY
   prime = *ip;
   free(ip);
@@ -110,7 +109,7 @@ primeT(
   printf("%d\n", prime);
   if (pthread_create(&t, 0, primeT, c[1].c)) {
     puts("Can't create more threads, draining pipeline...");
-    while (chanPoll(0, sizeof(c) / sizeof(c[0]), c) == 1 && ip)
+    while (chanPoll(0, sizeof(c) / sizeof(c[0]), c))
 #if MEMORY
       free(ip)
 #endif
@@ -121,9 +120,9 @@ primeT(
     switch (chanPoll(0, sizeof(c) / sizeof(c[0]), c)) {
     case 1:
 #if MEMORY
-      if (!ip || *ip % prime)
+      if (*ip % prime)
 #else
-      if (!ip || ip % prime)
+      if (ip % prime)
 #endif
       {
         c[0].o = chanOpNoop;
@@ -135,29 +134,26 @@ primeT(
 #endif
       break;
     case 2:
-      if (!ip) /* wrote "end", done */
-        goto endFor;
       c[0].o = chanOpRecv;
       c[1].o = chanOpNoop;
       break;
     default:
-      assert(0);
+      goto endFor;
       break;
     }
   }
 endFor:
-  printf("joined %d\n", prime); fflush(stdout);
+  chanShut(c[1].c);
   r = pthread_join(t, 0);
   assert(!r);
+  printf("joined %d\n", prime); fflush(stdout);
 exit:
-  pthread_cleanup_pop(1); /* chanDone(c[1].c) */
+  pthread_cleanup_pop(1); /* chanFree(c[1].c) */
 
 #else /* POLL */
   chan_t *c;
 
-  r = chanRecv(0, v, (void **)&ip);
-  assert(r);
-  if (!ip) /* end message */
+  if (!chanRecv(0, v, (void **)&ip))
     return 0;
 #if QUE
 #if MEMORY
@@ -170,7 +166,7 @@ exit:
 #endif
     c = chanAlloc(realloc, free, 0, 0, 0);
   assert(c);
-  pthread_cleanup_push((void(*)(void*))chanDone, c);
+  pthread_cleanup_push((void(*)(void*))chanFree, c);
 #if MEMORY
   prime = *ip;
   free(ip);
@@ -180,7 +176,7 @@ exit:
   printf("%d\n", prime);
   if (pthread_create(&t, 0, primeT, c)) {
     puts("Can't create more threads, draining pipeline...");
-    while (chanRecv(0, v, (void **)&ip) && ip)
+    while (chanRecv(0, v, (void **)&ip))
 #if MEMORY
       free(ip)
 #endif
@@ -188,25 +184,32 @@ exit:
     goto exit;
   }
   for (;;) {
-    r = chanRecv(0, v, (void **)&ip);
-    assert(r);
+    if (!chanRecv(0, v, (void **)&ip))
+      break;
 #if MEMORY
-    if (!ip || *ip % prime)
+    if (*ip % prime)
 #else
-    if (!ip || ip % prime)
+    if (ip % prime)
 #endif
     {
+#if MEMORY
       r = chanSend(0, c, ip);
+#else
+      r = chanSend(0, c, (void *)ip);
+#endif
       assert(r);
     }
-    if (!ip)
-      break;
+#if MEMORY
+      else
+        free(ip);
+#endif
   }
-  printf("joined %d\n", prime); fflush(stdout);
+  chanShut(c);
   r = pthread_join(t, 0);
   assert(!r);
+  printf("joined %d\n", prime); fflush(stdout);
 exit:
-  pthread_cleanup_pop(1); /* chanDone(c) */
+  pthread_cleanup_pop(1); /* chanFree(c) */
 
 #endif /* POLL */
   return 0;
@@ -217,7 +220,7 @@ main(
   int argc
  ,char **argv
 ){
-  chan_t *c; /* main is the source, so only write channel */
+  chan_t *c;
   pthread_t t;
   unsigned int i;
   int r;
@@ -233,7 +236,7 @@ main(
 #endif
     c = chanAlloc(realloc, free, 0, 0, 0);
   assert(c);
-  pthread_cleanup_push((void(*)(void*))chanDone, c);
+  pthread_cleanup_push((void(*)(void*))chanFree, c);
   r = pthread_create(&t, 0, primeT, c);
   assert(!r);
   puts("2");
@@ -255,11 +258,10 @@ main(
 #endif
     assert(r);
   }
-  r = chanSend(0, c, 0); /* write "end" message */
-  assert(r);
+  chanShut(c);
   r = pthread_join(t, 0);
   assert(!r);
   printf("joined Goal\n"); fflush(stdout);
-  pthread_cleanup_pop(1); /* chanDone(c.c) */
+  pthread_cleanup_pop(1); /* chanFree(c.c) */
   return 0;
 }

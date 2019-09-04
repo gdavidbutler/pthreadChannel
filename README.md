@@ -10,7 +10,8 @@ This implementation's focus is fair access of channels, relaxed somewhat under p
 Find the API in chan.h:
 
 * chanAlloc: allocate a chan_t
-* chanDone: deallocate a chan_t
+* chanShut: shutdown a chan_t
+* chanFree: deallocate a chan_t
 * chanRecv: receive a message from a channel
 * chanSend: send a message to a channel
 * chanSendWait: send a message to a channel and return after it has been received
@@ -18,13 +19,21 @@ Find the API in chan.h:
 
 If provided, a "channel" invokes a queue implementation (while a mutex lock is held.)
 The implementation can control queue latency, priority, etc.
-A "channel fifo" queue implementation is provided:
+A "channel fifo" queue implementation is provided.
+
+Find the API in chanFifo.h:
 
 * chanFifoQa: allocate a chanFifoQc (chanFifo context)
 * chanFifoQd: deallocate a chanFifoQc (chanFifo context)
 * chanFifoQi: chanFifo queue implementation
 
+Since a thread can't both wait on a chanPoll() and a poll(), support for integrating sockets with channels is provided.
+
+Find the API in chanSock.h:
+
+* chanSock: link a full duplex socket to a pair of read and write channels
+
 Use "make" to build.
 
-An example of using this is provided in test/primes.c. It is modeled on [libtask's primes.c](https://swtch.com/libtask/primes.c).
+An example of using chan.h and chanFifo.h is provided in test/primes.c. It is modeled on [libtask's](https://swtch.com/libtask/) primes.c.
 It is more complex because of pthread's API and to demonstrate various combinations of options.

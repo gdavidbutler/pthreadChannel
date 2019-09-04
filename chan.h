@@ -70,8 +70,11 @@ typedef struct chan chan_t;
  */
 chan_t *chanAlloc(void *(*realloc)(void *, unsigned long), void (*free)(void *), chanQi_t impl, void *cntx, chanQd_t done); /* returns 0 on failure */
 
-/* channel done */
-int chanDone(chan_t *chn); /* returns 0 on busy */
+/* channel shutdown, Send returns 0 and Recv is always noblock */
+void chanShut(chan_t *chn);
+
+/* channel free */
+int chanFree(chan_t *chn); /* returns 0 on busy */
 
 /*
  * Channels distribute messages fairly under pressure.
