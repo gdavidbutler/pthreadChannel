@@ -41,6 +41,7 @@ typedef struct {
 } chanSockM_t;
 
 /* hand over a fd to be used by a pair of channels, when the channels are chanShut(), close() is called on the fd */
-int chanSock(void *(*realloc)(void *, unsigned long), void (*free)(void *), unsigned int readLimit, int fd, chan_t *read, chan_t *write); /* returns 0 on failure */
+/* returns the pthread_t for the thread coordinating the channel threads */
+pthread_t chanSock(void *(*realloc)(void *, unsigned long), void (*free)(void *), unsigned int readLimit, int fd, chan_t *read, chan_t *write); /* returns 0 on failure */
 
 #endif /* __CHANSOCK_H__ */
