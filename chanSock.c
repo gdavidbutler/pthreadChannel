@@ -28,6 +28,7 @@ struct chanSockX {
   void (*f)(void *);
   chan_t *r;
   chan_t *w;
+  unsigned int l;
   int d;
 };
 
@@ -47,7 +48,6 @@ chanSockC(
    && (m = t)
    && (m->l)
    && write(x->d, m->b, m->l) == m->l) {
-    x->f(m->b);
     x->f(m);
     m = 0;
   }
@@ -55,7 +55,6 @@ chanSockC(
   chanShut(x->w);
   chanSend(0, v, 0);
   if (m) do {
-    x->f(m->b);
     x->f(m);
   } while(chanRecv(0, x->w, &t) && (m = t));
   return 0;
@@ -72,11 +71,10 @@ chanSockS(
   if (!chanRecv(0, v, &t))
     return 0;
   x = t;
-  while ((m = x->a(0, sizeof(*m)))
-   && (m->b = x->a(0, 65535))
-   && (int)(m->l = read(x->d, m->b, 65535)) > 0) {
-    if ((t = x->a(m->b, m->l)))
-      m->b = t;
+  while ((m = x->a(0, sizeof(*m) + x->l - 1))
+   && (int)(m->l = read(x->d, m->b, x->l)) > 0) {
+    if ((t = x->a(m, sizeof(*m) + m->l)))
+      m = t;
     if (!chanSend(0, x->r, m))
       break;
   }
@@ -84,7 +82,6 @@ chanSockS(
   chanShut(x->r);
   chanSend(0, v, 0);
   if (m) {
-    x->f(m->b);
     x->f(m);
   }
   return 0;
@@ -137,6 +134,7 @@ int
 chanSock(
   void *(*a)(void *, unsigned long)
  ,void (*f)(void *)
+ ,unsigned int l
  ,int d
  ,chan_t *r
  ,chan_t *w
@@ -146,7 +144,7 @@ chanSock(
   pthread_t p;
 
   x = 0;
-  if (d < 0 || !r || !w || !(x = a(0, sizeof(*x))))
+  if (!a || !f || !l || d < 0 || !r || !w || !(x = a(0, sizeof(*x))))
     return 0;
   if (!(c = chanAlloc(a, f, 0, 0, 0))) {
     f(x);
@@ -154,6 +152,7 @@ chanSock(
   }
   x->a = a;
   x->f = f;
+  x->l = l;
   x->d = d;
   x->r = r;
   x->w = w;

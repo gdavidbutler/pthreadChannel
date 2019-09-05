@@ -32,11 +32,15 @@
  *
  * After both ends have completed, the socket is closed.
  */
+
+/* a message, real size is sizeof(chanSockM_t) + (l ? l - 1 : 1) * sizeof(b[0]) */
+/* a read limit is specified in the chanSock() call */
 typedef struct {
   unsigned int l;
-  unsigned char *b;
+  unsigned char b[1]; /* the first character of l characters, must be last */
 } chanSockM_t;
 
-int chanSock(void *(*realloc)(void *, unsigned long), void (*free)(void *), int fd, chan_t *read, chan_t *write); /* returns 0 on failure */
+/* hand over a fd to be used by a pair of channels, when the channels are chanShut(), close() is called on the fd */
+int chanSock(void *(*realloc)(void *, unsigned long), void (*free)(void *), unsigned int readLimit, int fd, chan_t *read, chan_t *write); /* returns 0 on failure */
 
 #endif /* __CHANSOCK_H__ */
