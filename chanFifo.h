@@ -25,9 +25,17 @@
  * When threads talk more and work less,
  * a queue of more than one message may be desired.
  */
+
+/* opaque context */
 typedef struct chanFifoQc chanFifoQc_t;
-chanFifoQc_t *chanFifoQa(void *(*realloc)(void *, unsigned long), void (*free)(void *), unsigned int); /* returns 0 on failure */
+
+/* allocate a context of size chan messages (void *) */
+chanFifoQc_t *chanFifoQa(void *(*realloc)(void *, unsigned long), void (*free)(void *), unsigned int size); /* returns 0 on failure */
+
+/* deallocate context */
 void chanFifoQd(void *);
+
+/* the chan implementation */
 chanQs_t chanFifoQi(void *, chanQo_t, void **);
 
 #endif /* __CHANFIFO_H__ */
