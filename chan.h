@@ -73,8 +73,8 @@ chan_t *chanAlloc(void *(*realloc)(void *, unsigned long), void (*free)(void *),
 /* channel shutdown, Send returns 0 and Recv is always noblock */
 void chanShut(chan_t *chn);
 
-/* channel free */
-int chanFree(chan_t *chn); /* returns 0 on busy */
+/* channel free, chanShut(), drain queue and deallocate */
+void chanFree(chan_t *chn);
 
 /*
  * Channels distribute messages fairly under pressure.

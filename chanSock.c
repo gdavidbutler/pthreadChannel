@@ -127,7 +127,6 @@ chanSockW(
   pthread_join(pS, 0);
 exit:
   shutdown(x->d, SHUT_RDWR);
-  chanShut(v);
   close(x->d);
   chanFree(v);
   x->f(x);
