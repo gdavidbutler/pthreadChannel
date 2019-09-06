@@ -109,12 +109,12 @@ chanSockW(
   pthread_cleanup_push((void(*)(void*))chanShut, x->w);
   if (pthread_create(&pC, 0, chanSockC, v))
     goto exit1;
-  pthread_cleanup_push((void(*)(void*))pthread_cancel, pC);
+  pthread_cleanup_push((void(*)(void*))pthread_cancel, (void *)pC);
   if (!chanSendWait(0, v, x))
     goto exit2;
   if (pthread_create(&pS, 0, chanSockS, v))
     goto exit2;
-  pthread_cleanup_push((void(*)(void*))pthread_cancel, pS);
+  pthread_cleanup_push((void(*)(void*))pthread_cancel, (void *)pS);
   if (!chanSendWait(0, v, x))
     goto exit3;
   chanRecv(0, v, &t);

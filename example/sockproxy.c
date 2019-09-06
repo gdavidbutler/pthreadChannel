@@ -68,12 +68,12 @@ servT(
     perror("chanAlloc");
     goto exit3;
   }
-  pthread_cleanup_push((void(*)(void*))pthread_cancel, st);
+  pthread_cleanup_push((void(*)(void*))pthread_cancel, (void *)st);
   if (!(ct = chanSock(realloc, free, 65535, c, c2, c1))) {
     perror("chanAlloc");
     goto exit4;
   }
-  pthread_cleanup_push((void(*)(void*))pthread_cancel, ct);
+  pthread_cleanup_push((void(*)(void*))pthread_cancel, (void *)ct);
   pthread_join(st, 0);
   pthread_join(ct, 0);
   pthread_cleanup_pop(1); /* pthread_cancel(ct) */
@@ -119,6 +119,8 @@ exit0:
   return 0;
 }
 
+static char const *ProgName;
+
 static int
 usage(
 ){
@@ -127,7 +129,7 @@ usage(
    " [-T socktype] [-F family] [-P protocol] [-H host] -S service"
    " [-t socktype] [-f family] [-p protocol] -h host -s service"
    "\n"
-  ,getprogname()
+  ,ProgName
   );
   return 1;
 }
@@ -148,7 +150,7 @@ main(
   int fd;
   pthread_t p;
 
-  setprogname(argv[0]);
+  ProgName = argv[0];
 
   memset(&shint, 0, sizeof(shint));
   shint.ai_flags |= AI_PASSIVE;
