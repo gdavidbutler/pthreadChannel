@@ -17,7 +17,7 @@ Find the API in chan.h:
 * chanSendWait: send a synchronous message to a channel (return after it has been received)
 * chanPoll: perform a channel operation on one of an array of channels
 
-A low latency single message channel works well in clasic CSP implementations, coded in machine or assembler code (jumping instead of context switching).
+A low latency single message channel works well in classic CSP implementations, coded in machine or assembler code (jumping instead of context switching).
 If a queue is required, it is coded as another CSP.
 However modern processors provide native support for context frames (supporting local variables and recursive invocation).
 As a result, even "light weight" process contexts must be switched (e.g. setjmp()/longjmp(), makecontext()/swapcontext(), etc.)
