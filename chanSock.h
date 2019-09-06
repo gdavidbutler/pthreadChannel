@@ -22,7 +22,7 @@
 /*
  * Channel Sock
  *
- * Support I/O on a full duplex socket via a pair of send and receive channels.
+ * Support I/O on a bound full duplex socket via a pair of send and receive channels.
  *
  * A chanSend() of chanSockM_t messages on the write channel does write()s on the socket.
  * A charRecv() or socket write() failure will shutdown(fd, SHUT_WR) the socket and chanShut() the channel.
