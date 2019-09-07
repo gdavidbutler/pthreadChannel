@@ -212,6 +212,120 @@ chanPoll(
   int r;
 
   m = 0;
+  /* first pass through array looking for no-wait exit */
+  for (i = 0; i < t; ++i) switch ((a + i)->o) {
+
+  case chanOpNoop:
+    break;
+
+  case chanOpRecv:
+    c = (a + i)->c;
+    r = pthread_mutex_lock(&c->m);
+    assert(!r);
+    if (c->s & chanQsCanGet && (c->re || !c->we || c->u)) {
+      if (c->q)
+        c->s = c->q(c->v, chanQoGet, (a + i)->v);
+      else {
+        *((a + i)->v) = c->v;
+        c->s = chanQsCanPut;
+      }
+      if (c->s & chanQsCanPut) while (!c->we) {
+        p = *(c->w + c->wh);
+        if (++c->wh == c->ws)
+          c->wh = 0;
+        if (c->wh == c->wt)
+          c->we = 1;
+        r = pthread_mutex_lock(&p->m);
+        assert(!r);
+        assert(p->c);
+        --p->c;
+        if (!pthread_cond_signal(&p->r)) {
+          r = pthread_mutex_unlock(&p->m);
+          assert(!r);
+          break;
+        }
+        if (!p->c) {
+          r = pthread_cond_destroy(&p->r);
+          assert(!r);
+          r = pthread_mutex_unlock(&p->m);
+          assert(!r);
+          r = pthread_mutex_destroy(&p->m);
+          assert(!r);
+          c->f(p);
+        } else {
+          r = pthread_mutex_unlock(&p->m);
+          assert(!r);
+        }
+      }
+      r = pthread_mutex_unlock(&c->m);
+      assert(!r);
+      ++i;
+      goto exit;
+    }
+    r = pthread_mutex_unlock(&c->m);
+    assert(!r);
+    break;
+
+  case chanOpSend:
+    c = (a + i)->c;
+    r = pthread_mutex_lock(&c->m);
+    assert(!r);
+    if (c->u) {
+      r = pthread_mutex_unlock(&c->m);
+      assert(!r);
+      break;
+    }
+    if (c->s & chanQsCanPut && (c->we || !c->re)) {
+      if (c->q)
+        c->s = c->q(c->v, chanQoPut, (a + i)->v);
+      else {
+        c->v = *((a + i)->v);
+        c->s = chanQsCanGet;
+      }
+      if (c->s & chanQsCanGet) while (!c->re) {
+        p = *(c->r + c->rh);
+        if (++c->rh == c->rs)
+          c->rh = 0;
+        if (c->rh == c->rt)
+          c->re = 1;
+        r = pthread_mutex_lock(&p->m);
+        assert(!r);
+        assert(p->c);
+        --p->c;
+        if (!pthread_cond_signal(&p->r)) {
+          r = pthread_mutex_unlock(&p->m);
+          assert(!r);
+          break;
+        }
+        if (!p->c) {
+          r = pthread_cond_destroy(&p->r);
+          assert(!r);
+          r = pthread_mutex_unlock(&p->m);
+          assert(!r);
+          r = pthread_mutex_destroy(&p->m);
+          assert(!r);
+          c->f(p);
+        } else {
+          r = pthread_mutex_unlock(&p->m);
+          assert(!r);
+        }
+      }
+      r = pthread_mutex_unlock(&c->m);
+      assert(!r);
+      ++i;
+      goto exit;
+    }
+    r = pthread_mutex_unlock(&c->m);
+    assert(!r);
+    break;
+
+  case chanOpSendWait:
+    break;
+  }
+  if (n)
+    return 0;
+
+  /* second pass through array waiting at end of each line */
   for (i = 0; i < t; ++i) switch ((a + i)->o) {
 
   case chanOpNoop:
@@ -534,13 +648,14 @@ wait:
   }
   if (!m)
     return 0;
-  for (;;) {
-    if (!m->c) {
-      i = 0;
-      break;
-    }
+
+  /* while there are references */
+  while (m->c) {
+    /* wait */
     r = pthread_cond_wait(&m->r, &m->m);
     assert(!r);
+
+    /* third pass through array looking for quick exit */
     for (i = 0; i < t; ++i) switch ((a + i)->o) {
 
     case chanOpNoop:
@@ -586,6 +701,8 @@ wait:
       assert(!r);
       break;
     }
+
+    /* fourth pass through array waiting at beginning of each line */
     for (i = 0; i < t; ++i) switch ((a + i)->o) {
 
     case chanOpNoop:
@@ -691,6 +808,7 @@ wait:
       break;
     }
   }
+  i = 0;
 
 exit:
   if (m) {
