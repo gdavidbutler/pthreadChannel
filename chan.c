@@ -103,10 +103,10 @@ chanShut(
   chan_t *c
 ){
   cpr_t *p;
-  int r;
 
-  r = pthread_mutex_lock(&c->m);
-  assert(!r);
+  if (!c)
+    return;
+  pthread_mutex_lock(&c->m);
   c->u = 1;
   while (!c->we) {
     p = *(c->w + c->wh);
@@ -114,27 +114,20 @@ chanShut(
       c->wh = 0;
     if (c->wh == c->wt)
       c->we = 1;
-    r = pthread_mutex_lock(&p->m);
-    assert(!r);
+    pthread_mutex_lock(&p->m);
     assert(p->c);
     --p->c;
     if (!pthread_cond_signal(&p->r)) {
-      r = pthread_mutex_unlock(&p->m);
-      assert(!r);
+      pthread_mutex_unlock(&p->m);
       continue;
     }
     if (!p->c) {
-      r = pthread_cond_destroy(&p->r);
-      assert(!r);
-      r = pthread_mutex_unlock(&p->m);
-      assert(!r);
-      r = pthread_mutex_destroy(&p->m);
-      assert(!r);
+      pthread_cond_destroy(&p->r);
+      pthread_mutex_unlock(&p->m);
+      pthread_mutex_destroy(&p->m);
       c->f(p);
-    } else {
-      r = pthread_mutex_unlock(&p->m);
-      assert(!r);
-    }
+    } else
+      pthread_mutex_unlock(&p->m);
   }
   while (!c->re) {
     p = *(c->r + c->rh);
@@ -142,59 +135,46 @@ chanShut(
       c->rh = 0;
     if (c->rh == c->rt)
       c->re = 1;
-    r = pthread_mutex_lock(&p->m);
-    assert(!r);
+    pthread_mutex_lock(&p->m);
     assert(p->c);
     --p->c;
     if (!pthread_cond_signal(&p->r)) {
-      r = pthread_mutex_unlock(&p->m);
-      assert(!r);
+      pthread_mutex_unlock(&p->m);
       continue;
     }
     if (!p->c) {
-      r = pthread_cond_destroy(&p->r);
-      assert(!r);
-      r = pthread_mutex_unlock(&p->m);
-      assert(!r);
-      r = pthread_mutex_destroy(&p->m);
-      assert(!r);
+      pthread_cond_destroy(&p->r);
+      pthread_mutex_unlock(&p->m);
+      pthread_mutex_destroy(&p->m);
       c->f(p);
-    } else {
-      r = pthread_mutex_unlock(&p->m);
-      assert(!r);
-    }
+    } else
+      pthread_mutex_unlock(&p->m);
   }
-  r = pthread_mutex_unlock(&c->m);
-  assert(!r);
+  pthread_mutex_unlock(&c->m);
 }
 
 void
 chanFree(
   chan_t *c
 ){
-  int r;
-
-  r = pthread_mutex_lock(&c->m);
-  assert(!r);
+  if (!c)
+    return;
+  pthread_mutex_lock(&c->m);
   if (!c->u) {
     void *v;
 
-    r = pthread_mutex_unlock(&c->m);
-    assert(!r);
+    pthread_mutex_unlock(&c->m);
     chanShut(c);
     while (chanRecv(1, c, &v));
-    r = pthread_mutex_lock(&c->m);
-    assert(!r);
+    pthread_mutex_lock(&c->m);
   }
   assert(c->s == chanQsCanPut);
   c->f(c->r);
   c->f(c->w);
   if (c->q && c->d)
     c->d(c->v);
-  r = pthread_mutex_unlock(&c->m);
-  assert(!r);
-  r = pthread_mutex_destroy(&c->m);
-  assert(!r);
+  pthread_mutex_unlock(&c->m);
+  pthread_mutex_destroy(&c->m);
   c->f(c);
 }
 
@@ -209,9 +189,12 @@ chanPoll(
   cpr_t *m;
   void *v;
   unsigned int i;
-  int r;
 
+  if (!t || !a)
+    return 0;
   m = 0;
+  if (t == 1)
+    goto skipFirst;
   /* first pass through array looking for no-wait exit */
   for (i = 0; i < t; ++i) switch ((a + i)->o) {
 
@@ -219,9 +202,9 @@ chanPoll(
     break;
 
   case chanOpRecv:
-    c = (a + i)->c;
-    r = pthread_mutex_lock(&c->m);
-    assert(!r);
+    if (!(c = (a + i)->c) || !(a + i)->v)
+      break;
+    pthread_mutex_lock(&c->m);
     if (c->s & chanQsCanGet && (c->re || !c->we || c->u)) {
       if (c->q)
         c->s = c->q(c->v, chanQoGet, (a + i)->v);
@@ -235,44 +218,34 @@ chanPoll(
           c->wh = 0;
         if (c->wh == c->wt)
           c->we = 1;
-        r = pthread_mutex_lock(&p->m);
-        assert(!r);
+        pthread_mutex_lock(&p->m);
         assert(p->c);
         --p->c;
         if (!pthread_cond_signal(&p->r)) {
-          r = pthread_mutex_unlock(&p->m);
-          assert(!r);
+          pthread_mutex_unlock(&p->m);
           break;
         }
         if (!p->c) {
-          r = pthread_cond_destroy(&p->r);
-          assert(!r);
-          r = pthread_mutex_unlock(&p->m);
-          assert(!r);
-          r = pthread_mutex_destroy(&p->m);
-          assert(!r);
+          pthread_cond_destroy(&p->r);
+          pthread_mutex_unlock(&p->m);
+          pthread_mutex_destroy(&p->m);
           c->f(p);
-        } else {
-          r = pthread_mutex_unlock(&p->m);
-          assert(!r);
-        }
+        } else
+          pthread_mutex_unlock(&p->m);
       }
-      r = pthread_mutex_unlock(&c->m);
-      assert(!r);
+      pthread_mutex_unlock(&c->m);
       ++i;
       goto exit;
     }
-    r = pthread_mutex_unlock(&c->m);
-    assert(!r);
+    pthread_mutex_unlock(&c->m);
     break;
 
   case chanOpSend:
-    c = (a + i)->c;
-    r = pthread_mutex_lock(&c->m);
-    assert(!r);
+    if (!(c = (a + i)->c) || !(a + i)->v)
+      break;
+    pthread_mutex_lock(&c->m);
     if (c->u) {
-      r = pthread_mutex_unlock(&c->m);
-      assert(!r);
+      pthread_mutex_unlock(&c->m);
       break;
     }
     if (c->s & chanQsCanPut && (c->we || !c->re)) {
@@ -288,35 +261,26 @@ chanPoll(
           c->rh = 0;
         if (c->rh == c->rt)
           c->re = 1;
-        r = pthread_mutex_lock(&p->m);
-        assert(!r);
+        pthread_mutex_lock(&p->m);
         assert(p->c);
         --p->c;
         if (!pthread_cond_signal(&p->r)) {
-          r = pthread_mutex_unlock(&p->m);
-          assert(!r);
+          pthread_mutex_unlock(&p->m);
           break;
         }
         if (!p->c) {
-          r = pthread_cond_destroy(&p->r);
-          assert(!r);
-          r = pthread_mutex_unlock(&p->m);
-          assert(!r);
-          r = pthread_mutex_destroy(&p->m);
-          assert(!r);
+          pthread_cond_destroy(&p->r);
+          pthread_mutex_unlock(&p->m);
+          pthread_mutex_destroy(&p->m);
           c->f(p);
-        } else {
-          r = pthread_mutex_unlock(&p->m);
-          assert(!r);
-        }
+        } else
+          pthread_mutex_unlock(&p->m);
       }
-      r = pthread_mutex_unlock(&c->m);
-      assert(!r);
+      pthread_mutex_unlock(&c->m);
       ++i;
       goto exit;
     }
-    r = pthread_mutex_unlock(&c->m);
-    assert(!r);
+    pthread_mutex_unlock(&c->m);
     break;
 
   case chanOpSendWait:
@@ -325,6 +289,7 @@ chanPoll(
   if (n)
     return 0;
 
+skipFirst:
   /* second pass through array waiting at end of each line */
   for (i = 0; i < t; ++i) switch ((a + i)->o) {
 
@@ -332,9 +297,9 @@ chanPoll(
     break;
 
   case chanOpRecv:
-    c = (a + i)->c;
-    r = pthread_mutex_lock(&c->m);
-    assert(!r);
+    if (!(c = (a + i)->c) || !(a + i)->v)
+      break;
+    pthread_mutex_lock(&c->m);
     if (c->s & chanQsCanGet && (c->re || !c->we || c->u)) {
 recv:
       if (c->q)
@@ -349,62 +314,48 @@ recv:
           c->wh = 0;
         if (c->wh == c->wt)
           c->we = 1;
-        r = pthread_mutex_lock(&p->m);
-        assert(!r);
+        pthread_mutex_lock(&p->m);
         assert(p->c);
         --p->c;
         if (!pthread_cond_signal(&p->r)) {
-          r = pthread_mutex_unlock(&p->m);
-          assert(!r);
+          pthread_mutex_unlock(&p->m);
           break;
         }
         if (!p->c) {
-          r = pthread_cond_destroy(&p->r);
-          assert(!r);
-          r = pthread_mutex_unlock(&p->m);
-          assert(!r);
-          r = pthread_mutex_destroy(&p->m);
-          assert(!r);
+          pthread_cond_destroy(&p->r);
+          pthread_mutex_unlock(&p->m);
+          pthread_mutex_destroy(&p->m);
           c->f(p);
-        } else {
-          r = pthread_mutex_unlock(&p->m);
-          assert(!r);
-        }
+        } else
+          pthread_mutex_unlock(&p->m);
       }
-      r = pthread_mutex_unlock(&c->m);
-      assert(!r);
+      pthread_mutex_unlock(&c->m);
       ++i;
       goto exit;
     }
     if (n || c->u) {
-      r = pthread_mutex_unlock(&c->m);
-      assert(!r);
+      pthread_mutex_unlock(&c->m);
       break;
     }
     if (!m) {
       if (!(m = c->a(0, sizeof(*m)))
        || pthread_mutex_init(&m->m, 0)) {
         c->f(m);
-        r = pthread_mutex_unlock(&c->m);
-        assert(!r);
+        pthread_mutex_unlock(&c->m);
         return 0;
       }
       if (pthread_cond_init(&m->r, 0)) {
-        r = pthread_mutex_destroy(&m->m);
-        assert(!r);
+        pthread_mutex_destroy(&m->m);
         c->f(m);
-        r = pthread_mutex_unlock(&c->m);
-        assert(!r);
+        pthread_mutex_unlock(&c->m);
         return 0;
       }
       m->c = 0;
-      r = pthread_mutex_lock(&m->m);
-      assert(!r);
+      pthread_mutex_lock(&m->m);
     }
     if (!c->re && c->rh == c->rt) {
       if (!(v = c->a(c->r, (c->rs + 1) * sizeof(*c->r)))) {
-        r = pthread_mutex_unlock(&c->m);
-        assert(!r);
+        pthread_mutex_unlock(&c->m);
         i = 0;
         goto exit;
       }
@@ -419,17 +370,15 @@ recv:
     c->re = 0;
     ++m->c;
     assert(m->c);
-    r = pthread_mutex_unlock(&c->m);
-    assert(!r);
+    pthread_mutex_unlock(&c->m);
     break;
 
   case chanOpSend:
-    c = (a + i)->c;
-    r = pthread_mutex_lock(&c->m);
-    assert(!r);
+    if (!(c = (a + i)->c) || !(a + i)->v)
+      break;
+    pthread_mutex_lock(&c->m);
     if (c->u) {
-      r = pthread_mutex_unlock(&c->m);
-      assert(!r);
+      pthread_mutex_unlock(&c->m);
       break;
     }
     if (c->s & chanQsCanPut && (c->we || !c->re)) {
@@ -446,63 +395,49 @@ send:
           c->rh = 0;
         if (c->rh == c->rt)
           c->re = 1;
-        r = pthread_mutex_lock(&p->m);
-        assert(!r);
+        pthread_mutex_lock(&p->m);
         assert(p->c);
         --p->c;
         if (!pthread_cond_signal(&p->r)) {
-          r = pthread_mutex_unlock(&p->m);
-          assert(!r);
+          pthread_mutex_unlock(&p->m);
           break;
         }
         if (!p->c) {
-          r = pthread_cond_destroy(&p->r);
-          assert(!r);
-          r = pthread_mutex_unlock(&p->m);
-          assert(!r);
-          r = pthread_mutex_destroy(&p->m);
-          assert(!r);
+          pthread_cond_destroy(&p->r);
+          pthread_mutex_unlock(&p->m);
+          pthread_mutex_destroy(&p->m);
           c->f(p);
-        } else {
-          r = pthread_mutex_unlock(&p->m);
-          assert(!r);
-        }
+        } else
+          pthread_mutex_unlock(&p->m);
       }
-      r = pthread_mutex_unlock(&c->m);
-      assert(!r);
+      pthread_mutex_unlock(&c->m);
       ++i;
       goto exit;
     }
 sendQueue:
     if (n) {
-      r = pthread_mutex_unlock(&c->m);
-      assert(!r);
+      pthread_mutex_unlock(&c->m);
       break;
     }
     if (!m) {
       if (!(m = c->a(0, sizeof(*m)))
        || pthread_mutex_init(&m->m, 0)) {
         c->f(m);
-        r = pthread_mutex_unlock(&c->m);
-        assert(!r);
+        pthread_mutex_unlock(&c->m);
         return 0;
       }
       if (pthread_cond_init(&m->r, 0)) {
-        r = pthread_mutex_destroy(&m->m);
-        assert(!r);
+        pthread_mutex_destroy(&m->m);
         c->f(m);
-        r = pthread_mutex_unlock(&c->m);
-        assert(!r);
+        pthread_mutex_unlock(&c->m);
         return 0;
       }
       m->c = 0;
-      r = pthread_mutex_lock(&m->m);
-      assert(!r);
+      pthread_mutex_lock(&m->m);
     }
     if (!c->we && c->wh == c->wt) {
       if (!(v = c->a(c->w, (c->ws + 1) * sizeof(*c->w)))) {
-        r = pthread_mutex_unlock(&c->m);
-        assert(!r);
+        pthread_mutex_unlock(&c->m);
         i = 0;
         goto exit;
       }
@@ -517,17 +452,15 @@ sendQueue:
     c->we = 0;
     ++m->c;
     assert(m->c);
-    r = pthread_mutex_unlock(&c->m);
-    assert(!r);
+    pthread_mutex_unlock(&c->m);
     break;
 
   case chanOpSendWait:
-    c = (a + i)->c;
-    r = pthread_mutex_lock(&c->m);
-    assert(!r);
+    if (!(c = (a + i)->c) || !(a + i)->v)
+      break;
+    pthread_mutex_lock(&c->m);
     if (c->u) {
-      r = pthread_mutex_unlock(&c->m);
-      assert(!r);
+      pthread_mutex_unlock(&c->m);
       break;
     }
     if (c->s & chanQsCanPut && (c->we || !c->re)) {
@@ -536,26 +469,21 @@ wait:
         if (!(m = c->a(0, sizeof(*m)))
          || pthread_mutex_init(&m->m, 0)) {
           c->f(m);
-          r = pthread_mutex_unlock(&c->m);
-          assert(!r);
+          pthread_mutex_unlock(&c->m);
           return 0;
         }
         if (pthread_cond_init(&m->r, 0)) {
-          r = pthread_mutex_destroy(&m->m);
-          assert(!r);
+          pthread_mutex_destroy(&m->m);
           c->f(m);
-          r = pthread_mutex_unlock(&c->m);
-          assert(!r);
+          pthread_mutex_unlock(&c->m);
           return 0;
         }
         m->c = 0;
-        r = pthread_mutex_lock(&m->m);
-        assert(!r);
+        pthread_mutex_lock(&m->m);
       }
       if (!c->we && c->wh == c->wt) {
         if (!(v = c->a(c->w, (c->ws + 1) * sizeof(*c->w)))) {
-          r = pthread_mutex_unlock(&c->m);
-          assert(!r);
+          pthread_mutex_unlock(&c->m);
           i = 0;
           goto exit;
         }
@@ -582,64 +510,46 @@ wait:
           c->rh = 0;
         if (c->rh == c->rt)
           c->re = 1;
-        r = pthread_mutex_lock(&p->m);
-        assert(!r);
+        pthread_mutex_lock(&p->m);
         assert(p->c);
         --p->c;
         if (!pthread_cond_signal(&p->r)) {
-          r = pthread_mutex_unlock(&p->m);
-          assert(!r);
+          pthread_mutex_unlock(&p->m);
           break;
         }
         if (!p->c) {
-          r = pthread_cond_destroy(&p->r);
-          assert(!r);
-          r = pthread_mutex_unlock(&p->m);
-          assert(!r);
-          r = pthread_mutex_destroy(&p->m);
-          assert(!r);
+          pthread_cond_destroy(&p->r);
+          pthread_mutex_unlock(&p->m);
+          pthread_mutex_destroy(&p->m);
           c->f(p);
-        } else {
-          r = pthread_mutex_unlock(&p->m);
-          assert(!r);
-        }
+        } else
+          pthread_mutex_unlock(&p->m);
       }
-      r = pthread_mutex_unlock(&c->m);
-      assert(!r);
-      r = pthread_cond_wait(&m->r, &m->m);
-      assert(!r);
-      r = pthread_mutex_lock(&c->m);
-      assert(!r);
+      pthread_mutex_unlock(&c->m);
+      pthread_cond_wait(&m->r, &m->m);
+      pthread_mutex_lock(&c->m);
       if (c->s & chanQsCanPut) while (!c->we) {
         p = *(c->w + c->wh);
         if (++c->wh == c->ws)
           c->wh = 0;
         if (c->wh == c->wt)
           c->we = 1;
-        r = pthread_mutex_lock(&p->m);
-        assert(!r);
+        pthread_mutex_lock(&p->m);
         assert(p->c);
         --p->c;
         if (!pthread_cond_signal(&p->r)) {
-          r = pthread_mutex_unlock(&p->m);
-          assert(!r);
+          pthread_mutex_unlock(&p->m);
           break;
         }
         if (!p->c) {
-          r = pthread_cond_destroy(&p->r);
-          assert(!r);
-          r = pthread_mutex_unlock(&p->m);
-          assert(!r);
-          r = pthread_mutex_destroy(&p->m);
-          assert(!r);
+          pthread_cond_destroy(&p->r);
+          pthread_mutex_unlock(&p->m);
+          pthread_mutex_destroy(&p->m);
           c->f(p);
-        } else {
-          r = pthread_mutex_unlock(&p->m);
-          assert(!r);
-        }
+        } else
+          pthread_mutex_unlock(&p->m);
       }
-      r = pthread_mutex_unlock(&c->m);
-      assert(!r);
+      pthread_mutex_unlock(&c->m);
       ++i;
       goto exit;
     }
@@ -651,9 +561,7 @@ wait:
 
   /* while there are references */
   while (m->c) {
-    /* wait */
-    r = pthread_cond_wait(&m->r, &m->m);
-    assert(!r);
+    pthread_cond_wait(&m->r, &m->m);
 
     /* third pass through array looking for quick exit */
     for (i = 0; i < t; ++i) switch ((a + i)->o) {
@@ -662,43 +570,38 @@ wait:
       break;
 
     case chanOpRecv:
-      c = (a + i)->c;
-      r = pthread_mutex_lock(&c->m);
-      assert(!r);
+      if (!(c = (a + i)->c) || !(a + i)->v)
+        break;
+      pthread_mutex_lock(&c->m);
       if (c->s & chanQsCanGet)
         goto recv;
-      r = pthread_mutex_unlock(&c->m);
-      assert(!r);
+      pthread_mutex_unlock(&c->m);
       break;
 
     case chanOpSend:
-      c = (a + i)->c;
-      r = pthread_mutex_lock(&c->m);
-      assert(!r);
+      if (!(c = (a + i)->c) || !(a + i)->v)
+        break;
+      pthread_mutex_lock(&c->m);
       if (c->u) {
-        r = pthread_mutex_unlock(&c->m);
-        assert(!r);
+        pthread_mutex_unlock(&c->m);
         break;
       }
       if (c->s & chanQsCanPut)
         goto send;
-      r = pthread_mutex_unlock(&c->m);
-      assert(!r);
+      pthread_mutex_unlock(&c->m);
       break;
 
     case chanOpSendWait:
-      c = (a + i)->c;
-      r = pthread_mutex_lock(&c->m);
-      assert(!r);
+      if (!(c = (a + i)->c) || !(a + i)->v)
+        break;
+      pthread_mutex_lock(&c->m);
       if (c->u) {
-        r = pthread_mutex_unlock(&c->m);
-        assert(!r);
+        pthread_mutex_unlock(&c->m);
         break;
       }
       if (c->s & chanQsCanPut)
         goto wait;
-      r = pthread_mutex_unlock(&c->m);
-      assert(!r);
+      pthread_mutex_unlock(&c->m);
       break;
     }
 
@@ -709,20 +612,18 @@ wait:
       break;
 
     case chanOpRecv:
-      c = (a + i)->c;
-      r = pthread_mutex_lock(&c->m);
-      assert(!r);
+      if (!(c = (a + i)->c) || !(a + i)->v)
+        break;
+      pthread_mutex_lock(&c->m);
       if (c->s & chanQsCanGet)
         goto recv;
       if (c->u) {
-        r = pthread_mutex_unlock(&c->m);
-        assert(!r);
+        pthread_mutex_unlock(&c->m);
         break;
       }
       if (!c->re && c->rh == c->rt) {
         if (!(v = c->a(c->r, (c->rs + 1) * sizeof(*c->r)))) {
-          r = pthread_mutex_unlock(&c->m);
-          assert(!r);
+          pthread_mutex_unlock(&c->m);
           i = 0;
           goto exit;
         }
@@ -737,25 +638,22 @@ wait:
       c->re = 0;
       ++m->c;
       assert(m->c);
-      r = pthread_mutex_unlock(&c->m);
-      assert(!r);
+      pthread_mutex_unlock(&c->m);
       break;
 
     case chanOpSend:
-      c = (a + i)->c;
-      r = pthread_mutex_lock(&c->m);
-      assert(!r);
+      if (!(c = (a + i)->c) || !(a + i)->v)
+        break;
+      pthread_mutex_lock(&c->m);
       if (c->u) {
-        r = pthread_mutex_unlock(&c->m);
-        assert(!r);
+        pthread_mutex_unlock(&c->m);
         break;
       }
       if (c->s & chanQsCanPut)
         goto send;
       if (!c->we && c->wh == c->wt) {
         if (!(v = c->a(c->w, (c->ws + 1) * sizeof(*c->w)))) {
-          r = pthread_mutex_unlock(&c->m);
-          assert(!r);
+          pthread_mutex_unlock(&c->m);
           i = 0;
           goto exit;
         }
@@ -770,25 +668,22 @@ wait:
       c->we = 0;
       ++m->c;
       assert(m->c);
-      r = pthread_mutex_unlock(&c->m);
-      assert(!r);
+      pthread_mutex_unlock(&c->m);
       break;
 
     case chanOpSendWait:
-      c = (a + i)->c;
-      r = pthread_mutex_lock(&c->m);
-      assert(!r);
+      if (!(c = (a + i)->c) || !(a + i)->v)
+        break;
+      pthread_mutex_lock(&c->m);
       if (c->u) {
-        r = pthread_mutex_unlock(&c->m);
-        assert(!r);
+        pthread_mutex_unlock(&c->m);
         break;
       }
       if (c->s & chanQsCanPut)
         goto wait;
       if (!c->we && c->wh == c->wt) {
         if (!(v = c->a(c->w, (c->ws + 1) * sizeof(*c->w)))) {
-          r = pthread_mutex_unlock(&c->m);
-          assert(!r);
+          pthread_mutex_unlock(&c->m);
           i = 0;
           goto exit;
         }
@@ -803,8 +698,7 @@ wait:
       c->we = 0;
       ++m->c;
       assert(m->c);
-      r = pthread_mutex_unlock(&c->m);
-      assert(!r);
+      pthread_mutex_unlock(&c->m);
       break;
     }
   }
@@ -812,16 +706,12 @@ wait:
 
 exit:
   if (m) {
-    if (m->c) {
-      r = pthread_mutex_unlock(&m->m);
-      assert(!r);
-    } else {
-      r = pthread_cond_destroy(&m->r);
-      assert(!r);
-      r = pthread_mutex_unlock(&m->m);
-      assert(!r);
-      r = pthread_mutex_destroy(&m->m);
-      assert(!r);
+    if (m->c)
+      pthread_mutex_unlock(&m->m);
+    else {
+      pthread_cond_destroy(&m->r);
+      pthread_mutex_unlock(&m->m);
+      pthread_mutex_destroy(&m->m);
       c->f(m);
     }
   }

@@ -76,7 +76,6 @@ primeT(
 #endif
   pthread_t t;
   unsigned int prime;
-  int r;
 #if POLL
   chanPoll_t c[2]; /* 0 is the read channel and 1 is the write channel */
 
@@ -98,8 +97,11 @@ primeT(
   else
 #endif
     c[1].c = chanAlloc(realloc, free, 0, 0, 0);
-  assert(c[1].c);
   pthread_cleanup_push((void(*)(void*))chanFree, c[1].c);
+  if (!c[1].c) {
+    puts("Can't create more channels, draining pipeline...");
+    goto drain;
+  }
 #if MEMORY
   prime = *ip;
   free(ip);
@@ -109,6 +111,7 @@ primeT(
   printf("%d\n", prime);
   if (pthread_create(&t, 0, primeT, c[1].c)) {
     puts("Can't create more threads, draining pipeline...");
+drain:
     while (chanPoll(0, sizeof(c) / sizeof(c[0]), c))
 #if MEMORY
       free(ip)
@@ -144,8 +147,7 @@ primeT(
   }
 endFor:
   chanShut(c[1].c);
-  r = pthread_join(t, 0);
-  assert(!r);
+  pthread_join(t, 0);
   printf("joined %d\n", prime); fflush(stdout);
 exit:
   pthread_cleanup_pop(1); /* chanFree(c[1].c) */
@@ -165,8 +167,11 @@ exit:
   else
 #endif
     c = chanAlloc(realloc, free, 0, 0, 0);
-  assert(c);
   pthread_cleanup_push((void(*)(void*))chanFree, c);
+  if (!c) {
+    puts("Can't create more channels, draining pipeline...");
+    goto drain;
+  }
 #if MEMORY
   prime = *ip;
   free(ip);
@@ -175,6 +180,7 @@ exit:
 #endif
   printf("%d\n", prime);
   if (pthread_create(&t, 0, primeT, c)) {
+drain:
     puts("Can't create more threads, draining pipeline...");
     while (chanRecv(0, v, (void **)&ip))
 #if MEMORY
@@ -205,8 +211,7 @@ exit:
 #endif
   }
   chanShut(c);
-  r = pthread_join(t, 0);
-  assert(!r);
+  pthread_join(t, 0);
   printf("joined %d\n", prime); fflush(stdout);
 exit:
   pthread_cleanup_pop(1); /* chanFree(c) */
@@ -235,8 +240,8 @@ main(
   else
 #endif
     c = chanAlloc(realloc, free, 0, 0, 0);
-  assert(c);
   pthread_cleanup_push((void(*)(void*))chanFree, c);
+  assert(c);
   r = pthread_create(&t, 0, primeT, c);
   assert(!r);
   puts("2");
@@ -259,8 +264,7 @@ main(
     assert(r);
   }
   chanShut(c);
-  r = pthread_join(t, 0);
-  assert(!r);
+  pthread_join(t, 0);
   printf("joined Goal\n"); fflush(stdout);
   pthread_cleanup_pop(1); /* chanFree(c.c) */
   return 0;

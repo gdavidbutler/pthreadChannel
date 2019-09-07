@@ -1,5 +1,4 @@
 CFLAGS = -Wall -Wextra -Wpedantic -I. -Os -g
-#CFLAGS = -Wall -Wextra -Wpedantic -I. -Os -DNDEBUG
 
 all: chan.o chanFifo.o chanSock.o primes sockproxy
 
