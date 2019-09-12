@@ -9,22 +9,23 @@ This implementation's focus is fair access of channels, relaxed somewhat under p
 
 Find the API in chan.h:
 
-* chanAlloc: allocate a chan_t
-* chanShut: shutdown a chan_t
-* chanFree: shutdown and deallocate a chan_t
+* chanCreate: allocate an Open a chan_t (reference count = 1) pair with chanClose
+* chanOpen: Open a chan_t (increment a reference count) pair with chanClose
+* chanShut: shutdown a chan_t (afterwards Send returns 0 and Recv is non-blocking)
+* chanClose: close a chan_t, (decrement a reference count) deallocate on last Close
 * chanRecv: receive a message from a channel
 * chanSend: send a message to a channel
 * chanSendWait: send a synchronous message to a channel (return after it has been received)
 * chanPoll: perform a channel operation on one of an array of channels
 
 A low latency single message channel works well in classic CSP implementations, coded in machine or assembler code (jumping instead of context switching).
-If a queue is required, it is coded as another CSP.
+Therefore, if a queue is required, it is coded as another CSP.
 However modern processors provide native support for context frames (supporting local variables and recursive invocation).
 As a result, even "light weight" process contexts must be switched (e.g. setjmp()/longjmp(), makecontext()/swapcontext(), etc.)
 POSIX threads have an even greater context switch cost.
 Therefore, queues should not be implemented in a separeate CSP (thread).
 A solution is to implement queues as shared code executed within contexts of threads passing messages on channels.
-Programmablity is key for latency management.
+And programmablity is key for latency management.
 
 If provided, a "channel" invokes a queue implementation (while a mutex lock is held.)
 The implementation can control queue latency, priority, etc.

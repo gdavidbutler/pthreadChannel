@@ -75,7 +75,7 @@ chan_t *chanCreate(void *(*realloc)(void *, unsigned long), void (*free)(void *)
 /* channel open, to keep a channel from being deallocated till chanClose */
 void chanOpen(chan_t *chn);
 
-/* channel shutdown, afterwards chanSend() returns 0 and chanRecv() is always noblock */
+/* channel shutdown, afterwards chanSend() returns 0 and chanRecv() is noblock */
 void chanShut(chan_t *chn);
 
 /* channel is shutdown, when a chan Send/Recv return 0, use this to see if this is the reason */
