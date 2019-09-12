@@ -66,15 +66,23 @@ typedef struct chan chan_t;
  *  the queue context free function (or 0 if none)
  * For example:
  *  chan_t *c;
- *  c = chanAlloc(realloc, free, chanFifoQi, chanFifoQa(realloc, free, 10), chanFifoQf);
+ *  c = chanCreate(realloc, free, chanFifoQi, chanFifoQa(realloc, free, 10), chanFifoQf);
+ *
+ * returned channel is Open
  */
-chan_t *chanAlloc(void *(*realloc)(void *, unsigned long), void (*free)(void *), chanQi_t impl, void *cntx, chanQd_t done); /* returns 0 on failure */
+chan_t *chanCreate(void *(*realloc)(void *, unsigned long), void (*free)(void *), chanQi_t impl, void *cntx, chanQd_t done); /* returns 0 on failure */
 
-/* channel shutdown, Send returns 0 and Recv is always noblock */
+/* channel open, to keep a channel from being deallocated till chanClose */
+void chanOpen(chan_t *chn);
+
+/* channel shutdown, afterwards chanSend() returns 0 and chanRecv() is always noblock */
 void chanShut(chan_t *chn);
 
-/* channel free, chanShut(), drain queue and deallocate */
-void chanFree(chan_t *chn);
+/* channel is shutdown, when a chan Send/Recv return 0, use this to see if this is the reason */
+int chanIsShut(chan_t *chn);
+
+/* channel close, on last close, deallocate */
+void chanClose(chan_t *chn);
 
 /*
  * Channels distribute messages fairly under pressure.
@@ -87,13 +95,13 @@ void chanFree(chan_t *chn);
  */
 
 /* receive a message */
-int chanRecv(int noblock, chan_t *chn, void **val); /* returns 0 on failure */
+int chanRecv(int noblock, chan_t *chn, void **val); /* returns 0 on failure, see chanIsShut() */
 
 /* send a message */
-int chanSend(int noblock, chan_t *chn, void *val); /* returns 0 on failure */
+int chanSend(int noblock, chan_t *chn, void *val); /* returns 0 on failure, see chanIsShut() */
 
 /* send a message then block return till a Recv occurs (for synchronization) */
-int chanSendWait(int noblock, chan_t *chn, void *val); /* returns 0 on failure */
+int chanSendWait(int noblock, chan_t *chn, void *val); /* returns 0 on failure, see chanIsShut() */
 
 /*
  * Channel poll.
@@ -109,8 +117,8 @@ typedef enum chanOp {
 
 /* channel poll array element */
 typedef struct chanPoll {
-  chan_t *c;
-  void **v;
+  chan_t *c;  /* channel to operate on, if 0 then chanOpNoop */
+  void **v;   /* where to get/put a message, if 0 then chanOpNoop */
   chanOp_t o;
 } chanPoll_t;
 
@@ -124,6 +132,6 @@ typedef struct chanPoll {
  * If an operation is successful (return greater than 0),
  * the offset into the list is one less than the return value.
  */
-int chanPoll(int noblock, unsigned int count, chanPoll_t *chnp); /* returns 0 on failure */
+int chanPoll(int noblock, unsigned int count, chanPoll_t *chnp); /* returns 0 on failure, see chanIsShut() */
 
 #endif /* __CHAN_H__ */
