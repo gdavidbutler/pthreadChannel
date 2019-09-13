@@ -198,7 +198,7 @@ chanClose(
   c->f(c);
 }
 
-int
+unsigned int
 chanPoll(
   int n
  ,unsigned int t
@@ -738,7 +738,7 @@ exit:
   return i;
 }
 
-int
+unsigned int
 chanRecv(
   int n
  ,chan_t *c
@@ -752,7 +752,7 @@ chanRecv(
   return chanPoll(n, sizeof(p) / sizeof(p[0]), p);
 }
 
-int
+unsigned int
 chanSend(
   int n
  ,chan_t *c
@@ -766,7 +766,7 @@ chanSend(
   return chanPoll(n, sizeof(p) / sizeof(p[0]), p);
 }
 
-int
+unsigned int
 chanSendWait(
   int n
  ,chan_t *c

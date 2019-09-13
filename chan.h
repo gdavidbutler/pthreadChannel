@@ -95,13 +95,13 @@ void chanClose(chan_t *chn);
  */
 
 /* receive a message */
-int chanRecv(int noblock, chan_t *chn, void **val); /* returns 0 on failure, see chanIsShut() */
+unsigned int chanRecv(int noblock, chan_t *chn, void **val); /* returns 0 on failure, see chanIsShut() */
 
 /* send a message */
-int chanSend(int noblock, chan_t *chn, void *val); /* returns 0 on failure, see chanIsShut() */
+unsigned int chanSend(int noblock, chan_t *chn, void *val); /* returns 0 on failure, see chanIsShut() */
 
 /* send a message then block return till a Recv occurs (for synchronization) */
-int chanSendWait(int noblock, chan_t *chn, void *val); /* returns 0 on failure, see chanIsShut() */
+unsigned int chanSendWait(int noblock, chan_t *chn, void *val); /* returns 0 on failure, see chanIsShut() */
 
 /*
  * Channel poll.
@@ -132,6 +132,6 @@ typedef struct chanPoll {
  * If an operation is successful (return greater than 0),
  * the offset into the list is one less than the return value.
  */
-int chanPoll(int noblock, unsigned int count, chanPoll_t *chnp); /* returns 0 on failure, see chanIsShut() */
+unsigned int chanPoll(int noblock, unsigned int count, chanPoll_t *chnp); /* returns 0 on failure, see chanIsShut() */
 
 #endif /* __CHAN_H__ */
