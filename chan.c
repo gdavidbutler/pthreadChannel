@@ -28,12 +28,80 @@
  * cancelled, cleanup delegated to threads attempting wakeup
  */
 
-/* chanPoll rendezvous */
+/* internal chanPoll rendezvous */
 typedef struct {
+  void (*f)(void *); /* free routine to free this */
+  int t;             /* thread is active */
   unsigned int c;    /* reference count */
   pthread_mutex_t m;
   pthread_cond_t r;
 } cpr_t;
+
+static pthread_key_t Cpr;
+
+static void
+dCpr(
+  cpr_t *p
+){
+  if (p->t || p->c)
+    pthread_mutex_unlock(&p->m);
+  else {
+    pthread_cond_destroy(&p->r);
+    pthread_mutex_unlock(&p->m);
+    pthread_mutex_destroy(&p->m);
+    p->f(p);
+  }
+}
+
+static void
+cdCpr(
+  void *v
+){
+  pthread_mutex_lock(&((cpr_t *)v)->m);
+  ((cpr_t *)v)->t = 0;
+  dCpr((cpr_t *)v);
+}
+
+static void
+cCpr(
+  void
+){
+  pthread_key_create(&Cpr, cdCpr);
+}
+
+static cpr_t *
+gCpr(
+  void *(*a)(void *, unsigned long)
+ ,void (*f)(void *)
+){
+  static pthread_once_t o = PTHREAD_ONCE_INIT;
+  cpr_t *p;
+
+  pthread_once(&o, cCpr);
+  if (!(p = pthread_getspecific(Cpr))) {
+    if (!(p = a(0, sizeof(*p)))
+     || pthread_mutex_init(&p->m, 0)) {
+      f(p);
+      return (0);
+    }
+    if (pthread_cond_init(&p->r, 0)) {
+      pthread_mutex_destroy(&p->m);
+      f(p);
+      return (0);
+    }
+    if (pthread_setspecific(Cpr, p)) {
+      pthread_cond_destroy(&p->r);
+      pthread_mutex_destroy(&p->m);
+      f(p);
+      return (0);
+    }
+    p->f = f;
+    p->t = 1;
+    p->c = 0;
+  }
+  pthread_mutex_lock(&p->m);
+  return (p);
+}
 
 /* chan */
 struct chan {
@@ -68,9 +136,8 @@ chanCreate(
 ){
   chan_t *c;
 
-  c = 0;
   if (!a || !f || (q && !v))
-    goto exit;
+    return (0);
   if ((c = a(0, sizeof(*c)))) {
     c->r = c->w = 0;
     if (!(c->r = a(0, sizeof(*c->r)))
@@ -79,11 +146,10 @@ chanCreate(
       f(c->w);
       f(c->r);
       f(c);
-      c = 0;
-      goto exit;
+      return (0);
     }
   } else
-    goto exit;
+    return (0);
   c->a = a;
   c->f = f;
   c->rs = c->ws = 1;
@@ -96,8 +162,7 @@ chanCreate(
   c->s = chanQsCanPut;
   c->c = 1;
   c->u = 0;
-exit:
-  return c;
+  return (c);
 }
 
 void
@@ -120,8 +185,10 @@ chanShut(
   if (!c)
     return;
   pthread_mutex_lock(&c->m);
-  if (c->u)
-    goto exit;
+  if (c->u) {
+    pthread_mutex_unlock(&c->m);
+    return;
+  }
   c->u = 1;
   while (!c->we) {
     p = *(c->w + c->wh);
@@ -136,13 +203,7 @@ chanShut(
       pthread_mutex_unlock(&p->m);
       continue;
     }
-    if (!p->c) {
-      pthread_cond_destroy(&p->r);
-      pthread_mutex_unlock(&p->m);
-      pthread_mutex_destroy(&p->m);
-      c->f(p);
-    } else
-      pthread_mutex_unlock(&p->m);
+    dCpr(p);
   }
   while (!c->re) {
     p = *(c->r + c->rh);
@@ -157,15 +218,8 @@ chanShut(
       pthread_mutex_unlock(&p->m);
       continue;
     }
-    if (!p->c) {
-      pthread_cond_destroy(&p->r);
-      pthread_mutex_unlock(&p->m);
-      pthread_mutex_destroy(&p->m);
-      c->f(p);
-    } else
-      pthread_mutex_unlock(&p->m);
+    dCpr(p);
   }
-exit:
   pthread_mutex_unlock(&c->m);
 }
 
@@ -173,7 +227,7 @@ int
 chanIsShut(
   chan_t *c
 ){
-  return c->u;
+  return (c->u);
 }
 
 void
@@ -198,39 +252,6 @@ chanClose(
   c->f(c);
 }
 
-static pthread_key_t Cpr;
-static void mkCpr(
-  void
-){
-  pthread_key_create(&Cpr, 0);
-}
-
-static cpr_t *
-getCpr(
-  void *(*a)(void *, unsigned long)
- ,void (*f)(void *)
-){
-  static pthread_once_t o = PTHREAD_ONCE_INIT;
-  cpr_t *p;
-
-  pthread_once(&o, mkCpr);
-  if (!(p = pthread_getspecific(Cpr))) {
-    if (!(p = a(0, sizeof(*p)))
-     || pthread_mutex_init(&p->m, 0)) {
-      f(p);
-      return 0;
-    }
-    if (pthread_cond_init(&p->r, 0)) {
-      pthread_mutex_destroy(&p->m);
-      f(p);
-      return 0;
-    }
-    p->c = 0;
-  }
-  pthread_mutex_lock(&p->m);
-  return p;
-}
-
 unsigned int
 chanPoll(
   int n
@@ -244,7 +265,7 @@ chanPoll(
   unsigned int i;
 
   if (!t || !a)
-    return 0;
+    return (0);
   m = 0;
   if (t == 1)
     goto skipFirst;
@@ -278,17 +299,10 @@ chanPoll(
           pthread_mutex_unlock(&p->m);
           break;
         }
-        if (!p->c) {
-          pthread_cond_destroy(&p->r);
-          pthread_mutex_unlock(&p->m);
-          pthread_mutex_destroy(&p->m);
-          c->f(p);
-        } else
-          pthread_mutex_unlock(&p->m);
+        dCpr(p);
       }
       pthread_mutex_unlock(&c->m);
-      ++i;
-      goto exit;
+      return (i + 1);
     }
     pthread_mutex_unlock(&c->m);
     break;
@@ -321,17 +335,10 @@ chanPoll(
           pthread_mutex_unlock(&p->m);
           break;
         }
-        if (!p->c) {
-          pthread_cond_destroy(&p->r);
-          pthread_mutex_unlock(&p->m);
-          pthread_mutex_destroy(&p->m);
-          c->f(p);
-        } else
-          pthread_mutex_unlock(&p->m);
+        dCpr(p);
       }
       pthread_mutex_unlock(&c->m);
-      ++i;
-      goto exit;
+      return (i + 1);
     }
     pthread_mutex_unlock(&c->m);
     break;
@@ -340,7 +347,7 @@ chanPoll(
     break;
   }
   if (n)
-    return 0;
+    return (0);
 
 skipFirst:
   /* second pass through array waiting at end of each line */
@@ -374,30 +381,23 @@ recv:
           pthread_mutex_unlock(&p->m);
           break;
         }
-        if (!p->c) {
-          pthread_cond_destroy(&p->r);
-          pthread_mutex_unlock(&p->m);
-          pthread_mutex_destroy(&p->m);
-          c->f(p);
-        } else
-          pthread_mutex_unlock(&p->m);
+        dCpr(p);
       }
       pthread_mutex_unlock(&c->m);
-      ++i;
-      goto exit;
+      return (i + 1);
     }
     if (n || c->u) {
       pthread_mutex_unlock(&c->m);
       break;
     }
-    if (!(m = getCpr(c->a, c->f))) {
+    if (!(m = gCpr(c->a, c->f))) {
       pthread_mutex_unlock(&c->m);
       return 0;
     }
     if (!c->re && c->rh == c->rt) {
       if (!(v = c->a(c->r, (c->rs + 1) * sizeof(*c->r)))) {
         pthread_mutex_unlock(&c->m);
-        goto exit0;
+        return (0);
       }
       c->r = v;
       memmove(c->r + c->rh + 1, c->r + c->rh, (c->rs - c->rh) * sizeof(*c->r));
@@ -442,31 +442,24 @@ send:
           pthread_mutex_unlock(&p->m);
           break;
         }
-        if (!p->c) {
-          pthread_cond_destroy(&p->r);
-          pthread_mutex_unlock(&p->m);
-          pthread_mutex_destroy(&p->m);
-          c->f(p);
-        } else
-          pthread_mutex_unlock(&p->m);
+        dCpr(p);
       }
       pthread_mutex_unlock(&c->m);
-      ++i;
-      goto exit;
+      return (i + 1);
     }
 sendQueue:
     if (n) {
       pthread_mutex_unlock(&c->m);
       break;
     }
-    if (!(m = getCpr(c->a, c->f))) {
+    if (!(m = gCpr(c->a, c->f))) {
       pthread_mutex_unlock(&c->m);
       return 0;
     }
     if (!c->we && c->wh == c->wt) {
       if (!(v = c->a(c->w, (c->ws + 1) * sizeof(*c->w)))) {
         pthread_mutex_unlock(&c->m);
-        goto exit0;
+        return (0);
       }
       c->w = v;
       memmove(c->w + c->wh + 1, c->w + c->wh, (c->ws - c->wh) * sizeof(*c->w));
@@ -493,14 +486,14 @@ sendQueue:
     if (c->s & chanQsCanPut && (c->we || !c->re)) {
 wait:
       /* after put wait on the write queue */
-      if (!(m = getCpr(c->a, c->f))) {
+      if (!(m = gCpr(c->a, c->f))) {
         pthread_mutex_unlock(&c->m);
         return 0;
       }
       if (!c->we && c->wh == c->wt) {
         if (!(v = c->a(c->w, (c->ws + 1) * sizeof(*c->w)))) {
           pthread_mutex_unlock(&c->m);
-          goto exit0;
+          return (0);
         }
         c->w = v;
         memmove(c->w + c->wh + 1, c->w + c->wh, (c->ws - c->wh) * sizeof(*c->w));
@@ -532,13 +525,7 @@ wait:
           pthread_mutex_unlock(&p->m);
           break;
         }
-        if (!p->c) {
-          pthread_cond_destroy(&p->r);
-          pthread_mutex_unlock(&p->m);
-          pthread_mutex_destroy(&p->m);
-          c->f(p);
-        } else
-          pthread_mutex_unlock(&p->m);
+        dCpr(p);
       }
       pthread_mutex_unlock(&c->m);
       pthread_cond_wait(&m->r, &m->m);
@@ -557,17 +544,10 @@ wait:
           pthread_mutex_unlock(&p->m);
           break;
         }
-        if (!p->c) {
-          pthread_cond_destroy(&p->r);
-          pthread_mutex_unlock(&p->m);
-          pthread_mutex_destroy(&p->m);
-          c->f(p);
-        } else
-          pthread_mutex_unlock(&p->m);
+        dCpr(p);
       }
       pthread_mutex_unlock(&c->m);
-      ++i;
-      goto exit;
+      return (i + 1);
     }
     goto sendQueue;
     break;
@@ -639,12 +619,12 @@ wait:
         goto recv;
       if (c->u) {
         pthread_mutex_unlock(&c->m);
-        goto exit0;
+        return (0);
       }
       if (!c->re && c->rh == c->rt) {
         if (!(v = c->a(c->r, (c->rs + 1) * sizeof(*c->r)))) {
           pthread_mutex_unlock(&c->m);
-          goto exit0;
+          return (0);
         }
         c->r = v;
         memmove(c->r + c->rh + 1, c->r + c->rh, (c->rs - c->rh) * sizeof(*c->r));
@@ -666,14 +646,14 @@ wait:
       pthread_mutex_lock(&c->m);
       if (c->u) {
         pthread_mutex_unlock(&c->m);
-        goto exit0;
+        return (0);
       }
       if (c->s & chanQsCanPut)
         goto send;
       if (!c->we && c->wh == c->wt) {
         if (!(v = c->a(c->w, (c->ws + 1) * sizeof(*c->w)))) {
           pthread_mutex_unlock(&c->m);
-          goto exit0;
+          return (0);
         }
         c->w = v;
         memmove(c->w + c->wh + 1, c->w + c->wh, (c->ws - c->wh) * sizeof(*c->w));
@@ -695,14 +675,14 @@ wait:
       pthread_mutex_lock(&c->m);
       if (c->u) {
         pthread_mutex_unlock(&c->m);
-        goto exit0;
+        return (0);
       }
       if (c->s & chanQsCanPut)
         goto wait;
       if (!c->we && c->wh == c->wt) {
         if (!(v = c->a(c->w, (c->ws + 1) * sizeof(*c->w)))) {
           pthread_mutex_unlock(&c->m);
-          goto exit0;
+          return (0);
         }
         c->w = v;
         memmove(c->w + c->wh + 1, c->w + c->wh, (c->ws - c->wh) * sizeof(*c->w));
@@ -719,20 +699,7 @@ wait:
       break;
     }
   }
-exit0:
-  i = 0;
-exit:
-  if (m) {
-    if (m->c)
-      pthread_mutex_unlock(&m->m);
-    else {
-      pthread_cond_destroy(&m->r);
-      pthread_mutex_unlock(&m->m);
-      pthread_mutex_destroy(&m->m);
-      c->f(m);
-    }
-  }
-  return i;
+  return (0);
 }
 
 unsigned int
