@@ -60,13 +60,15 @@ cdCpr(
   pthread_mutex_lock(&((cpr_t *)v)->m);
   ((cpr_t *)v)->t = 0;
   dCpr((cpr_t *)v);
+  pthread_setspecific(Cpr, 0);
 }
 
 static void
 cCpr(
   void
 ){
-  pthread_key_create(&Cpr, cdCpr);
+  if (pthread_key_create(&Cpr, cdCpr))
+    abort();
 }
 
 static cpr_t *
@@ -77,7 +79,8 @@ gCpr(
   static pthread_once_t o = PTHREAD_ONCE_INIT;
   cpr_t *p;
 
-  pthread_once(&o, cCpr);
+  if (pthread_once(&o, cCpr))
+    return (0);
   if (!(p = pthread_getspecific(Cpr))) {
     if (!(p = a(0, sizeof(*p)))
      || pthread_mutex_init(&p->m, 0)) {
