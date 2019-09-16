@@ -198,6 +198,38 @@ chanClose(
   c->f(c);
 }
 
+static pthread_key_t Cpr;
+static void mkCpr(
+){
+  pthread_key_create(&Cpr, 0);
+}
+
+static cpr_t *
+getCpr(
+  void *(*a)(void *, unsigned long)
+ ,void (*f)(void *)
+){
+  static pthread_once_t o = PTHREAD_ONCE_INIT;
+  cpr_t *p;
+
+  pthread_once(&o, mkCpr);
+  if (!(p = pthread_getspecific(Cpr))) {
+    if (!(p = a(0, sizeof(*p)))
+     || pthread_mutex_init(&p->m, 0)) {
+      f(p);
+      return 0;
+    }
+    if (pthread_cond_init(&p->r, 0)) {
+      pthread_mutex_destroy(&p->m);
+      f(p);
+      return 0;
+    }
+    p->c = 0;
+  }
+  pthread_mutex_lock(&p->m);
+  return p;
+}
+
 unsigned int
 chanPoll(
   int n
@@ -357,21 +389,9 @@ recv:
       pthread_mutex_unlock(&c->m);
       break;
     }
-    if (!m) {
-      if (!(m = c->a(0, sizeof(*m)))
-       || pthread_mutex_init(&m->m, 0)) {
-        c->f(m);
-        pthread_mutex_unlock(&c->m);
-        return 0;
-      }
-      if (pthread_cond_init(&m->r, 0)) {
-        pthread_mutex_destroy(&m->m);
-        c->f(m);
-        pthread_mutex_unlock(&c->m);
-        return 0;
-      }
-      m->c = 0;
-      pthread_mutex_lock(&m->m);
+    if (!(m = getCpr(c->a, c->f))) {
+      pthread_mutex_unlock(&c->m);
+      return 0;
     }
     if (!c->re && c->rh == c->rt) {
       if (!(v = c->a(c->r, (c->rs + 1) * sizeof(*c->r)))) {
@@ -438,21 +458,9 @@ sendQueue:
       pthread_mutex_unlock(&c->m);
       break;
     }
-    if (!m) {
-      if (!(m = c->a(0, sizeof(*m)))
-       || pthread_mutex_init(&m->m, 0)) {
-        c->f(m);
-        pthread_mutex_unlock(&c->m);
-        return 0;
-      }
-      if (pthread_cond_init(&m->r, 0)) {
-        pthread_mutex_destroy(&m->m);
-        c->f(m);
-        pthread_mutex_unlock(&c->m);
-        return 0;
-      }
-      m->c = 0;
-      pthread_mutex_lock(&m->m);
+    if (!(m = getCpr(c->a, c->f))) {
+      pthread_mutex_unlock(&c->m);
+      return 0;
     }
     if (!c->we && c->wh == c->wt) {
       if (!(v = c->a(c->w, (c->ws + 1) * sizeof(*c->w)))) {
@@ -484,21 +492,9 @@ sendQueue:
     if (c->s & chanQsCanPut && (c->we || !c->re)) {
 wait:
       /* after put wait on the write queue */
-      if (!m) {
-        if (!(m = c->a(0, sizeof(*m)))
-         || pthread_mutex_init(&m->m, 0)) {
-          c->f(m);
-          pthread_mutex_unlock(&c->m);
-          return 0;
-        }
-        if (pthread_cond_init(&m->r, 0)) {
-          pthread_mutex_destroy(&m->m);
-          c->f(m);
-          pthread_mutex_unlock(&c->m);
-          return 0;
-        }
-        m->c = 0;
-        pthread_mutex_lock(&m->m);
+      if (!(m = getCpr(c->a, c->f))) {
+        pthread_mutex_unlock(&c->m);
+        return 0;
       }
       if (!c->we && c->wh == c->wt) {
         if (!(v = c->a(c->w, (c->ws + 1) * sizeof(*c->w)))) {
