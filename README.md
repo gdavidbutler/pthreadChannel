@@ -47,9 +47,9 @@ Use "make" to build.
 
 Some examples:
 
-* primes: Example of using chan.h and chanFifo.h is provided in test/primes.c. It is modeled on primes.c from [libtask](https://swtch.com/libtask/).
+* primes: Example of using chan.h and chanFifo.h is provided in example/primes.c. It is modeled on primes.c from [libtask](https://swtch.com/libtask/).
 It is more complex because of pthread's API and the various combinations of options.
-* sockproxy: Example of using chan.h and chanSock.h is provided in test/sockproxy.c. It is modeled on tcpproxy.c from [libtask](https://swtch.com/libtask/).
+* sockproxy: Example of using chan.h and chanSock.h is provided in example/sockproxy.c. It is modeled on tcpproxy.c from [libtask](https://swtch.com/libtask/).
 Connects two chanSocks back-to-back, with read and write channels reversed.
 
 Note: sockproxy needs numeric values for -T, -F, -t, and -f. For example SOCK_STREAM:1, AF_INET:2:
