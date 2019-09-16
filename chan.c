@@ -200,6 +200,7 @@ chanClose(
 
 static pthread_key_t Cpr;
 static void mkCpr(
+  void
 ){
   pthread_key_create(&Cpr, 0);
 }

@@ -127,6 +127,7 @@ static char const *ProgName;
 
 static int
 usage(
+  void
 ){
   fprintf(stderr
   ,"Usage: %s"
