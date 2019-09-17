@@ -60,7 +60,6 @@ cdCpr(
   pthread_mutex_lock(&((cpr_t *)v)->m);
   ((cpr_t *)v)->t = 0;
   dCpr((cpr_t *)v);
-  pthread_setspecific(Cpr, 0);
 }
 
 static void
@@ -269,7 +268,6 @@ chanPoll(
 
   if (!t || !a)
     return (0);
-  m = 0;
   if (t == 1)
     goto skipFirst;
   /* first pass through array looking for no-wait exit */
@@ -354,6 +352,7 @@ chanPoll(
 
 skipFirst:
   /* second pass through array waiting at end of each line */
+  m = 0;
   for (i = 0; i < t; ++i) switch ((a + i)->o) {
 
   case chanOpNoop:
@@ -387,20 +386,21 @@ recv:
         dCpr(p);
       }
       pthread_mutex_unlock(&c->m);
-      return (i + 1);
+      ++i;
+      goto exit;
     }
     if (n || c->u) {
       pthread_mutex_unlock(&c->m);
       break;
     }
-    if (!(m = gCpr(c->a, c->f))) {
+    if (!m && !(m = gCpr(c->a, c->f))) {
       pthread_mutex_unlock(&c->m);
       return 0;
     }
     if (!c->re && c->rh == c->rt) {
       if (!(v = c->a(c->r, (c->rs + 1) * sizeof(*c->r)))) {
         pthread_mutex_unlock(&c->m);
-        return (0);
+        goto exit0;
       }
       c->r = v;
       memmove(c->r + c->rh + 1, c->r + c->rh, (c->rs - c->rh) * sizeof(*c->r));
@@ -448,21 +448,22 @@ send:
         dCpr(p);
       }
       pthread_mutex_unlock(&c->m);
-      return (i + 1);
+      ++i;
+      goto exit;
     }
 sendQueue:
     if (n) {
       pthread_mutex_unlock(&c->m);
       break;
     }
-    if (!(m = gCpr(c->a, c->f))) {
+    if (!m && !(m = gCpr(c->a, c->f))) {
       pthread_mutex_unlock(&c->m);
       return 0;
     }
     if (!c->we && c->wh == c->wt) {
       if (!(v = c->a(c->w, (c->ws + 1) * sizeof(*c->w)))) {
         pthread_mutex_unlock(&c->m);
-        return (0);
+        goto exit0;
       }
       c->w = v;
       memmove(c->w + c->wh + 1, c->w + c->wh, (c->ws - c->wh) * sizeof(*c->w));
@@ -489,14 +490,14 @@ sendQueue:
     if (c->s & chanQsCanPut && (c->we || !c->re)) {
 wait:
       /* after put wait on the write queue */
-      if (!(m = gCpr(c->a, c->f))) {
+      if (!m && !(m = gCpr(c->a, c->f))) {
         pthread_mutex_unlock(&c->m);
         return 0;
       }
       if (!c->we && c->wh == c->wt) {
         if (!(v = c->a(c->w, (c->ws + 1) * sizeof(*c->w)))) {
           pthread_mutex_unlock(&c->m);
-          return (0);
+          goto exit0;
         }
         c->w = v;
         memmove(c->w + c->wh + 1, c->w + c->wh, (c->ws - c->wh) * sizeof(*c->w));
@@ -550,7 +551,8 @@ wait:
         dCpr(p);
       }
       pthread_mutex_unlock(&c->m);
-      return (i + 1);
+      ++i;
+      goto exit;
     }
     goto sendQueue;
     break;
@@ -622,12 +624,12 @@ wait:
         goto recv;
       if (c->u) {
         pthread_mutex_unlock(&c->m);
-        return (0);
+        goto exit0;
       }
       if (!c->re && c->rh == c->rt) {
         if (!(v = c->a(c->r, (c->rs + 1) * sizeof(*c->r)))) {
           pthread_mutex_unlock(&c->m);
-          return (0);
+          goto exit0;
         }
         c->r = v;
         memmove(c->r + c->rh + 1, c->r + c->rh, (c->rs - c->rh) * sizeof(*c->r));
@@ -649,14 +651,14 @@ wait:
       pthread_mutex_lock(&c->m);
       if (c->u) {
         pthread_mutex_unlock(&c->m);
-        return (0);
+        goto exit0;
       }
       if (c->s & chanQsCanPut)
         goto send;
       if (!c->we && c->wh == c->wt) {
         if (!(v = c->a(c->w, (c->ws + 1) * sizeof(*c->w)))) {
           pthread_mutex_unlock(&c->m);
-          return (0);
+          goto exit0;
         }
         c->w = v;
         memmove(c->w + c->wh + 1, c->w + c->wh, (c->ws - c->wh) * sizeof(*c->w));
@@ -678,14 +680,14 @@ wait:
       pthread_mutex_lock(&c->m);
       if (c->u) {
         pthread_mutex_unlock(&c->m);
-        return (0);
+        goto exit0;
       }
       if (c->s & chanQsCanPut)
         goto wait;
       if (!c->we && c->wh == c->wt) {
         if (!(v = c->a(c->w, (c->ws + 1) * sizeof(*c->w)))) {
           pthread_mutex_unlock(&c->m);
-          return (0);
+          goto exit0;
         }
         c->w = v;
         memmove(c->w + c->wh + 1, c->w + c->wh, (c->ws - c->wh) * sizeof(*c->w));
@@ -702,7 +704,12 @@ wait:
       break;
     }
   }
-  return (0);
+exit0:
+  i = 0;
+exit:
+  if (m)
+    pthread_mutex_unlock(&m->m);
+  return i;
 }
 
 unsigned int
