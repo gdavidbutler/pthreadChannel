@@ -395,7 +395,7 @@ recv:
     }
     if (!m && !(m = gCpr(c->a, c->f))) {
       pthread_mutex_unlock(&c->m);
-      return 0;
+      return (0);
     }
     if (!c->re && c->rh == c->rt) {
       if (!(v = c->a(c->r, (c->rs + 1) * sizeof(*c->r)))) {
@@ -458,7 +458,7 @@ sendQueue:
     }
     if (!m && !(m = gCpr(c->a, c->f))) {
       pthread_mutex_unlock(&c->m);
-      return 0;
+      return (0);
     }
     if (!c->we && c->wh == c->wt) {
       if (!(v = c->a(c->w, (c->ws + 1) * sizeof(*c->w)))) {
@@ -492,7 +492,7 @@ wait:
       /* after put wait on the write queue */
       if (!m && !(m = gCpr(c->a, c->f))) {
         pthread_mutex_unlock(&c->m);
-        return 0;
+        return (0);
       }
       if (!c->we && c->wh == c->wt) {
         if (!(v = c->a(c->w, (c->ws + 1) * sizeof(*c->w)))) {
@@ -558,7 +558,7 @@ wait:
     break;
   }
   if (!m)
-    return 0;
+    return (0);
 
   /* while there are references */
   while (m->c) {
@@ -709,7 +709,7 @@ exit0:
 exit:
   if (m)
     pthread_mutex_unlock(&m->m);
-  return i;
+  return (i);
 }
 
 unsigned int
@@ -723,7 +723,7 @@ chanRecv(
   p[0].c = c;
   p[0].v = v;
   p[0].o = chanOpRecv;
-  return chanPoll(n, sizeof(p) / sizeof(p[0]), p);
+  return (chanPoll(n, sizeof(p) / sizeof(p[0]), p));
 }
 
 unsigned int
@@ -737,7 +737,7 @@ chanSend(
   p[0].c = c;
   p[0].v = &v;
   p[0].o = chanOpSend;
-  return chanPoll(n, sizeof(p) / sizeof(p[0]), p);
+  return (chanPoll(n, sizeof(p) / sizeof(p[0]), p));
 }
 
 unsigned int
@@ -751,5 +751,5 @@ chanSendWait(
   p[0].c = c;
   p[0].v = &v;
   p[0].o = chanOpSendWait;
-  return chanPoll(n, sizeof(p) / sizeof(p[0]), p);
+  return (chanPoll(n, sizeof(p) / sizeof(p[0]), p));
 }
