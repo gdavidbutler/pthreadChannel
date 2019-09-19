@@ -45,7 +45,7 @@ chanSockC(
   pthread_cleanup_push((void(*)(void*))chanShut, v);
   p[0].c = v;
   p[0].v = (void **)&x;
-  p[0].o = chanOpRecv;
+  p[0].o = chanOpPull;
   p[1].o = chanOpNoop;
   if (!chanPoll(0, sizeof(p) / sizeof(p[0]), p))
     goto exit0;
@@ -57,7 +57,7 @@ chanSockC(
   pthread_cleanup_push((void(*)(void*))x->f, m);
   p[1].c = x->w;
   p[1].v = (void **)&m;
-  p[1].o = chanOpRecv;
+  p[1].o = chanOpPull;
   while (chanPoll(0, sizeof(p) / sizeof(p[0]), p) == 2
    && (m->l)
    && write(x->d, m->b, m->l) == m->l) {
@@ -90,7 +90,7 @@ chanSockS(
   pthread_cleanup_push((void(*)(void*))chanShut, v);
   p[0].c = v;
   p[0].v = (void **)&x;
-  p[0].o = chanOpRecv;
+  p[0].o = chanOpPull;
   p[1].o = chanOpNoop;
   if (!chanPoll(0, sizeof(p) / sizeof(p[0]), p))
     goto exit0;
@@ -102,7 +102,7 @@ chanSockS(
   pthread_cleanup_push((void(*)(void*))x->f, m);
   p[1].c = x->r;
   p[1].v = (void **)&m;
-  p[1].o = chanOpSend;
+  p[1].o = chanOpPush;
   while ((m = x->a(0, sizeof(*m) + x->l - 1))
    && (int)(m->l = read(x->d, m->b, x->l)) > 0) {
     void *t;
@@ -137,7 +137,7 @@ chanSockW(
   pthread_cleanup_push((void(*)(void*))chanShut, v);
   p[0].c = v;
   p[0].v = (void **)&x;
-  p[0].o = chanOpRecv;
+  p[0].o = chanOpPull;
   p[1].o = chanOpNoop;
   p[2].o = chanOpNoop;
   if (!chanPoll(0, sizeof(p) / sizeof(p[0]), p))
@@ -159,7 +159,7 @@ chanSockW(
     goto exit3;
   pthread_detach(tC);
   p[1].v = (void **)&x;
-  p[1].o = chanOpSendWait;
+  p[1].o = chanOpPushWait;
   if (!chanPoll(0, sizeof(p) / sizeof(p[0]), p))
     goto exit3;
   p[1].o = chanOpNoop;
@@ -167,12 +167,12 @@ chanSockW(
     goto exit3;
   pthread_detach(tS);
   p[2].v = (void **)&x;
-  p[2].o = chanOpSendWait;
+  p[2].o = chanOpPushWait;
   if (!chanPoll(0, sizeof(p) / sizeof(p[0]), p))
     goto exit3;
   p[2].o = chanOpNoop;
   p[0].v = p[1].v = p[2].v = &t;
-  p[0].o = p[1].o = p[2].o = chanOpRecv;
+  p[0].o = p[1].o = p[2].o = chanOpPull;
   while (p[1].o != chanOpNoop || p[2].o != chanOpNoop) switch (chanPoll(0, sizeof(p) / sizeof(p[0]), p)) {
     case 1:
     case 2:
@@ -238,7 +238,7 @@ chanSock(
     return 0;
   }
   pthread_detach(t);
-  p[0].o = chanOpSendWait;
+  p[0].o = chanOpPushWait;
   if (!chanPoll(0, sizeof(p) / sizeof(p[0]), p)) {
     chanClose(p[0].c);
     f(x);

@@ -20,22 +20,22 @@
 #include "chan.h"
 #include "chanFifo.h"
 
-/* chan fifo queue context */
-struct chanFifoQc {
+/* chan fifo store context */
+struct chanFifoSc {
   void (*f)(void *); /* free */
-  unsigned int s;    /* queue size */
-  unsigned int h;    /* queue head */
-  unsigned int t;    /* queue tail */
-  void *q[1];        /* circular queue, must be last */
+  unsigned int s;    /* store size */
+  unsigned int h;    /* store head */
+  unsigned int t;    /* store tail */
+  void *q[1];        /* circular store, must be last */
 };
 
-chanFifoQc_t *
-chanFifoQa(
+chanFifoSc_t *
+chanFifoSa(
   void *(*a)(void *, unsigned long)
  ,void (*f)(void *)
  ,unsigned int s
 ){
-  chanFifoQc_t *c;
+  chanFifoSc_t *c;
 
   if (!a || !f || !s)
     return 0;
@@ -48,31 +48,31 @@ chanFifoQa(
 }
 
 void
-chanFifoQd(
+chanFifoSd(
   void *v
 ){
-  ((struct chanFifoQc *)v)->f(v);
+  ((struct chanFifoSc *)v)->f(v);
 }
 
-/* a queue is started in chanQsCanPut status */
-chanQs_t
-chanFifoQi(
+/* a store is started in chanSsCanPush status */
+chanSs_t
+chanFifoSi(
   void *c
- ,chanQo_t o
+ ,chanSo_t o
  ,void **v
 ){
-  if (o == chanQoPut) {
-    ((chanFifoQc_t*)c)->q[((chanFifoQc_t*)c)->t] = *v;
-    if (++((chanFifoQc_t*)c)->t == ((chanFifoQc_t*)c)->s)
-      ((chanFifoQc_t*)c)->t = 0;
-    if (((chanFifoQc_t*)c)->t == ((chanFifoQc_t*)c)->h)
-      return chanQsCanGet;
+  if (o == chanSoPush) {
+    ((chanFifoSc_t*)c)->q[((chanFifoSc_t*)c)->t] = *v;
+    if (++((chanFifoSc_t*)c)->t == ((chanFifoSc_t*)c)->s)
+      ((chanFifoSc_t*)c)->t = 0;
+    if (((chanFifoSc_t*)c)->t == ((chanFifoSc_t*)c)->h)
+      return chanSsCanPull;
   } else {
-    *v = ((chanFifoQc_t*)c)->q[((chanFifoQc_t*)c)->h];
-    if (++((chanFifoQc_t*)c)->h == ((chanFifoQc_t*)c)->s)
-      ((chanFifoQc_t*)c)->h = 0;
-    if (((chanFifoQc_t*)c)->h == ((chanFifoQc_t*)c)->t)
-      return chanQsCanPut;
+    *v = ((chanFifoSc_t*)c)->q[((chanFifoSc_t*)c)->h];
+    if (++((chanFifoSc_t*)c)->h == ((chanFifoSc_t*)c)->s)
+      ((chanFifoSc_t*)c)->h = 0;
+    if (((chanFifoSc_t*)c)->h == ((chanFifoSc_t*)c)->t)
+      return chanSsCanPush;
   }
-  return chanQsCanGet | chanQsCanPut;
+  return chanSsCanPull | chanSsCanPush;
 }

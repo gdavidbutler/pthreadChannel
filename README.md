@@ -1,57 +1,62 @@
 ## pthreadChannel
-Yet another implementation of a Communicating Sequential Process (CSP) "channel" construct for pthreads.
+Yet another implementation of a Communicating Sequential Process (CSP) Channel construct for pthreads.
 
-* Any number of threads can send and receive messages (a void *) on a "channel".
-* "Channels" are asynchronous, queueing a single message by default. Messages can be sent synchronously when needed.
-* Threads can "poll" for progress on multiple "channels".
+A Channel implements a configurable store of anonymous, pointer sized, messages.
+Threads can (optionally block to) push a message into or pull a message out of a Channel.
+When blocking, access to pushing or pulling is granted in a first-come-first-serve basis.
 
-This implementation's focus is fair access of channels, relaxed somewhat under pressure.
+* A Channel holds a single message, by default. (See below.)
+* Messages can be pushed waiting on a pull, when needed.
+* Any number of threads can push to and pull from a Channel.
+* A thread can attempt to push to or pull from many Channels till one can proceed.
+
+This implementation's focus is fair access to messages, relaxed somewhat under pressure.
 
 Find the API in chan.h:
 
-* chanCreate: allocate an Open chan_t (reference count = 1) pair with a chanClose
+* chanCreate: Allocate an open chan_t (reference count = 1) pair with a chanClose
 * chanOpen: Open a chan_t (increment a reference count) pair with a chanClose
-* chanShut: shutdown a chan_t (afterwards Send returns 0 and Recv is non-blocking)
-* chanIsShut: is a chan_t shutdown (a 0 return from a blocking chanPoll ususally indicates a chan_t is Shut)
-* chanClose: close a chan_t, (decrement a reference count) deallocate on last Close
-* chanRecv: receive a message from a channel
-* chanSend: send a message to a channel
-* chanSendWait: send a synchronous message to a channel (return after it has been received)
-* chanPoll: perform a channel operation on one of an array of channels
+* chanShut: Shutdown a chan_t (afterwards Push returns 0 and Pull is non-blocking)
+* chanIsShut: Is a chan_t shutdown (a 0 return from a blocking chanPoll ususally indicates a chan_t is Shut)
+* chanClose: Close a chan_t, (decrement a reference count) deallocate on last Close
+* chanPull: Pull a message from a Channel
+* chanPush: Push a message to a Channel
+* chanPushWait: Push a message to a Channel, waiting till it has been pulled
+* chanPoll: perform a Channel operation on one of an array of Channels, working to satisfy them in the order provided.
 
-A low latency single message channel works well in classic CSP implementations, coded in machine or assembler code (jumping instead of context switching).
-Therefore, if a queue is required, it is coded as another CSP.
-However modern processors provide native support for context frames (supporting local variables and recursive invocation).
-As a result, even "light weight" process contexts must be switched (e.g. setjmp()/longjmp(), makecontext()/swapcontext(), etc.)
-POSIX threads have an even greater context switch cost.
-Therefore, queues should not be implemented in a separeate CSP (thread).
-A solution is to implement queues as shared code executed within contexts of threads passing messages on channels.
-And programmablity is key for latency management.
+A Channel's store implementation is configurable.
+In classic CSP, a low latency synchronous rendezvous works well when coded in machine or assembler code (jumping instead of context switching).
+If a store is needed, it is implemented in another process.
+However, modern processors provide native support for context frames (supporting local variables and recursive invocation).
+Resulting in "light weight" process context switching (e.g. setjmp()/longjmp(), makecontext()/swapcontext(), etc.)
+POSIX threads have an even greater context (process) switch cost.
+Therefore, simple stores should not be implemented in separeate threads.
+A solution is to implement stores as shared code executed within contexts of threads.
 
-If provided, a "channel" invokes a queue implementation (while a mutex lock is held.)
-The implementation can control queue latency, priority, etc.
-A "channel fifo" queue implementation is provided.
+If provided, a Channel invokes a store implementation (while a mutex lock is held.)
+The implementation can control store latency, priority, etc.
+A Channel FIFO store implementation is provided.
 
 Find the API in chanFifo.h:
 
-* chanFifoQa: allocate a chanFifoQc (chanFifo context)
-* chanFifoQd: deallocate a chanFifoQc (chanFifo context)
-* chanFifoQi: chanFifo queue implementation
+* chanFifoSa: allocate a chanFifoSc (chanFifo context)
+* chanFifoSd: deallocate a chanFifoSc (chanFifo context)
+* chanFifoSi: chanFifo store implementation
 
-Since a thread can't both wait in a chanPoll() and in a poll()/select()/etc., support for integrating bound sockets with channels is provided.
+Since a thread can't both wait in a chanPoll() and in a poll()/select()/etc., support for integrating bound sockets with Channels is provided.
 
 Find the API in chanSock.h:
 
-* chanSock: link a bound full duplex socket to a pair of read and write channels
+* chanSock: link a bound full duplex socket to a pair of Channels
 
 Use "make" to build.
 
 Some examples:
 
 * primes: Example of using chan.h and chanFifo.h is provided in example/primes.c. It is modeled on primes.c from [libtask](https://swtch.com/libtask/).
-It is more complex because of pthread's API and the various combinations of options.
+It is more complex because of pthread's API and various combinations of options.
 * sockproxy: Example of using chan.h and chanSock.h is provided in example/sockproxy.c. It is modeled on tcpproxy.c from [libtask](https://swtch.com/libtask/).
-Connects two chanSocks back-to-back, with read and write channels reversed.
+Connects two chanSocks back-to-back, with Channels reversed.
 
 Note: sockproxy needs numeric values for -T, -F, -t, and -f. For example SOCK_STREAM:1, AF_INET:2:
 

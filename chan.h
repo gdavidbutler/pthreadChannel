@@ -20,33 +20,33 @@
 #define __CHAN_H__
 
 /*
- * Channel Queue.
+ * Channel Store.
  */
 
-/* channel queue operation */
-typedef enum chanQo {
-  chanQoGet
- ,chanQoPut
-} chanQo_t;
+/* channel store operation */
+typedef enum chanSo {
+  chanSoPull
+ ,chanSoPush
+} chanSo_t;
 
-/* channel queue status */
-typedef enum chanQs { /* bit map */
-  chanQsCanPut = 1 /* has room */
- ,chanQsCanGet = 2 /* has content */
-} chanQs_t;
+/* channel store status */
+typedef enum chanSs { /* bit map */
+  chanSsCanPush = 1 /* has room */
+ ,chanSsCanPull = 2 /* has content */
+} chanSs_t;
 
-/* channel queue implementation
+/* channel store implementation
  *
- * A channel queue takes a pointer to a context,
- * the operation the channel wants to perform on the queue
+ * A channel store takes a pointer to a context,
+ * the operation the channel wants to perform on the store
  * and a value pointer
- * It returns the state of the queue as it relates to Get and Put.
- * The queue is called under protection of a channel operation mutex
+ * It returns the state of the store as it relates to Pull and Push.
+ * The store is called under protection of a channel operation mutex
  */
-typedef chanQs_t (*chanQi_t)(void *cntx, chanQo_t oper, void **val);
+typedef chanSs_t (*chanSi_t)(void *cntx, chanSo_t oper, void **val);
 
-/* channel queue context done, called during channel done */
-typedef void (*chanQd_t)(void *cntx);
+/* channel store context done, called during channel done */
+typedef void (*chanSd_t)(void *cntx);
 
 /*
  * Channel.
@@ -54,31 +54,31 @@ typedef void (*chanQd_t)(void *cntx);
 typedef struct chan chan_t;
 
 /*
- * A queue can be provided at channel allocation.
- * If none is provided, a channel queues a single message.
+ * A store can be provided at channel allocation.
+ * If none is provided, a channel stores a single message.
  * This works best (providing low latency) when threads work more and talk less.
  *
  * When allocating the channel, supply:
  *  a pointer to a function with realloc() semantics
  *  a pointer to a function with free() semantics
- *  the queue implementation function (or 0 if none)
- *  the queue context (or 0 if none)
- *  the queue context free function (or 0 if none)
+ *  the store implementation function (or 0 if none)
+ *  the store context (or 0 if none)
+ *  the store context free function (or 0 if none)
  * For example:
  *  chan_t *c;
- *  c = chanCreate(realloc, free, chanFifoQi, chanFifoQa(realloc, free, 10), chanFifoQf);
+ *  c = chanCreate(realloc, free, chanFifoSi, chanFifoSa(realloc, free, 10), chanFifoSf);
  *
  * returned channel is Open
  */
-chan_t *chanCreate(void *(*realloc)(void *, unsigned long), void (*free)(void *), chanQi_t impl, void *cntx, chanQd_t done); /* returns 0 on failure */
+chan_t *chanCreate(void *(*realloc)(void *, unsigned long), void (*free)(void *), chanSi_t impl, void *cntx, chanSd_t done); /* returns 0 on failure */
 
 /* channel open, to keep a channel from being deallocated till chanClose */
 void chanOpen(chan_t *chn);
 
-/* channel shutdown, afterwards chanSend() returns 0 and chanRecv() is noblock */
+/* channel shutdown, afterwards chanPush() returns 0 and chanPull() is noblock */
 void chanShut(chan_t *chn);
 
-/* channel is shutdown, when a chan Send/Recv return 0, use this to see if this is the reason */
+/* channel is shutdown, when a chan Push/Pull return 0, use this to see if this is the reason */
 int chanIsShut(chan_t *chn);
 
 /* channel close, on last close, deallocate */
@@ -88,20 +88,20 @@ void chanClose(chan_t *chn);
  * Channels distribute messages fairly under pressure.
  *  If there are waiting readers, a new reader goes to the end of the line
  *   unless there are also waiting writers (waiting readers won't wait long)
- *    then a meesage is opportunistically received instead of forcing a wait.
+ *    then a meesage is opportunistically pulled instead of forcing a wait.
  *  If there are waiting writers, a new writers goes to the end of the line
  *   unless there are also waiting readers (waiting writers won't wait long)
  *    then a meesage is opportunistically sent instead of forcing a wait.
  */
 
-/* receive a message */
-unsigned int chanRecv(int noblock, chan_t *chn, void **val); /* returns 0 on failure, see chanIsShut() */
+/* pull a message */
+unsigned int chanPull(int noblock, chan_t *chn, void **val); /* returns 0 on failure, see chanIsShut() */
 
-/* send a message */
-unsigned int chanSend(int noblock, chan_t *chn, void *val); /* returns 0 on failure, see chanIsShut() */
+/* push a message */
+unsigned int chanPush(int noblock, chan_t *chn, void *val); /* returns 0 on failure, see chanIsShut() */
 
-/* send a message then block return till a Recv occurs (for synchronization) */
-unsigned int chanSendWait(int noblock, chan_t *chn, void *val); /* returns 0 on failure, see chanIsShut() */
+/* push a message then block return till a Pull occurs (for synchronization) */
+unsigned int chanPushWait(int noblock, chan_t *chn, void *val); /* returns 0 on failure, see chanIsShut() */
 
 /*
  * Channel poll.
@@ -110,9 +110,9 @@ unsigned int chanSendWait(int noblock, chan_t *chn, void *val); /* returns 0 on 
 /* channel poll operation */
 typedef enum chanOp {
   chanOpNoop     /* no operation, skip */
- ,chanOpRecv     /* receive a message */
- ,chanOpSend     /* send a message */
- ,chanOpSendWait /* send a message then block return till a Recv occurs (for synchronization) */
+ ,chanOpPull     /* pull a message */
+ ,chanOpPush     /* push a message */
+ ,chanOpPushWait /* push a message then block return till a Pull occurs (for synchronization) */
 } chanOp_t;
 
 /* channel poll array element */
@@ -126,9 +126,9 @@ typedef struct chanPoll {
  * Provide a set of channel operations and return when one of them completes.
  * Instead of having to change the size of the set, if no operation is desired
  * on a channel, set the Op to Noop. Otherwise:
- *  When the queue is full, Send blocks unless noblock is set.
- *  When the queue is empty, Recv blocks unless noblock is set.
- *  SendWait does a Send then blocks return till a Recv occurs (for synchronization)
+ *  When the store is full, Push blocks unless noblock is set.
+ *  When the store is empty, Pull blocks unless noblock is set.
+ *  PushWait does a Push then blocks return till a Pull occurs (for synchronization)
  * If an operation is successful (return greater than 0),
  * the offset into the list is one less than the return value.
  */

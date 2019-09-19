@@ -41,12 +41,12 @@
 
 /*
  * Since this example talks more and works less (see the opposite comment in chan.h),
- * using a FIFO queue drastically decreases thread context switching.
+ * using a FIFO store drastically decreases thread context switching.
  * Since each prime thread is a filter, there are many more messages at the head of
- * the chain than at the end. Queues are sized relative to the length of the chain.
+ * the chain than at the end. Stores are sized relative to the length of the chain.
  */
-#define QUE 1 /* 0 or 1 to use a queue */
-#if QUE
+#define STORE 1 /* 0 or 1 to use a store */
+#if STORE
 #include "chanFifo.h"
 #endif
 
@@ -62,7 +62,7 @@
 
 #define POLL 1 /* 0 or 1 to use chanPoll */
 
-unsigned int Goal; /* use how far to go to size the queues */
+unsigned int Goal; /* use how far to go to size the stores */
 
 #if POLL
 
@@ -83,19 +83,19 @@ primeT(
   pthread_cleanup_push((void(*)(void*))chanClose, v);
   c[0].c = v;
   c[0].v = (void **)&ip;
-  c[0].o = chanOpRecv;
+  c[0].o = chanOpPull;
   c[1].c = 0;
   c[1].v = (void **)&ip;
   c[1].o = chanOpNoop;
   if (!chanPoll(0, sizeof(c) / sizeof(c[0]), c))
     goto exit0;
-#if QUE
+#if STORE
 #if MEMORY
   if ((prime = (Goal - *ip) / 10) > 1)
 #else
   if ((prime = (Goal - ip) / 10) > 1)
 #endif
-    c[1].c = chanCreate(realloc, free, chanFifoQi, chanFifoQa(realloc, free, prime), chanFifoQd);
+    c[1].c = chanCreate(realloc, free, chanFifoSi, chanFifoSa(realloc, free, prime), chanFifoSd);
   else
 #endif
     c[1].c = chanCreate(realloc, free, 0, 0, 0);
@@ -131,7 +131,7 @@ drain:
 #endif
       {
         c[0].o = chanOpNoop;
-        c[1].o = chanOpSend;
+        c[1].o = chanOpPush;
       }
 #if MEMORY
       else
@@ -139,7 +139,7 @@ drain:
 #endif
       break;
     case 2:
-      c[0].o = chanOpRecv;
+      c[0].o = chanOpPull;
       c[1].o = chanOpNoop;
       break;
     default:
@@ -176,9 +176,9 @@ main(
    || (Goal = atoi(*(argv + 1))) < 2)
     Goal = 100;
   printf("Goal = %d\n", Goal);
-#if QUE
+#if STORE
   if ((i = Goal / 10) > 1)
-    h[0].c = chanCreate(realloc, free, chanFifoQi, chanFifoQa(realloc, free, i), chanFifoQd);
+    h[0].c = chanCreate(realloc, free, chanFifoSi, chanFifoSa(realloc, free, i), chanFifoSd);
   else
 #endif
     h[0].c = chanCreate(realloc, free, 0, 0, 0);
@@ -188,7 +188,7 @@ main(
   }
   pthread_cleanup_push((void(*)(void*))chanClose, h[0].c);
   h[0].v = (void **)&ip;
-  h[0].o = chanOpSend;
+  h[0].o = chanOpPush;
   if (pthread_create(&t, 0, primeT, h[0].c)) {
     puts("Can't create thread");
     return 0;
@@ -231,15 +231,15 @@ primeT(
 
   chanOpen(v);
   pthread_cleanup_push((void(*)(void*))chanClose, v);
-  if (!chanRecv(0, v, (void **)&ip))
+  if (!chanPull(0, v, (void **)&ip))
     goto exit0;
-#if QUE
+#if STORE
 #if MEMORY
   if ((prime = (Goal - *ip) / 10) > 1)
 #else
   if ((prime = (Goal - ip) / 10) > 1)
 #endif
-    c = chanCreate(realloc, free, chanFifoQi, chanFifoQa(realloc, free, prime), chanFifoQd);
+    c = chanCreate(realloc, free, chanFifoSi, chanFifoSa(realloc, free, prime), chanFifoSd);
   else
 #endif
     c = chanCreate(realloc, free, 0, 0, 0);
@@ -258,7 +258,7 @@ primeT(
   if (pthread_create(&t, 0, primeT, c)) {
 drain:
     puts("Can't create more threads, draining pipeline...");
-    while (chanRecv(0, v, (void **)&ip))
+    while (chanPull(0, v, (void **)&ip))
 #if MEMORY
       free(ip)
 #endif
@@ -266,7 +266,7 @@ drain:
     goto exit1;
   }
   for (;;) {
-    if (!chanRecv(0, v, (void **)&ip))
+    if (!chanPull(0, v, (void **)&ip))
       break;
 #if MEMORY
     if (*ip % prime)
@@ -277,9 +277,9 @@ drain:
       int r;
 
 #if MEMORY
-      r = chanSend(0, c, ip);
+      r = chanPush(0, c, ip);
 #else
-      r = chanSend(0, c, (void *)ip);
+      r = chanPush(0, c, (void *)ip);
 #endif
       if (!r)
         break;
@@ -317,9 +317,9 @@ main(
    || (Goal = atoi(*(argv + 1))) < 2)
     Goal = 100;
   printf("Goal = %d\n", Goal);
-#if QUE
+#if STORE
   if ((i = Goal / 10) > 1)
-    c = chanCreate(realloc, free, chanFifoQi, chanFifoQa(realloc, free, i), chanFifoQd);
+    c = chanCreate(realloc, free, chanFifoSi, chanFifoSa(realloc, free, i), chanFifoSd);
   else
 #endif
     c = chanCreate(realloc, free, 0, 0, 0);
@@ -342,10 +342,10 @@ main(
       break;
     }
     *ip = i;
-    r = chanSend(0, c, ip);
+    r = chanPush(0, c, ip);
 #else
     ip = i;
-    r = chanSend(0, c, (void *)ip);
+    r = chanPush(0, c, (void *)ip);
 #endif
     if (!r)
       break;

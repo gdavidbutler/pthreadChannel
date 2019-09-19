@@ -20,22 +20,22 @@
 #define __CHANFIFO_H__
 
 /*
- * Channel FIFO Queue
+ * Channel FIFO Store
  *
  * When threads talk more and work less,
- * a queue of more than one message may be desired.
+ * a store of more than one message may be desired.
  */
 
 /* opaque context */
-typedef struct chanFifoQc chanFifoQc_t;
+typedef struct chanFifoSc chanFifoSc_t;
 
 /* allocate a context of size chan messages (void *) */
-chanFifoQc_t *chanFifoQa(void *(*realloc)(void *, unsigned long), void (*free)(void *), unsigned int size); /* returns 0 on failure */
+chanFifoSc_t *chanFifoSa(void *(*realloc)(void *, unsigned long), void (*free)(void *), unsigned int size); /* returns 0 on failure */
 
 /* deallocate context */
-void chanFifoQd(void *);
+void chanFifoSd(void *);
 
 /* the chan implementation */
-chanQs_t chanFifoQi(void *, chanQo_t, void **);
+chanSs_t chanFifoSi(void *, chanSo_t, void **);
 
 #endif /* __CHANFIFO_H__ */
