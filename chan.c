@@ -269,8 +269,6 @@ chanPoll(
   if (!t || !a)
     return (0);
   m = 0;
-  if (t == 1)
-    goto skipFirst;
   /* first pass through array looking for no-wait exit */
   for (i = 0; i < t; ++i) switch ((a + i)->o) {
 
@@ -307,7 +305,6 @@ chanPoll(
   if (n)
     return (0);
 
-skipFirst:
   /* second pass through array waiting at end of each line */
   for (i = 0; i < t; ++i) switch ((a + i)->o) {
 
@@ -345,7 +342,7 @@ recv:
       ++i;
       goto exit;
     }
-    if (n || c->u) {
+    if (c->u) {
       pthread_mutex_unlock(&c->m);
       break;
     }
@@ -408,10 +405,6 @@ send:
       goto exit;
     }
 sendQueue:
-    if (n) {
-      pthread_mutex_unlock(&c->m);
-      break;
-    }
     if (!m && !(m = gCpr(c->a, c->f))) {
       pthread_mutex_unlock(&c->m);
       return (0);
@@ -516,14 +509,10 @@ sendWait:
   if (!m)
     return (0);
 
-  /* while there are references */
   while (m->c) {
-    int isShut;
+    int mc;
 
     pthread_cond_wait(&m->r, &m->m);
-    if (t == 1)
-      goto skipThird;
-    isShut = 0;
     /* third pass through array looking for quick exit */
     for (i = 0; i < t; ++i) switch ((a + i)->o) {
 
@@ -536,8 +525,6 @@ sendWait:
       pthread_mutex_lock(&c->m);
       if (c->s & chanQsCanGet)
         goto recv;
-      else if (c->u)
-        isShut = 1;
       pthread_mutex_unlock(&c->m);
       break;
 
@@ -545,9 +532,7 @@ sendWait:
       if (!(c = (a + i)->c) || !(a + i)->v)
         break;
       pthread_mutex_lock(&c->m);
-      if (c->u)
-        isShut = 1;
-      else if (c->s & chanQsCanPut)
+      if (!c->u && c->s & chanQsCanPut)
         goto send;
       pthread_mutex_unlock(&c->m);
       break;
@@ -556,18 +541,14 @@ sendWait:
       if (!(c = (a + i)->c) || !(a + i)->v)
         break;
       pthread_mutex_lock(&c->m);
-      if (c->u)
-        isShut = 1;
-      else if (c->s & chanQsCanPut)
+      if (!c->u && c->s & chanQsCanPut)
         goto sendWait;
       pthread_mutex_unlock(&c->m);
       break;
     }
-    if (isShut)
-      goto exit0;
 
-skipThird:
     /* fourth pass through array waiting at beginning of each line */
+    mc = 0;
     for (i = 0; i < t; ++i) switch ((a + i)->o) {
 
     case chanOpNoop:
@@ -581,8 +562,9 @@ skipThird:
         goto recv;
       if (c->u) {
         pthread_mutex_unlock(&c->m);
-        goto exit0;
+        break;
       }
+      mc = 1;
       if (!c->re && c->rh == c->rt) {
         if (!(v = c->a(c->r, (c->rs + 1) * sizeof(*c->r)))) {
           pthread_mutex_unlock(&c->m);
@@ -608,10 +590,11 @@ skipThird:
       pthread_mutex_lock(&c->m);
       if (c->u) {
         pthread_mutex_unlock(&c->m);
-        goto exit0;
+        break;
       }
       if (c->s & chanQsCanPut)
         goto send;
+      mc = 1;
       if (!c->we && c->wh == c->wt) {
         if (!(v = c->a(c->w, (c->ws + 1) * sizeof(*c->w)))) {
           pthread_mutex_unlock(&c->m);
@@ -637,10 +620,11 @@ skipThird:
       pthread_mutex_lock(&c->m);
       if (c->u) {
         pthread_mutex_unlock(&c->m);
-        goto exit0;
+        break;
       }
       if (c->s & chanQsCanPut)
         goto sendWait;
+      mc = 1;
       if (!c->we && c->wh == c->wt) {
         if (!(v = c->a(c->w, (c->ws + 1) * sizeof(*c->w)))) {
           pthread_mutex_unlock(&c->m);
@@ -660,6 +644,8 @@ skipThird:
       pthread_mutex_unlock(&c->m);
       break;
     }
+    if (!mc)
+      break;
   }
 exit0:
   i = 0;

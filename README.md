@@ -12,6 +12,7 @@ Find the API in chan.h:
 * chanCreate: allocate an Open chan_t (reference count = 1) pair with a chanClose
 * chanOpen: Open a chan_t (increment a reference count) pair with a chanClose
 * chanShut: shutdown a chan_t (afterwards Send returns 0 and Recv is non-blocking)
+* chanIsShut: is a chan_t shutdown (a 0 return from a blocking chanPoll ususally indicates a chan_t is Shut)
 * chanClose: close a chan_t, (decrement a reference count) deallocate on last Close
 * chanRecv: receive a message from a channel
 * chanSend: send a message to a channel
