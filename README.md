@@ -2,7 +2,7 @@
 Yet another implementation of a Communicating Sequential Process (CSP) Channel construct for pthreads.
 
 A Channel implements a configurable store of anonymous, pointer sized, messages.
-Threads can (optionally block to) push a message into or pull a message out of a Channel.
+Threads can (optionally block to) push a message in to or pull a message out of a Channel.
 When blocking, access to pushing or pulling is granted in a first-come-first-serve basis.
 
 * A Channel holds a single message, by default. (See below.)
@@ -17,7 +17,7 @@ Find the API in chan.h:
 * chanCreate: Allocate an open chan_t (reference count = 1) pair with a chanClose
 * chanOpen: Open a chan_t (increment a reference count) pair with a chanClose
 * chanShut: Shutdown a chan_t (afterwards Push returns 0 and Pull is non-blocking)
-* chanIsShut: Is a chan_t shutdown (a 0 return from a blocking chanPoll ususally indicates a chan_t is Shut)
+* chanIsShut: Is a chan_t shutdown (a 0 return from a blocking chanPoll usually indicates a chan_t is Shut)
 * chanClose: Close a chan_t, (decrement a reference count) deallocate on last Close
 * chanPull: Pull a message from a Channel
 * chanPush: Push a message to a Channel
@@ -30,7 +30,7 @@ If a store is needed, it is implemented in another process.
 However, modern processors provide native support for context frames (supporting local variables and recursive invocation).
 Resulting in "light weight" process context switching (e.g. setjmp()/longjmp(), makecontext()/swapcontext(), etc.)
 POSIX threads have an even greater context (process) switch cost.
-Therefore, simple stores should not be implemented in separeate threads.
+Therefore, simple stores should not be implemented in separate threads.
 A solution is to implement stores as shared code executed within contexts of threads.
 
 If provided, a Channel invokes a store implementation (while a mutex lock is held.)
