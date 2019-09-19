@@ -109,7 +109,7 @@ unsigned int chanPushWait(int noblock, chan_t *chn, void *val); /* returns 0 on 
 
 /* channel poll operation */
 typedef enum chanOp {
-  chanOpNoop     /* no operation, skip */
+  chanOpNoOp     /* no operation, skip */
  ,chanOpPull     /* pull a message */
  ,chanOpPush     /* push a message */
  ,chanOpPushWait /* push a message then block return till a Pull occurs (for synchronization) */
@@ -117,15 +117,15 @@ typedef enum chanOp {
 
 /* channel poll array element */
 typedef struct chanPoll {
-  chan_t *c;  /* channel to operate on, if 0 then chanOpNoop */
-  void **v;   /* where to get/put a message, if 0 then chanOpNoop */
+  chan_t *c;  /* channel to operate on, if 0 then chanOpNoOp */
+  void **v;   /* where to get/put a message, if 0 then chanOpNoOp */
   chanOp_t o;
 } chanPoll_t;
 
 /*
  * Provide a set of channel operations and return when one of them completes.
  * Instead of having to change the size of the set, if no operation is desired
- * on a channel, set the Op to Noop. Otherwise:
+ * on a channel, set the Op to NoOp. Otherwise:
  *  When the store is full, Push blocks unless noblock is set.
  *  When the store is empty, Pull blocks unless noblock is set.
  *  PushWait does a Push then blocks return till a Pull occurs (for synchronization)

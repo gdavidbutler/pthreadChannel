@@ -86,7 +86,7 @@ primeT(
   c[0].o = chanOpPull;
   c[1].c = 0;
   c[1].v = (void **)&ip;
-  c[1].o = chanOpNoop;
+  c[1].o = chanOpNoOp;
   if (!chanPoll(0, sizeof(c) / sizeof(c[0]), c))
     goto exit0;
 #if STORE
@@ -130,7 +130,7 @@ drain:
       if (ip % prime)
 #endif
       {
-        c[0].o = chanOpNoop;
+        c[0].o = chanOpNoOp;
         c[1].o = chanOpPush;
       }
 #if MEMORY
@@ -140,7 +140,7 @@ drain:
       break;
     case 2:
       c[0].o = chanOpPull;
-      c[1].o = chanOpNoop;
+      c[1].o = chanOpNoOp;
       break;
     default:
       goto endFor;

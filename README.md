@@ -22,7 +22,7 @@ Find the API in chan.h:
 * chanPull: Pull a message from a Channel
 * chanPush: Push a message to a Channel
 * chanPushWait: Push a message to a Channel, waiting till it has been pulled
-* chanPoll: perform a Channel operation on one of an array of Channels, working to satisfy them in the order provided.
+* chanPoll: perform a Channel operation (chanOp_t) on one of an array of Channels, working to satisfy them in the order provided.
 
 A Channel's store implementation is configurable.
 In classic CSP, a low latency synchronous rendezvous works well when coded in machine or assembler code (jumping instead of context switching).

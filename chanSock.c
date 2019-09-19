@@ -46,7 +46,7 @@ chanSockC(
   p[0].c = v;
   p[0].v = (void **)&x;
   p[0].o = chanOpPull;
-  p[1].o = chanOpNoop;
+  p[1].o = chanOpNoOp;
   if (!chanPoll(0, sizeof(p) / sizeof(p[0]), p))
     goto exit0;
   chanOpen(x->w);
@@ -67,7 +67,7 @@ chanSockC(
   pthread_cleanup_pop(1); /* x->f(m) */
   pthread_cleanup_pop(1); /* chanShut(x->w) */
   shutdown(x->d, SHUT_WR);
-  p[0].o = chanOpNoop;
+  p[0].o = chanOpNoOp;
   while (chanPoll(0, sizeof(p) / sizeof(p[0]), p))
     x->f(m);
   pthread_cleanup_pop(1); /* chanClose(x->w) */
@@ -91,7 +91,7 @@ chanSockS(
   p[0].c = v;
   p[0].v = (void **)&x;
   p[0].o = chanOpPull;
-  p[1].o = chanOpNoop;
+  p[1].o = chanOpNoOp;
   if (!chanPoll(0, sizeof(p) / sizeof(p[0]), p))
     goto exit0;
   chanOpen(x->r);
@@ -138,11 +138,11 @@ chanSockW(
   p[0].c = v;
   p[0].v = (void **)&x;
   p[0].o = chanOpPull;
-  p[1].o = chanOpNoop;
-  p[2].o = chanOpNoop;
+  p[1].o = chanOpNoOp;
+  p[2].o = chanOpNoOp;
   if (!chanPoll(0, sizeof(p) / sizeof(p[0]), p))
     goto exit0;
-  p[0].o = chanOpNoop;
+  p[0].o = chanOpNoOp;
   pthread_cleanup_push((void(*)(void*))x->f, x);
   pthread_cleanup_push((void(*)(void*))close, (void *)(long)x->d);
   pthread_cleanup_push((void(*)(void*))chanShut, x->r);
@@ -162,7 +162,7 @@ chanSockW(
   p[1].o = chanOpPushWait;
   if (!chanPoll(0, sizeof(p) / sizeof(p[0]), p))
     goto exit3;
-  p[1].o = chanOpNoop;
+  p[1].o = chanOpNoOp;
   if (pthread_create(&tS, 0, chanSockS, p[2].c))
     goto exit3;
   pthread_detach(tS);
@@ -170,10 +170,10 @@ chanSockW(
   p[2].o = chanOpPushWait;
   if (!chanPoll(0, sizeof(p) / sizeof(p[0]), p))
     goto exit3;
-  p[2].o = chanOpNoop;
+  p[2].o = chanOpNoOp;
   p[0].v = p[1].v = p[2].v = &t;
   p[0].o = p[1].o = p[2].o = chanOpPull;
-  while (p[1].o != chanOpNoop || p[2].o != chanOpNoop) switch (chanPoll(0, sizeof(p) / sizeof(p[0]), p)) {
+  while (p[1].o != chanOpNoOp || p[2].o != chanOpNoOp) switch (chanPoll(0, sizeof(p) / sizeof(p[0]), p)) {
     case 1:
     case 2:
     case 3:
@@ -181,11 +181,11 @@ chanSockW(
       break;
     default:
       if (chanIsShut(p[0].c))
-        p[1].o = p[2].o = chanOpNoop;
+        p[1].o = p[2].o = chanOpNoOp;
       if (chanIsShut(p[1].c))
-        p[1].o = chanOpNoop;
+        p[1].o = chanOpNoOp;
       if (chanIsShut(p[2].c))
-        p[2].o = chanOpNoop;
+        p[2].o = chanOpNoOp;
       break;
   }
 exit3:
