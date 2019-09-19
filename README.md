@@ -9,8 +9,8 @@ This implementation's focus is fair access of channels, relaxed somewhat under p
 
 Find the API in chan.h:
 
-* chanCreate: allocate an Open a chan_t (reference count = 1) pair with chanClose
-* chanOpen: Open a chan_t (increment a reference count) pair with chanClose
+* chanCreate: allocate an Open chan_t (reference count = 1) pair with a chanClose
+* chanOpen: Open a chan_t (increment a reference count) pair with a chanClose
 * chanShut: shutdown a chan_t (afterwards Send returns 0 and Recv is non-blocking)
 * chanClose: close a chan_t, (decrement a reference count) deallocate on last Close
 * chanRecv: receive a message from a channel

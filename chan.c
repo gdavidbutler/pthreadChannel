@@ -290,11 +290,7 @@ chanPoll(
     if (!(c = (a + i)->c) || !(a + i)->v)
       break;
     pthread_mutex_lock(&c->m);
-    if (c->u) {
-      pthread_mutex_unlock(&c->m);
-      break;
-    }
-    if (c->s & chanQsCanPut && (c->we || !c->re))
+    if (!c->u && c->s & chanQsCanPut && (c->we || !c->re))
       goto send;
     pthread_mutex_unlock(&c->m);
     break;
@@ -303,11 +299,7 @@ chanPoll(
     if (!(c = (a + i)->c) || !(a + i)->v)
       break;
     pthread_mutex_lock(&c->m);
-    if (c->u) {
-      pthread_mutex_unlock(&c->m);
-      break;
-    }
-    if (c->s & chanQsCanPut && (c->we || !c->re))
+    if (!c->u && c->s & chanQsCanPut && (c->we || !c->re))
       goto sendWait;
     pthread_mutex_unlock(&c->m);
     break;
@@ -526,8 +518,12 @@ sendWait:
 
   /* while there are references */
   while (m->c) {
-    pthread_cond_wait(&m->r, &m->m);
+    int isShut;
 
+    pthread_cond_wait(&m->r, &m->m);
+    if (t == 1)
+      goto skipThird;
+    isShut = 0;
     /* third pass through array looking for quick exit */
     for (i = 0; i < t; ++i) switch ((a + i)->o) {
 
@@ -540,10 +536,8 @@ sendWait:
       pthread_mutex_lock(&c->m);
       if (c->s & chanQsCanGet)
         goto recv;
-      if (c->u) {
-        pthread_mutex_unlock(&c->m);
-        break;
-      }
+      else if (c->u)
+        isShut = 1;
       pthread_mutex_unlock(&c->m);
       break;
 
@@ -551,11 +545,9 @@ sendWait:
       if (!(c = (a + i)->c) || !(a + i)->v)
         break;
       pthread_mutex_lock(&c->m);
-      if (c->u) {
-        pthread_mutex_unlock(&c->m);
-        break;
-      }
-      if (c->s & chanQsCanPut)
+      if (c->u)
+        isShut = 1;
+      else if (c->s & chanQsCanPut)
         goto send;
       pthread_mutex_unlock(&c->m);
       break;
@@ -564,16 +556,17 @@ sendWait:
       if (!(c = (a + i)->c) || !(a + i)->v)
         break;
       pthread_mutex_lock(&c->m);
-      if (c->u) {
-        pthread_mutex_unlock(&c->m);
-        break;
-      }
-      if (c->s & chanQsCanPut)
+      if (c->u)
+        isShut = 1;
+      else if (c->s & chanQsCanPut)
         goto sendWait;
       pthread_mutex_unlock(&c->m);
       break;
     }
+    if (isShut)
+      goto exit0;
 
+skipThird:
     /* fourth pass through array waiting at beginning of each line */
     for (i = 0; i < t; ++i) switch ((a + i)->o) {
 
