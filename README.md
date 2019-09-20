@@ -2,13 +2,13 @@
 Yet another implementation of a Communicating Sequential Process (CSP) Channel construct for pthreads.
 
 A Channel implements a configurable store of anonymous, pointer sized, messages.
-Threads can (optionally block to) push a message in to or pull a message out of a Channel.
-When blocking, access to pushing or pulling is granted in a first-come-first-serve basis.
+Threads can (optionally block to) put a message in to or get a message out of a Channel.
+When blocking, access to puting or getting is granted in a first-come-first-serve basis.
 
 * A Channel holds a single message, by default. (See below.)
-* Messages can be pushed waiting on a pull, when needed.
-* Any number of threads can push to and pull from a Channel.
-* A thread can attempt to push to or pull from many Channels till one can proceed.
+* Messages can be put waiting on a get, when needed.
+* Any number of threads can put to and get from a Channel.
+* A thread can attempt to put to or get from many Channels till one can proceed.
 
 This implementation's focus is fair access to messages, relaxed somewhat under pressure.
 
@@ -16,12 +16,12 @@ Find the API in chan.h:
 
 * chanCreate: Allocate an open chan_t (reference count = 1) pair with a chanClose
 * chanOpen: Open a chan_t (increment a reference count) pair with a chanClose
-* chanShut: Shutdown a chan_t (afterwards Push returns 0 and Pull is non-blocking)
+* chanShut: Shutdown a chan_t (afterwards Put returns 0 and Get is non-blocking)
 * chanIsShut: Is a chan_t shutdown (a 0 return from a blocking chanPoll usually indicates a chan_t is Shut)
 * chanClose: Close a chan_t, (decrement a reference count) deallocate on last Close
-* chanPull: Pull a message from a Channel
-* chanPush: Push a message to a Channel
-* chanPushWait: Push a message to a Channel, waiting till it has been pulled
+* chanGet: Get a message from a Channel
+* chanPut: Put a message to a Channel
+* chanPutWait: Put a message to a Channel, waiting till it has been gotten
 * chanPoll: perform a Channel operation (chanOp_t) on one of an array of Channels, working to satisfy them in the order provided.
 
 A Channel's store implementation is configurable.

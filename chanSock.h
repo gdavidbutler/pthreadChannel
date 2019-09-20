@@ -24,11 +24,11 @@
  *
  * Support I/O on a bound full duplex socket via a pair of send and receive channels.
  *
- * A chanPush() of chanSockM_t messages on the write channel does write()s on the socket.
- * A charPull() or socket write() failure will shutdown(fd, SHUT_WR) the socket and chanShut() the channel.
+ * A chanPut() of chanSockM_t messages on the write channel does write()s on the socket.
+ * A charGet() or socket write() failure will shutdown(fd, SHUT_WR) the socket and chanShut() the channel.
  *
- * A chanPull() on the read channel will receive chanSockM_t messages from read()s on the socket.
- * A chanPush() or socket read() failure will shutdown(fd, SHUT_RD) the socket and chanShut() the channel.
+ * A chanGet() on the read channel will receive chanSockM_t messages from read()s on the socket.
+ * A chanPut() or socket read() failure will shutdown(fd, SHUT_RD) the socket and chanShut() the channel.
  *
  * After both ends have completed, the socket is closed.
  */

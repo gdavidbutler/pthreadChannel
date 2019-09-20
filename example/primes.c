@@ -83,10 +83,10 @@ primeT(
   pthread_cleanup_push((void(*)(void*))chanClose, v);
   c[0].c = v;
   c[0].v = (void **)&ip;
-  c[0].o = chanOpPull;
+  c[0].o = chanOpGet;
   c[1].c = 0;
   c[1].v = (void **)&ip;
-  c[1].o = chanOpNoOp;
+  c[1].o = chanOpNop;
   if (!chanPoll(0, sizeof(c) / sizeof(c[0]), c))
     goto exit0;
 #if STORE
@@ -130,8 +130,8 @@ drain:
       if (ip % prime)
 #endif
       {
-        c[0].o = chanOpNoOp;
-        c[1].o = chanOpPush;
+        c[0].o = chanOpNop;
+        c[1].o = chanOpPut;
       }
 #if MEMORY
       else
@@ -139,8 +139,8 @@ drain:
 #endif
       break;
     case 2:
-      c[0].o = chanOpPull;
-      c[1].o = chanOpNoOp;
+      c[0].o = chanOpGet;
+      c[1].o = chanOpNop;
       break;
     default:
       goto endFor;
@@ -188,7 +188,7 @@ main(
   }
   pthread_cleanup_push((void(*)(void*))chanClose, h[0].c);
   h[0].v = (void **)&ip;
-  h[0].o = chanOpPush;
+  h[0].o = chanOpPut;
   if (pthread_create(&t, 0, primeT, h[0].c)) {
     puts("Can't create thread");
     return 0;
@@ -231,7 +231,7 @@ primeT(
 
   chanOpen(v);
   pthread_cleanup_push((void(*)(void*))chanClose, v);
-  if (!chanPull(0, v, (void **)&ip))
+  if (!chanGet(0, v, (void **)&ip))
     goto exit0;
 #if STORE
 #if MEMORY
@@ -258,7 +258,7 @@ primeT(
   if (pthread_create(&t, 0, primeT, c)) {
 drain:
     puts("Can't create more threads, draining pipeline...");
-    while (chanPull(0, v, (void **)&ip))
+    while (chanGet(0, v, (void **)&ip))
 #if MEMORY
       free(ip)
 #endif
@@ -266,7 +266,7 @@ drain:
     goto exit1;
   }
   for (;;) {
-    if (!chanPull(0, v, (void **)&ip))
+    if (!chanGet(0, v, (void **)&ip))
       break;
 #if MEMORY
     if (*ip % prime)
@@ -277,9 +277,9 @@ drain:
       int r;
 
 #if MEMORY
-      r = chanPush(0, c, ip);
+      r = chanPut(0, c, ip);
 #else
-      r = chanPush(0, c, (void *)ip);
+      r = chanPut(0, c, (void *)ip);
 #endif
       if (!r)
         break;
@@ -342,10 +342,10 @@ main(
       break;
     }
     *ip = i;
-    r = chanPush(0, c, ip);
+    r = chanPut(0, c, ip);
 #else
     ip = i;
-    r = chanPush(0, c, (void *)ip);
+    r = chanPut(0, c, (void *)ip);
 #endif
     if (!r)
       break;

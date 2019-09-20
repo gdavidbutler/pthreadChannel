@@ -54,25 +54,25 @@ chanFifoSd(
   ((struct chanFifoSc *)v)->f(v);
 }
 
-/* a store is started in chanSsCanPush status */
+/* a store is started in chanSsCanPut status */
 chanSs_t
 chanFifoSi(
   void *c
  ,chanSo_t o
  ,void **v
 ){
-  if (o == chanSoPush) {
+  if (o == chanSoPut) {
     ((chanFifoSc_t*)c)->q[((chanFifoSc_t*)c)->t] = *v;
     if (++((chanFifoSc_t*)c)->t == ((chanFifoSc_t*)c)->s)
       ((chanFifoSc_t*)c)->t = 0;
     if (((chanFifoSc_t*)c)->t == ((chanFifoSc_t*)c)->h)
-      return chanSsCanPull;
+      return chanSsCanGet;
   } else {
     *v = ((chanFifoSc_t*)c)->q[((chanFifoSc_t*)c)->h];
     if (++((chanFifoSc_t*)c)->h == ((chanFifoSc_t*)c)->s)
       ((chanFifoSc_t*)c)->h = 0;
     if (((chanFifoSc_t*)c)->h == ((chanFifoSc_t*)c)->t)
-      return chanSsCanPush;
+      return chanSsCanPut;
   }
-  return chanSsCanPull | chanSsCanPush;
+  return chanSsCanGet | chanSsCanPut;
 }
