@@ -38,10 +38,10 @@ typedef enum chanSs { /* bit map */
 /* channel store implementation
  *
  * A channel store takes a pointer to a context,
- * the operation the channel wants to perform on the store
- * and a value pointer
+ *  the operation the channel wants to perform on the store
+ *  and a value pointer
  * It returns the state of the store as it relates to Get and Put.
- * The store is called under protection of a channel operation mutex
+ * The store is called under protection of a channel operation mutex.
  */
 typedef chanSs_t (*chanSi_t)(void *cntx, chanSo_t oper, void **val);
 
@@ -55,8 +55,8 @@ typedef struct chan chan_t;
 
 /*
  * A store can be provided at channel allocation.
- * If none is provided, a channel stores a single message.
- * This works best (providing low latency) when threads work more and talk less.
+ *  If none is provided, a channel stores a single message.
+ *  This works best (providing low latency) when threads work more and talk less.
  *
  * When allocating the channel, supply:
  *  a pointer to a function with realloc() semantics
@@ -68,7 +68,7 @@ typedef struct chan chan_t;
  *  chan_t *c;
  *  c = chanCreate(realloc, free, chanFifoSi, chanFifoSa(realloc, free, 10), chanFifoSd);
  *
- * returned channel is Open
+ * Returned channel is Open.
  */
 chan_t *chanCreate(void *(*realloc)(void *, unsigned long), void (*free)(void *), chanSi_t impl, void *cntx, chanSd_t done); /* returns 0 on failure */
 

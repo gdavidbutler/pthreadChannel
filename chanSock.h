@@ -40,12 +40,14 @@ typedef struct {
   unsigned char b[1]; /* the first character of l characters, must be last */
 } chanSockM_t;
 
-/* Hand over a fd to be used by a pair of channels:
-/*  When either channel is chanShut() the other is chanShut and the fd is close()'d */
-/*  When read() or write() on the fd fails, the channels are chanShut() and the fd is close()'d */
-/* Returns a chanOpen()'d control chan_t to the thread coordinating the I/O threads: */
-/*  chanShut() on the control channel does chanShut() on the other channels and the fd is close()'d */
-/* Warning: chanClose() must be called on the returned channel to prevent a memory leak. */
+/*
+ * Provide a fd to be used by a pair of channels:
+ *  When either channel is chanShut() the other is chanShut and the fd is close()'d
+ *  When read() or write() on the fd fails, the channels are chanShut() and the fd is close()'d
+ * Returns a chanOpen()'d control chan_t to the thread coordinating the I/O threads:
+ *  chanShut() on the control channel does chanShut() on the other channels and the fd is close()'d
+ * Warning: chanClose() must be called on the returned channel to prevent a memory leak.
+ */
 chan_t *chanSock(void *(*realloc)(void *, unsigned long), void (*free)(void *), int fd, chan_t *read, chan_t *write, unsigned int readLimit); /* returns 0 on failure */
 
 #endif /* __CHANSOCK_H__ */
