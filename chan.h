@@ -45,7 +45,7 @@ typedef enum chanSs { /* bit map */
  */
 typedef chanSs_t (*chanSi_t)(void *cntx, chanSo_t oper, void **val);
 
-/* channel store context done, called during channel done */
+/* channel store context done, called during last (deallocating) chanClose */
 typedef void (*chanSd_t)(void *cntx);
 
 /*
@@ -63,10 +63,10 @@ typedef struct chan chan_t;
  *  a pointer to a function with free() semantics
  *  the store implementation function (or 0 if none)
  *  the store context (or 0 if none)
- *  the store context free function (or 0 if none)
+ *  the store context done function (or 0 if none)
  * For example:
  *  chan_t *c;
- *  c = chanCreate(realloc, free, chanFifoSi, chanFifoSa(realloc, free, 10), chanFifoSf);
+ *  c = chanCreate(realloc, free, chanFifoSi, chanFifoSa(realloc, free, 10), chanFifoSd);
  *
  * returned channel is Open
  */
@@ -75,10 +75,10 @@ chan_t *chanCreate(void *(*realloc)(void *, unsigned long), void (*free)(void *)
 /* channel open, to keep a channel from being deallocated till chanClose */
 void chanOpen(chan_t *chn);
 
-/* channel shutdown, afterwards chanPut() returns 0 and chanGet() is noblock */
+/* channel shutdown, afterwards chanPut() always returns 0 and chanGet() is always noblock */
 void chanShut(chan_t *chn);
 
-/* channel is shutdown, when a chan Put/Get return 0, use this to see if this is the reason */
+/* channel is shutdown, when a blocking chan Put/Get/Poll return 0, use this to see if this is the reason */
 int chanIsShut(chan_t *chn);
 
 /* channel close, on last close, deallocate */
@@ -100,7 +100,7 @@ unsigned int chanGet(int noblock, chan_t *chn, void **val); /* returns 0 on fail
 /* put a message */
 unsigned int chanPut(int noblock, chan_t *chn, void *val); /* returns 0 on failure, see chanIsShut() */
 
-/* put a message then block return till a Get occurs (for synchronization) */
+/* put a message then block return till a Get occurs */
 unsigned int chanPutWait(int noblock, chan_t *chn, void *val); /* returns 0 on failure, see chanIsShut() */
 
 /*
@@ -112,25 +112,25 @@ typedef enum chanOp {
   chanOpNop     /* no operation, skip */
  ,chanOpGet     /* get a message */
  ,chanOpPut     /* put a message */
- ,chanOpPutWait /* put a message then block return till a Get occurs (for synchronization) */
+ ,chanOpPutWait /* put a message then block return till a Get occurs */
 } chanOp_t;
 
 /* channel poll array element */
 typedef struct chanPoll {
-  chan_t *c;  /* channel to operate on, if 0 then chanOpNop */
-  void **v;   /* where to get/put a message, if 0 then chanOpNop */
+  chan_t *c;  /* channel to operate on, if 0 then behave as chanOpNop */
+  void **v;   /* where to get/put a message, if 0 then behave as chanOpNop */
   chanOp_t o;
 } chanPoll_t;
 
 /*
  * Provide a set of channel operations and return when one of them completes.
- * Instead of having to change the size of the set, if no operation is desired
- * on a channel, set the Op to Nop. Otherwise:
+ * Instead of having to change the size of the array, if no operation is desired
+ * on a channel, set the chanOp to chanOpNop. Otherwise:
  *  When the store is full, Put blocks unless noblock is set.
  *  When the store is empty, Get blocks unless noblock is set.
- *  PutWait does a Put then blocks return till a Get occurs (for synchronization)
+ *  a PutWait is the same as a Put, then blocks return till a Get occurs
  * If an operation is successful (return greater than 0),
- * the offset into the list is one less than the return value.
+ *  the offset into the list is one less than the return value.
  */
 unsigned int chanPoll(int noblock, unsigned int count, chanPoll_t *chnp); /* returns 0 on failure, see chanIsShut() */
 

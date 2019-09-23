@@ -14,7 +14,7 @@ Find the API in chan.h:
 * chanCreate: Allocate an Open chan_t (reference count = 1, pair with chanClose).
 * chanOpen: Open a chan_t (increment reference count, pair with chanClose).
 * chanShut: Shutdown a chan_t (afterwards chanPut returns 0 and chanGet is non-blocking).
-* chanIsShut: Is a chan_t shutdown (to differentiate a 0 return from a blocking chanGet).
+* chanIsShut: Is a chan_t shutdown (to differentiate a 0 return from blocking operations).
 * chanClose: Close a chan_t (decrement reference count, deallocate on last chanClose).
 * chanGet: Get a message from a Channel.
 * chanPut: Put a message to a Channel.
@@ -54,7 +54,7 @@ It is more complex because of pthread's API and various combinations of options.
 Connects two chanSocks back-to-back, with Channels reversed.
 
 Note: sockproxy needs numeric values for socket type (-T, -t) and family type (-F, -f).
-Protocol type (-P, -p), service type (-S, -s) and host name (-H, -h) can be symbolic (see getaddrinfo()).
+Options protocol type (-P, -p), service type (-S, -s) and host name (-H, -h) can be symbolic (see getaddrinfo()).
 (Upper case options are for the "server" side, lower case options are for the "client" side.)
 For most BSD compatible socket libraries, SOCK_STREAM is 1 and AF_INET is 2.
 For example, to listen (because of the server SOCK_STREAM socket type) for connections on any IPv4 stream socket on service 2222 and connect them to any IPv4 stream socket on service ssh at host localhost (letting the system choose the protocol):
