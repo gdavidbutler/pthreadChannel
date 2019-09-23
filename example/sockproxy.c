@@ -62,13 +62,13 @@ servT(
     goto exit2;
   }
   pthread_cleanup_push((void(*)(void*))chanClose, c[1]);
-  if (!(p[0].c = chanSock(realloc, free, 65535, f[0], c[0], c[1]))) {
+  if (!(p[0].c = chanSock(realloc, free, f[0], c[0], c[1], 65535))) {
     perror("chanSock");
     goto exit3;
   }
   pthread_cleanup_push((void(*)(void*))chanClose, p[0].c);
   pthread_cleanup_push((void(*)(void*))chanShut, p[0].c);
-  if (!(p[1].c = chanSock(realloc, free, 65535, f[1], c[1], c[0]))) {
+  if (!(p[1].c = chanSock(realloc, free, f[1], c[1], c[0], 65535))) {
     perror("chanSock");
     goto exit4;
   }
@@ -116,6 +116,7 @@ listenT(
       close(c);
       perror("chanIt");
     }
+    pthread_detach(t);
   }
   perror("accept");
 exit0:

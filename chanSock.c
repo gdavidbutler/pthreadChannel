@@ -26,12 +26,13 @@
 struct chanSockX {
   void *(*a)(void *, unsigned long);
   void (*f)(void *);
-  chan_t *r;
-  chan_t *w;
-  unsigned int l;
-  int d;
+  chan_t *r;      /* read Chan */
+  chan_t *w;      /* write Chan */
+  unsigned int l; /* readLimit */
+  int d;          /* socket */
 };
 
+/* read the chan and write the socket */
 static void *
 chanSockC(
   void *v
@@ -77,6 +78,7 @@ exit0:
   return 0;
 }
 
+/* read the socket and write the chan */
 static void *
 chanSockS(
   void *v
@@ -107,6 +109,7 @@ chanSockS(
    && (int)(m->l = read(x->d, m->b, x->l)) > 0) {
     void *t;
 
+    /* attempt to "right size" the message */
     if ((t = x->a(m, sizeof(*m) + m->l)))
       m = t;
     if (chanPoll(0, sizeof(p) / sizeof(p[0]), p) != 2)
@@ -122,6 +125,7 @@ exit0:
   return 0;
 }
 
+/* start reader and writer and wait for chanShuts */
 static void *
 chanSockW(
   void *v
@@ -209,10 +213,10 @@ chan_t *
 chanSock(
   void *(*a)(void *, unsigned long)
  ,void (*f)(void *)
- ,unsigned int l
  ,int d
  ,chan_t *r
  ,chan_t *w
+ ,unsigned int l
 ){
   struct chanSockX *x;
   pthread_t t;
@@ -228,10 +232,10 @@ chanSock(
   }
   x->a = a;
   x->f = f;
-  x->l = l;
   x->d = d;
   x->r = r;
   x->w = w;
+  x->l = l;
   if (pthread_create(&t, 0, chanSockW, p[0].c)) {
     chanClose(p[0].c);
     f(x);
