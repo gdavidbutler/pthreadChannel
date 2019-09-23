@@ -1,55 +1,50 @@
 ## pthreadChannel
-Yet another implementation of a Communicating Sequential Process (CSP) Channel construct for pthreads.
+Yet another implementation of a Communicating Sequential Process (CSP) "Channel" construct for POSIX threads (pthreads).
 
-A Channel implements a configurable store of anonymous, pointer sized, messages.
-Threads can (optionally block to) put a message in to or get a message out of a Channel.
-When blocking, access to puting or getting is granted in a first-come-first-serve basis.
+A Channel provides a programmable store of anonymous, pointer (void *) sized, messages.
 
 * A Channel holds a single message, by default. (See below.)
-* Messages can be put waiting on a get, when needed.
-* Any number of threads can put to and get from a Channel.
-* A thread can attempt to put to or get from many Channels till one can proceed.
+* Any number of pthreads can chanPut to or chanGet from a Channel.
+* A pthread can chanPut to or chanGet from any number of Channels.
 
-This implementation's focus is fair access to messages, relaxed somewhat under pressure.
+This implementation's focus is fair access (first-come-first-serve), relaxed somewhat under pressure.
 
 Find the API in chan.h:
 
-* chanCreate: Allocate an open chan_t (reference count = 1) pair with a chanClose
-* chanOpen: Open a chan_t (increment a reference count) pair with a chanClose
-* chanShut: Shutdown a chan_t (afterwards Put returns 0 and Get is non-blocking)
-* chanIsShut: Is a chan_t shutdown (a 0 return from a blocking chanPoll usually indicates a chan_t is Shut)
-* chanClose: Close a chan_t, (decrement a reference count) deallocate on last Close
-* chanGet: Get a message from a Channel
-* chanPut: Put a message to a Channel
-* chanPutWait: Put a message to a Channel, waiting till it has been gotten
-* chanPoll: perform a Channel operation (chanOp_t) on one of an array of Channels, working to satisfy them in the order provided.
+* chanCreate: Allocate an Open chan_t (reference count = 1, pair with chanClose).
+* chanOpen: Open a chan_t (increment reference count, pair with chanClose).
+* chanShut: Shutdown a chan_t (afterwards chanPut returns 0 and chanGet is non-blocking).
+* chanIsShut: Is a chan_t shutdown (to differentiate a 0 return from a blocking chanGet).
+* chanClose: Close a chan_t (decrement reference count, deallocate on last chanClose).
+* chanGet: Get a message from a Channel.
+* chanPut: Put a message to a Channel.
+* chanPutWait: Put a message to a Channel synchronously (wait for a chanGet).
+* chanPoll: perform a Channel Operation (chanOp_t) on one of an array of Channels, working to satisfy them in the order provided.
 
-A Channel's store implementation is configurable.
-In classic CSP, a low latency synchronous rendezvous works well when coded in machine or assembler code (jumping instead of context switching).
-If a store is needed, it is implemented in another process.
-However, modern processors provide native support for context frames (supporting local variables and recursive invocation).
-Resulting in "light weight" process context switching (e.g. setjmp()/longjmp(), makecontext()/swapcontext(), etc.)
-POSIX threads have an even greater context (process) switch cost.
-Therefore, simple stores should not be implemented in separate threads.
-A solution is to implement stores as shared code executed within contexts of threads.
+A Channel's store implementation is programmable.
+In classic CSPs, a low latency synchronous rendezvous (get and put block till the other arrives to exchange a message)
+works well when coded in machine or assembler language (a jumping, from put to get, context switch).
+Then, if a message store is desired (queue, stack, etc.), it is implemented as another CSP.
+Modern CSPs (e.g. "coroutines", "functions", etc.), supporting "local" variables and recursion, have a much higher context switch overhead.
+But native support by modern processors makes it acceptable.
+However pthreads require operating system support and context switches are prohibitively expensive for simple message stores.
+A solution is to implement stores as shared code executed within pthreads' contexts.
 
-If provided, a Channel invokes a store implementation (while a mutex lock is held.)
-The implementation can control store latency, priority, etc.
+If provided at chanCreate, a Channel can use a store implementation.
+The implementation can control latency, priority, etc.
 A Channel FIFO store implementation is provided.
 
 Find the API in chanFifo.h:
 
-* chanFifoSa: allocate a chanFifoSc (chanFifo context)
-* chanFifoSd: deallocate a chanFifoSc (chanFifo context)
+* chanFifoSa: allocate a chanFifoSc (chanFifo store context)
+* chanFifoSd: deallocate a chanFifoSc (chanFifo store context)
 * chanFifoSi: chanFifo store implementation
 
-Since a thread can't both wait in a chanPoll() and in a poll()/select()/etc., support for integrating bound sockets with Channels is provided.
+Since a pthread can't both wait in a chanPoll() and in a poll()/select()/etc., support for integrating bound sockets with Channels is provided.
 
 Find the API in chanSock.h:
 
 * chanSock: link a bound full duplex socket to a pair of Channels
-
-Use "make" to build.
 
 Some examples:
 
@@ -58,7 +53,13 @@ It is more complex because of pthread's API and various combinations of options.
 * sockproxy: Example of using chan.h and chanSock.h is provided in example/sockproxy.c. It is modeled on tcpproxy.c from [libtask](https://swtch.com/libtask/).
 Connects two chanSocks back-to-back, with Channels reversed.
 
-Note: sockproxy needs numeric values for -T, -F, -t, and -f. For example SOCK_STREAM:1, AF_INET:2:
+Note: sockproxy needs numeric values for socket type (-T, -t) and family type (-F, -f).
+Protocol type (-P, -p), service type (-S, -s) and host name (-H, -h) can be symbolic (see getaddrinfo()).
+(Upper case options are for the "server" side, lower case options are for the "client" side.)
+For most BSD compatible socket libraries, SOCK_STREAM is 1 and AF_INET is 2.
+For example, to listen (because of the server SOCK_STREAM socket type) for connections on any IPv4 stream socket on service 2222 and connect them to any IPv4 stream socket on service ssh at host localhost (letting the system choose the protocol):
 
 1. ./sockproxy -T 1 -F 2 -S 2222 -t 1 -f 2 -h localhost -s ssh &
 2. ssh -p 2222 user@localhost
+
+Use "make" or review the file "Makefile" to build.
