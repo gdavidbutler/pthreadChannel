@@ -535,9 +535,10 @@ putWait:
     }
   }
   while (m->c) {
-    if (w > 0)
-      pthread_cond_timedwait(&m->r, &m->m, &s);
-    else
+    if (w > 0) {
+      if (pthread_cond_timedwait(&m->r, &m->m, &s))
+        goto exit0;
+    } else
       pthread_cond_wait(&m->r, &m->m);
     /* third pass through array looking for quick exit */
     for (i = 0; i < t; ++i) switch ((a + i)->o) {
