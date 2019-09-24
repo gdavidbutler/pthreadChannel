@@ -29,7 +29,7 @@ struct chanSockX {
   chan_t *r;      /* read Chan */
   chan_t *w;      /* write Chan */
   unsigned int l; /* readLimit */
-  int d;          /* socket */
+  int s;          /* socket */
 };
 
 /* read the chan and write the socket */
@@ -61,13 +61,13 @@ chanSockC(
   p[1].o = chanOpGet;
   while (chanPoll(-1, sizeof(p) / sizeof(p[0]), p) == 2
    && (m->l)
-   && write(x->d, m->b, m->l) == m->l) {
+   && write(x->s, m->b, m->l) == m->l) {
     x->f(m);
     m = 0;
   }
   pthread_cleanup_pop(1); /* x->f(m) */
   pthread_cleanup_pop(1); /* chanShut(x->w) */
-  shutdown(x->d, SHUT_WR);
+  shutdown(x->s, SHUT_WR);
   p[0].o = chanOpNop;
   while (chanPoll(-1, sizeof(p) / sizeof(p[0]), p))
     x->f(m);
@@ -106,7 +106,7 @@ chanSockS(
   p[1].v = (void **)&m;
   p[1].o = chanOpPut;
   while ((m = x->a(0, sizeof(*m) + x->l - 1))
-   && (int)(m->l = read(x->d, m->b, x->l)) > 0) {
+   && (int)(m->l = read(x->s, m->b, x->l)) > 0) {
     void *t;
 
     /* attempt to "right size" the message */
@@ -117,7 +117,7 @@ chanSockS(
   }
   pthread_cleanup_pop(1); /* x->f(m) */
   pthread_cleanup_pop(1); /* chanShut(x->r) */
-  shutdown(x->d, SHUT_RD);
+  shutdown(x->s, SHUT_RD);
   pthread_cleanup_pop(1); /* chanClose(x->r) */
 exit0:
   pthread_cleanup_pop(1); /* chanShut(v) */
@@ -148,7 +148,7 @@ chanSockW(
     goto exit0;
   p[0].o = chanOpNop;
   pthread_cleanup_push((void(*)(void*))x->f, x);
-  pthread_cleanup_push((void(*)(void*))close, (void *)(long)x->d);
+  pthread_cleanup_push((void(*)(void*))close, (void *)(long)x->s);
   pthread_cleanup_push((void(*)(void*))chanShut, x->r);
   pthread_cleanup_push((void(*)(void*))chanShut, x->w);
   if (!(p[1].c = chanCreate(x->a, x->f, 0, 0, 0)))
@@ -201,7 +201,7 @@ exit2:
 exit1:
   pthread_cleanup_pop(1); /* chanShut(x->w) */
   pthread_cleanup_pop(1); /* chanShut(x->r) */
-  pthread_cleanup_pop(1); /* close(x->d) */
+  pthread_cleanup_pop(1); /* close(x->s) */
   pthread_cleanup_pop(1); /* x->f(x) */
 exit0:
   pthread_cleanup_pop(1); /* chanShut(v) */
@@ -213,7 +213,7 @@ chan_t *
 chanSock(
   void *(*a)(void *, unsigned long)
  ,void (*f)(void *)
- ,int d
+ ,int s
  ,chan_t *r
  ,chan_t *w
  ,unsigned int l
@@ -223,7 +223,7 @@ chanSock(
   chanPoll_t p[1];
 
   x = 0;
-  if (!a || !f || !l || d < 0 || !r || !w || !(x = a(0, sizeof(*x))))
+  if (!a || !f || !l || s < 0 || !r || !w || !(x = a(0, sizeof(*x))))
     return 0;
   p[0].v = (void **)&x;
   if (!(p[0].c = chanCreate(a, f, 0, 0, 0))) {
@@ -232,7 +232,7 @@ chanSock(
   }
   x->a = a;
   x->f = f;
-  x->d = d;
+  x->s = s;
   x->r = r;
   x->w = w;
   x->l = l;

@@ -25,10 +25,10 @@
  * Support I/O on a bound full duplex socket via a pair of send and receive channels.
  *
  * A chanPut() of chanSockM_t messages on the write channel does write()s on the socket:
- *  A chanGet() or socket write() failure will shutdown(fd, SHUT_WR) the socket and chanShut() the channel.
+ *  A chanGet() or socket write() failure will shutdown(socket, SHUT_WR) the socket and chanShut() the channel.
  *
  * A chanGet() on the read channel will receive chanSockM_t messages from read()s on the socket:
- *  A chanPut() or socket read() failure will shutdown(fd, SHUT_RD) the socket and chanShut() the channel.
+ *  A chanPut() or socket read() failure will shutdown(socket, SHUT_RD) the socket and chanShut() the channel.
  *
  * After both ends have completed, the socket is closed.
  */
@@ -41,13 +41,13 @@ typedef struct {
 } chanSockM_t;
 
 /*
- * Provide a fd to be used by a pair of channels:
- *  When either channel is chanShut() the other is chanShut and the fd is close()'d
- *  When read() or write() on the fd fails, the channels are chanShut() and the fd is close()'d
+ * Provide a socket to be used by a pair of channels:
+ *  When either channel is chanShut() the other is chanShut and the socket is close()'d
+ *  When read() or write() on the socket fails, the channels are chanShut() and the socket is close()'d
  * Returns a chanOpen()'d control chan_t to the thread coordinating the I/O threads:
- *  chanShut() on the control channel does chanShut() on the other channels and the fd is close()'d
+ *  chanShut() on the control channel does chanShut() on the other channels and the socket is close()'d
  * Warning: chanClose() must be called on the returned channel to prevent a memory leak.
  */
-chan_t *chanSock(void *(*realloc)(void *, unsigned long), void (*free)(void *), int fd, chan_t *read, chan_t *write, unsigned int readLimit); /* returns 0 on failure */
+chan_t *chanSock(void *(*realloc)(void *, unsigned long), void (*free)(void *), int socket, chan_t *read, chan_t *write, unsigned int readLimit); /* returns 0 on failure */
 
 #endif /* __CHANSOCK_H__ */
