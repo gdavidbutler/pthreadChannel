@@ -75,7 +75,7 @@ chan_t *chanCreate(void *(*realloc)(void *, unsigned long), void (*free)(void *)
 /* channel open, to keep a channel from being deallocated till chanClose */
 void chanOpen(chan_t *chn);
 
-/* channel shutdown, afterwards chanPut() always returns 0 and chanGet() is always noblock */
+/* channel shutdown, afterwards chanPut() always returns 0 and chanGet() is always non-blocking */
 void chanShut(chan_t *chn);
 
 /* channel is shutdown, when a blocking chan Put/Get/Poll return 0, use this to see if this is the reason */
@@ -94,14 +94,16 @@ void chanClose(chan_t *chn);
  *    then a meesage is opportunistically written instead of forcing a wait.
  */
 
+/* in each of the below, nsTimeout: -1 block forever, 0 non-blocking else timeout in nanoseconds */
+
 /* get a message */
-unsigned int chanGet(int noblock, chan_t *chn, void **val); /* returns 0 on failure, see chanIsShut() */
+unsigned int chanGet(long nsTimeout, chan_t *chn, void **val); /* returns 0 on failure, see chanIsShut() */
 
 /* put a message */
-unsigned int chanPut(int noblock, chan_t *chn, void *val); /* returns 0 on failure, see chanIsShut() */
+unsigned int chanPut(long nsTimeout, chan_t *chn, void *val); /* returns 0 on failure, see chanIsShut() */
 
-/* put a message then block return till a Get occurs */
-unsigned int chanPutWait(int noblock, chan_t *chn, void *val); /* returns 0 on failure, see chanIsShut() */
+/* put a message (as chanPut) then block (forever) till a Get occurs */
+unsigned int chanPutWait(long nsTimeout, chan_t *chn, void *val); /* returns 0 on failure, see chanIsShut() */
 
 /*
  * Channel poll.
@@ -112,7 +114,7 @@ typedef enum chanOp {
   chanOpNop     /* no operation, skip */
  ,chanOpGet     /* get a message */
  ,chanOpPut     /* put a message */
- ,chanOpPutWait /* put a message then block return till a Get occurs */
+ ,chanOpPutWait /* put a message then block (forever) till a Get occurs */
 } chanOp_t;
 
 /* channel poll array element */
@@ -126,12 +128,12 @@ typedef struct chanPoll {
  * Provide a set of channel operations and return when one of them completes.
  * Instead of having to change the size of the array, if no operation is desired
  * on a channel, set the chanOp to chanOpNop. Otherwise:
- *  When the store is full, Put blocks unless noblock is set.
- *  When the store is empty, Get blocks unless noblock is set.
- *  a PutWait is the same as a Put, then blocks return till a Get occurs
+ *  When the store is full, Put blocks based on nsTimeout.
+ *  When the store is empty, Get blocks based on nsTimeout.
+ *  a PutWait is the same as a Put, then blocks (forever) till a Get occurs
  * If an operation is successful (return greater than 0),
  *  the offset into the list is one less than the return value.
  */
-unsigned int chanPoll(int noblock, unsigned int count, chanPoll_t *chnp); /* returns 0 on failure, see chanIsShut() */
+unsigned int chanPoll(long nsTimeout, unsigned int count, chanPoll_t *chnp); /* returns 0 on failure, see chanIsShut() */
 
 #endif /* __CHAN_H__ */

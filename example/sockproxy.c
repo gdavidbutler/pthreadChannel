@@ -77,7 +77,7 @@ servT(
   /* wait for either chanSock to chanShut */
   p[0].v = p[1].v = &t;
   p[0].o = p[1].o = chanOpGet;
-  chanPoll(0, sizeof(p) / sizeof(p[0]), p);
+  chanPoll(-1, sizeof(p) / sizeof(p[0]), p);
   pthread_cleanup_pop(1); /* chanShut(p[1].c) */
   pthread_cleanup_pop(1); /* chanClose(p[1].c) */
 exit4:

@@ -87,7 +87,7 @@ primeT(
   c[1].c = 0;
   c[1].v = (void **)&ip;
   c[1].o = chanOpNop;
-  if (!chanPoll(0, sizeof(c) / sizeof(c[0]), c))
+  if (!chanPoll(-1, sizeof(c) / sizeof(c[0]), c))
     goto exit0;
 #if STORE
 #if MEMORY
@@ -114,7 +114,7 @@ primeT(
   if (pthread_create(&t, 0, primeT, c[1].c)) {
     puts("Can't create more threads, draining pipeline...");
 drain:
-    while (chanPoll(0, sizeof(c) / sizeof(c[0]), c))
+    while (chanPoll(-1, sizeof(c) / sizeof(c[0]), c))
 #if MEMORY
       free(ip)
 #endif
@@ -122,7 +122,7 @@ drain:
     goto exit1;
   }
   for (;;) {
-    switch (chanPoll(0, sizeof(c) / sizeof(c[0]), c)) {
+    switch (chanPoll(-1, sizeof(c) / sizeof(c[0]), c)) {
     case 1:
 #if MEMORY
       if (*ip % prime)
@@ -204,7 +204,7 @@ main(
 #else
     ip = i;
 #endif
-    if (!chanPoll(0, sizeof(h) / sizeof(h[0]), h))
+    if (!chanPoll(-1, sizeof(h) / sizeof(h[0]), h))
       break;
   }
   chanShut(h[0].c);
@@ -231,7 +231,7 @@ primeT(
 
   chanOpen(v);
   pthread_cleanup_push((void(*)(void*))chanClose, v);
-  if (!chanGet(0, v, (void **)&ip))
+  if (!chanGet(-1, v, (void **)&ip))
     goto exit0;
 #if STORE
 #if MEMORY
@@ -258,7 +258,7 @@ primeT(
   if (pthread_create(&t, 0, primeT, c)) {
 drain:
     puts("Can't create more threads, draining pipeline...");
-    while (chanGet(0, v, (void **)&ip))
+    while (chanGet(-1, v, (void **)&ip))
 #if MEMORY
       free(ip)
 #endif
@@ -266,7 +266,7 @@ drain:
     goto exit1;
   }
   for (;;) {
-    if (!chanGet(0, v, (void **)&ip))
+    if (!chanGet(-1, v, (void **)&ip))
       break;
 #if MEMORY
     if (*ip % prime)
@@ -277,9 +277,9 @@ drain:
       int r;
 
 #if MEMORY
-      r = chanPut(0, c, ip);
+      r = chanPut(-1, c, ip);
 #else
-      r = chanPut(0, c, (void *)ip);
+      r = chanPut(-1, c, (void *)ip);
 #endif
       if (!r)
         break;
@@ -342,10 +342,10 @@ main(
       break;
     }
     *ip = i;
-    r = chanPut(0, c, ip);
+    r = chanPut(-1, c, ip);
 #else
     ip = i;
-    r = chanPut(0, c, (void *)ip);
+    r = chanPut(-1, c, (void *)ip);
 #endif
     if (!r)
       break;

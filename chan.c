@@ -34,6 +34,7 @@ typedef struct {
   int t;             /* thread is active */
   unsigned int c;    /* reference count */
   pthread_mutex_t m;
+  pthread_condattr_t a;
   pthread_cond_t r;
 } cpr_t;
 
@@ -47,6 +48,7 @@ dCpr(
     pthread_mutex_unlock(&p->m);
   else {
     pthread_cond_destroy(&p->r);
+    pthread_condattr_destroy(&p->a);
     pthread_mutex_unlock(&p->m);
     pthread_mutex_destroy(&p->m);
     p->f(p);
@@ -86,13 +88,21 @@ gCpr(
       f(p);
       return (0);
     }
-    if (pthread_cond_init(&p->r, 0)) {
+    if (pthread_condattr_init(&p->a)) {
+      pthread_mutex_destroy(&p->m);
+      f(p);
+      return (0);
+    }
+    pthread_condattr_setclock(&p->a, CLOCK_MONOTONIC);
+    if (pthread_cond_init(&p->r, &p->a)) {
+      pthread_condattr_destroy(&p->a);
       pthread_mutex_destroy(&p->m);
       f(p);
       return (0);
     }
     if (pthread_setspecific(Cpr, p)) {
       pthread_cond_destroy(&p->r);
+      pthread_condattr_destroy(&p->a);
       pthread_mutex_destroy(&p->m);
       f(p);
       return (0);
@@ -256,7 +266,7 @@ chanClose(
 
 unsigned int
 chanPoll(
-  int n
+  long w
  ,unsigned int t
  ,chanPoll_t *a
 ){
@@ -265,11 +275,12 @@ chanPoll(
   cpr_t *m;
   void *v;
   unsigned int i;
+  struct timespec s;
 
   if (!t || !a)
     return (0);
   m = 0;
-  /* first pass through array looking for no-wait exit */
+  /* first pass through array looking for non-blocking exit */
   for (i = 0; i < t; ++i) switch ((a + i)->o) {
 
   case chanOpNop:
@@ -302,7 +313,7 @@ chanPoll(
     pthread_mutex_unlock(&c->m);
     break;
   }
-  if (n)
+  if (!w)
     return (0);
 
   /* second pass through array waiting at end of each line */
@@ -508,9 +519,26 @@ putWait:
   }
   if (!m)
     return (0);
+  if (w > 0) {
+    static long nsps = 1000000000L;
 
+    if (clock_gettime(CLOCK_MONOTONIC, &s))
+      return (0);
+    if (w > nsps) {
+      s.tv_sec += w / nsps;
+      s.tv_nsec += w % nsps;
+    } else
+      s.tv_nsec += w;
+    if (s.tv_nsec > nsps) {
+      ++s.tv_sec;
+      s.tv_nsec -= nsps;
+    }
+  }
   while (m->c) {
-    pthread_cond_wait(&m->r, &m->m);
+    if (w > 0)
+      pthread_cond_timedwait(&m->r, &m->m, &s);
+    else
+      pthread_cond_wait(&m->r, &m->m);
     /* third pass through array looking for quick exit */
     for (i = 0; i < t; ++i) switch ((a + i)->o) {
 
@@ -649,7 +677,7 @@ exit:
 
 unsigned int
 chanGet(
-  int n
+  long w
  ,chan_t *c
  ,void **v
 ){
@@ -658,12 +686,12 @@ chanGet(
   p[0].c = c;
   p[0].v = v;
   p[0].o = chanOpGet;
-  return (chanPoll(n, sizeof(p) / sizeof(p[0]), p));
+  return (chanPoll(w, sizeof(p) / sizeof(p[0]), p));
 }
 
 unsigned int
 chanPut(
-  int n
+  long w
  ,chan_t *c
  ,void *v
 ){
@@ -672,12 +700,12 @@ chanPut(
   p[0].c = c;
   p[0].v = &v;
   p[0].o = chanOpPut;
-  return (chanPoll(n, sizeof(p) / sizeof(p[0]), p));
+  return (chanPoll(w, sizeof(p) / sizeof(p[0]), p));
 }
 
 unsigned int
 chanPutWait(
-  int n
+  long w
  ,chan_t *c
  ,void *v
 ){
@@ -686,5 +714,5 @@ chanPutWait(
   p[0].c = c;
   p[0].v = &v;
   p[0].o = chanOpPutWait;
-  return (chanPoll(n, sizeof(p) / sizeof(p[0]), p));
+  return (chanPoll(w, sizeof(p) / sizeof(p[0]), p));
 }
