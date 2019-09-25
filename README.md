@@ -1,5 +1,8 @@
 ## pthreadChannel
+
 Yet another implementation of a Communicating Sequential Process (CSP) "Channel" construct for POSIX threads (pthreads).
+
+### Channel
 
 A Channel provides a programmable store of anonymous, pointer (void *) sized, messages.
 
@@ -16,10 +19,12 @@ Find the API in chan.h:
 * chanShut: Shutdown a chan_t (afterwards chanPut returns 0 and chanGet is non-blocking).
 * chanIsShut: Is a chan_t shutdown (to differentiate a 0 return from blocking operations).
 * chanClose: Close a chan_t (decrement reference count, deallocate on last chanClose).
-* chanGet: Get a message from a Channel.
-* chanPut: Put a message to a Channel.
-* chanPutWait: Put a message to a Channel synchronously (wait for a chanGet).
+* chanGet: Get a message from a Channel (asynchronously).
+* chanPut: Put a message to a Channel (asynchronously).
+* chanPutWait: Put a message to a Channel (synchronously waiting for a chanGet).
 * chanPoll: perform a Channel Operation (chanOp_t) on one of an array of Channels, working to satisfy them in the order provided.
+
+### Store
 
 A Channel's store implementation is programmable.
 In classic CSPs, a low latency synchronous rendezvous (get and put block till the other arrives to exchange a message)
@@ -40,13 +45,15 @@ Find the API in chanFifo.h:
 * chanFifoSd: deallocate a chanFifoSc (chanFifo store context)
 * chanFifoSi: chanFifo store implementation
 
+### Poll/Select
+
 Since a pthread can't both wait in a chanPoll() and in a poll()/select()/etc., support for integrating bound sockets with Channels is provided.
 
 Find the API in chanSock.h:
 
 * chanSock: link a bound full duplex socket to a pair of Channels
 
-Some examples:
+### Example
 
 * primes: Example of using chan.h and chanFifo.h is provided in example/primes.c. It is modeled on primes.c from [libtask](https://swtch.com/libtask/).
 It is more complex because of pthread's API and various combinations of options.
@@ -62,4 +69,76 @@ For example, to listen (because of the server SOCK_STREAM socket type) for conne
 1. ./sockproxy -T 1 -F 2 -S 2222 -t 1 -f 2 -h localhost -s ssh &
 2. ssh -p 2222 user@localhost
 
+### Building
+
 Use "make" or review the file "Makefile" to build.
+
+### Notes
+
+Channels can be sent over channels!
+Since pthreads are created with a single void * parameter,
+it can reference a "control" channel where other channels are Get/Put.
+(see chanSock.c for an example. Each pthread's initial parameter is a control channel.)
+
+Channels are uni-directional, flowing from Put to Get.
+But a thread can use a channel in half-duplex mode (Get/Put direction can be reversed using PutWait).
+
+Many programming languages natively support channels.
+Most often, they implement typed channels passing that type of message.
+That style can be used with this implementation as well.
+
+Alternatively, channels can have roles from the perspective of threads,
+e.g. mirroring the **C stdio** conventions of *stdin*, *stdout*, *stderr* (and the missing *stdctl*).
+Where messages can be one of multiple types, e.g.:
+
+* C:
+```
+typedef enum {
+  msgTypeReq
+ ,msgTypeRes
+} msg_e;
+
+typedef struct {
+  msg_e type;
+  union {
+    struct {
+      int data;
+    } typeReq;
+    struct {
+      char data[4];
+    } typeRes;
+  } u;
+} msg_t;
+```
+
+* [JSON](https://github.com/gdavidbutler/jsonTrivialCallbackParser) (a "string" type?):
+```
+{
+  "type":"Req"
+ ,"data":1
+}
+```
+
+* [XML](https://github.com/gdavidbutler/xmlTrivialCallbackParser) (a "string" type?):
+```
+<message>
+  <type>Res</type>
+  <data>dat</data>
+</message>
+```
+
+Naming conventions should be adopted and used consistently or confusion will result.
+
+In **type** style, *different* channels have the *same* name:
+
+1. Thread1: chanPut(-1, chanTypeReq, v);
+1. Thread2: chanGet(-1, chanTypeReq, &v);
+1. Thread2: chanPut(-1, chanTypeRes, v);
+1. Thread1: chanGet(-1, chanTypeRes, &v);
+
+In **role** style, the *same* channel has *different* names:
+
+1. Thread1: chanPut(-1, chanOut, v);
+1. Thread2: chanGet(-1, chanIn, &v);
+1. Thread2: chanPut(-1, chanOut, v);
+1. Thread1: chanGet(-1, chanIn, &v);
