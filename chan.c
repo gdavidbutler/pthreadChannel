@@ -205,7 +205,7 @@ chanShut(
   c->e |= chanSu;
   while (!(c->e & chanWe)) {
     p = *(c->w + c->wh);
-    if (c->wh == c->wt)
+    if (c->ws == 1)
       c->e |= chanWe;
     else {
       if (++c->wh == c->ws)
@@ -224,7 +224,7 @@ chanShut(
   }
   while (!(c->e & chanRe)) {
     p = *(c->r + c->rh);
-    if (c->rh == c->rt)
+    if (c->rs == 1)
       c->e |= chanRe;
     else {
       if (++c->rh == c->rs)
@@ -345,7 +345,7 @@ get:
       }
       if (c->s & chanSsCanPut) while (!(c->e & chanWe)) {
         p = *(c->w + c->wh);
-        if (c->wh == c->wt)
+        if (c->ws == 1)
           c->e |= chanWe;
         else {
           if (++c->wh == c->ws)
@@ -385,7 +385,7 @@ get:
       ++c->rs;
     }
     *(c->r + c->rt) = m;
-    if (c->rt != c->rs && ++c->rt == c->rs)
+    if (c->rs != 1 && ++c->rt == c->rs)
       c->rt = 0;
     c->e &= ~chanRe;
     ++m->c;
@@ -411,7 +411,7 @@ put:
       }
       if (c->s & chanSsCanGet) while (!(c->e & chanRe)) {
         p = *(c->r + c->rh);
-        if (c->rh == c->rt)
+        if (c->rs == 1)
           c->e |= chanRe;
         else {
           if (++c->rh == c->rs)
@@ -448,7 +448,7 @@ putQueue:
       ++c->ws;
     }
     *(c->w + c->wt) = m;
-    if (c->wt != c->ws && ++c->wt == c->ws)
+    if (c->ws != 1 && ++c->wt == c->ws)
       c->wt = 0;
     c->e &= ~chanWe;
     ++m->c;
@@ -482,7 +482,7 @@ putWait:
         ++c->ws;
       }
       *(c->w + c->wt) = m;
-      if (c->wt != c->ws && ++c->wt == c->ws)
+      if (c->ws != 1 && ++c->wt == c->ws)
         c->wt = 0;
       c->e &= ~chanWe;
       ++m->c;
@@ -495,7 +495,7 @@ putWait:
       }
       if (c->s & chanSsCanGet) while (!(c->e & chanRe)) {
         p = *(c->r + c->rh);
-        if (c->rh == c->rt)
+        if (c->rs == 1)
           c->e |= chanRe;
         else {
           if (++c->rh == c->rs)
@@ -518,7 +518,7 @@ putWait:
       /* since not taking a message, wake the next writer */
       if (c->s & chanSsCanPut) while (!(c->e & chanWe)) {
         p = *(c->w + c->wh);
-        if (c->wh == c->wt)
+        if (c->ws == 1)
           c->e |= chanWe;
         else {
           if (++c->wh == c->ws)
