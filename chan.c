@@ -128,13 +128,15 @@ struct chan {
   unsigned int rs; /* reader queue size */
   unsigned int rh; /* reader queue head */
   unsigned int rt; /* reader queue tail */
-  int re;          /* reader queue empty, differentiate on rh==rt */
   unsigned int ws; /* writer queue size */
   unsigned int wh; /* writer queue head */
   unsigned int wt; /* writer queue tail */
-  int we;          /* writer queue empty, differentiate on wh==wt */
   unsigned int c;  /* open count */
-  int u;           /* is shutdown */
+  enum {
+   chanSu = 1      /* is shutdown */
+  ,chanRe = 2      /* reader queue empty, to differentiate rh==rt */
+  ,chanWe = 4      /* writer queue empty, to differentiate wh==wt */
+  } e;
   pthread_mutex_t m;
 };
 
@@ -166,14 +168,13 @@ chanCreate(
   c->f = f;
   c->rs = c->ws = 1;
   c->rh = c->rt = c->wh = c->wt = 0;
-  c->re = c->we = 1;
+  c->e = chanRe | chanWe;
   if ((c->q = q)) {
     c->v = v;
     c->d = d;
   }
   c->s = chanSsCanPut;
   c->c = 1;
-  c->u = 0;
   return (c);
 }
 
@@ -197,17 +198,21 @@ chanShut(
   if (!c)
     return;
   pthread_mutex_lock(&c->m);
-  if (c->u) {
+  if (c->e & chanSu) {
     pthread_mutex_unlock(&c->m);
     return;
   }
-  c->u = 1;
-  while (!c->we) {
+  c->e |= chanSu;
+  while (!(c->e & chanWe)) {
     p = *(c->w + c->wh);
-    if (++c->wh == c->ws)
-      c->wh = 0;
     if (c->wh == c->wt)
-      c->we = 1;
+      c->e |= chanWe;
+    else {
+      if (++c->wh == c->ws)
+        c->wh = 0;
+      if (c->wh == c->wt)
+        c->e |= chanWe;
+    }
     assert(p->c);
     pthread_mutex_lock(&p->m);
     --p->c;
@@ -217,12 +222,16 @@ chanShut(
     }
     dCpr(p);
   }
-  while (!c->re) {
+  while (!(c->e & chanRe)) {
     p = *(c->r + c->rh);
-    if (++c->rh == c->rs)
-      c->rh = 0;
     if (c->rh == c->rt)
-      c->re = 1;
+      c->e |= chanRe;
+    else {
+      if (++c->rh == c->rs)
+        c->rh = 0;
+      if (c->rh == c->rt)
+        c->e |= chanRe;
+    }
     assert(p->c);
     pthread_mutex_lock(&p->m);
     --p->c;
@@ -239,7 +248,7 @@ int
 chanIsShut(
   chan_t *c
 ){
-  return (c->u);
+  return ((c->e & chanSu) == chanSu);
 }
 
 void
@@ -290,7 +299,7 @@ chanPoll(
     if (!(c = (a + i)->c) || !(a + i)->v)
       break;
     pthread_mutex_lock(&c->m);
-    if (c->s & chanSsCanGet && (c->re || !c->we || c->u))
+    if (c->s & chanSsCanGet && (c->e & chanSu || c->e & chanRe || !(c->e & chanWe)))
       goto get;
     pthread_mutex_unlock(&c->m);
     break;
@@ -299,7 +308,7 @@ chanPoll(
     if (!(c = (a + i)->c) || !(a + i)->v)
       break;
     pthread_mutex_lock(&c->m);
-    if (!c->u && c->s & chanSsCanPut && (c->we || !c->re))
+    if (c->s & chanSsCanPut && !(c->e & chanSu) && (c->e & chanWe || !(c->e & chanRe)))
       goto put;
     pthread_mutex_unlock(&c->m);
     break;
@@ -308,7 +317,7 @@ chanPoll(
     if (!(c = (a + i)->c) || !(a + i)->v)
       break;
     pthread_mutex_lock(&c->m);
-    if (!c->u && c->s & chanSsCanPut && (c->we || !c->re))
+    if (c->s & chanSsCanPut && !(c->e & chanSu) && (c->e & chanWe || !(c->e & chanRe)))
       goto putWait;
     pthread_mutex_unlock(&c->m);
     break;
@@ -326,7 +335,7 @@ chanPoll(
     if (!(c = (a + i)->c) || !(a + i)->v)
       break;
     pthread_mutex_lock(&c->m);
-    if (c->s & chanSsCanGet && (c->re || !c->we || c->u)) {
+    if (c->s & chanSsCanGet && (c->e & chanSu || c->e & chanRe || !(c->e & chanWe))) {
 get:
       if (c->q)
         c->s = c->q(c->v, chanSoGet, (a + i)->v);
@@ -334,12 +343,16 @@ get:
         *((a + i)->v) = c->v;
         c->s = chanSsCanPut;
       }
-      if (c->s & chanSsCanPut) while (!c->we) {
+      if (c->s & chanSsCanPut) while (!(c->e & chanWe)) {
         p = *(c->w + c->wh);
-        if (++c->wh == c->ws)
-          c->wh = 0;
         if (c->wh == c->wt)
-          c->we = 1;
+          c->e |= chanWe;
+        else {
+          if (++c->wh == c->ws)
+            c->wh = 0;
+          if (c->wh == c->wt)
+            c->e |= chanWe;
+        }
         assert(p->c);
         pthread_mutex_lock(&p->m);
         --p->c;
@@ -353,7 +366,7 @@ get:
       ++i;
       goto exit;
     }
-    if (c->u) {
+    if (c->e & chanSu) {
       pthread_mutex_unlock(&c->m);
       break;
     }
@@ -361,7 +374,7 @@ get:
       pthread_mutex_unlock(&c->m);
       return (0);
     }
-    if (!c->re && c->rh == c->rt) {
+    if (!(c->e & chanRe) && c->rh == c->rt) {
       if (!(v = c->a(c->r, (c->rs + 1) * sizeof(*c->r)))) {
         pthread_mutex_unlock(&c->m);
         goto exit0;
@@ -372,9 +385,9 @@ get:
       ++c->rs;
     }
     *(c->r + c->rt) = m;
-    if (++c->rt == c->rs)
+    if (c->rt != c->rs && ++c->rt == c->rs)
       c->rt = 0;
-    c->re = 0;
+    c->e &= ~chanRe;
     ++m->c;
     assert(m->c);
     pthread_mutex_unlock(&c->m);
@@ -384,11 +397,11 @@ get:
     if (!(c = (a + i)->c) || !(a + i)->v)
       break;
     pthread_mutex_lock(&c->m);
-    if (c->u) {
+    if (c->e & chanSu) {
       pthread_mutex_unlock(&c->m);
       break;
     }
-    if (c->s & chanSsCanPut && (c->we || !c->re)) {
+    if (c->s & chanSsCanPut && (c->e & chanWe || !(c->e & chanRe))) {
 put:
       if (c->q)
         c->s = c->q(c->v, chanSoPut, (a + i)->v);
@@ -396,12 +409,16 @@ put:
         c->v = *((a + i)->v);
         c->s = chanSsCanGet;
       }
-      if (c->s & chanSsCanGet) while (!c->re) {
+      if (c->s & chanSsCanGet) while (!(c->e & chanRe)) {
         p = *(c->r + c->rh);
-        if (++c->rh == c->rs)
-          c->rh = 0;
         if (c->rh == c->rt)
-          c->re = 1;
+          c->e |= chanRe;
+        else {
+          if (++c->rh == c->rs)
+            c->rh = 0;
+          if (c->rh == c->rt)
+            c->e |= chanRe;
+        }
         assert(p->c);
         pthread_mutex_lock(&p->m);
         --p->c;
@@ -420,7 +437,7 @@ putQueue:
       pthread_mutex_unlock(&c->m);
       return (0);
     }
-    if (!c->we && c->wh == c->wt) {
+    if (!(c->e & chanWe) && c->wh == c->wt) {
       if (!(v = c->a(c->w, (c->ws + 1) * sizeof(*c->w)))) {
         pthread_mutex_unlock(&c->m);
         goto exit0;
@@ -431,9 +448,9 @@ putQueue:
       ++c->ws;
     }
     *(c->w + c->wt) = m;
-    if (++c->wt == c->ws)
+    if (c->wt != c->ws && ++c->wt == c->ws)
       c->wt = 0;
-    c->we = 0;
+    c->e &= ~chanWe;
     ++m->c;
     assert(m->c);
     pthread_mutex_unlock(&c->m);
@@ -443,18 +460,18 @@ putQueue:
     if (!(c = (a + i)->c) || !(a + i)->v)
       break;
     pthread_mutex_lock(&c->m);
-    if (c->u) {
+    if (c->e & chanSu) {
       pthread_mutex_unlock(&c->m);
       break;
     }
-    if (c->s & chanSsCanPut && (c->we || !c->re)) {
+    if (c->s & chanSsCanPut && (c->e & chanWe || !(c->e & chanRe))) {
 putWait:
       /* after put wait on the write queue */
       if (!m && !(m = gCpr(c->a, c->f))) {
         pthread_mutex_unlock(&c->m);
         return (0);
       }
-      if (!c->we && c->wh == c->wt) {
+      if (!(c->e & chanWe) && c->wh == c->wt) {
         if (!(v = c->a(c->w, (c->ws + 1) * sizeof(*c->w)))) {
           pthread_mutex_unlock(&c->m);
           goto exit0;
@@ -465,9 +482,9 @@ putWait:
         ++c->ws;
       }
       *(c->w + c->wt) = m;
-      if (++c->wt == c->ws)
+      if (c->wt != c->ws && ++c->wt == c->ws)
         c->wt = 0;
-      c->we = 0;
+      c->e &= ~chanWe;
       ++m->c;
       assert(m->c);
       if (c->q)
@@ -476,12 +493,16 @@ putWait:
         c->v = *((a + i)->v);
         c->s = chanSsCanGet;
       }
-      if (c->s & chanSsCanGet) while (!c->re) {
+      if (c->s & chanSsCanGet) while (!(c->e & chanRe)) {
         p = *(c->r + c->rh);
-        if (++c->rh == c->rs)
-          c->rh = 0;
         if (c->rh == c->rt)
-          c->re = 1;
+          c->e |= chanRe;
+        else {
+          if (++c->rh == c->rs)
+            c->rh = 0;
+          if (c->rh == c->rt)
+            c->e |= chanRe;
+        }
         assert(p->c);
         pthread_mutex_lock(&p->m);
         --p->c;
@@ -495,12 +516,16 @@ putWait:
       pthread_cond_wait(&m->r, &m->m);
       pthread_mutex_lock(&c->m);
       /* since not taking a message, wake the next writer */
-      if (c->s & chanSsCanPut) while (!c->we) {
+      if (c->s & chanSsCanPut) while (!(c->e & chanWe)) {
         p = *(c->w + c->wh);
-        if (++c->wh == c->ws)
-          c->wh = 0;
         if (c->wh == c->wt)
-          c->we = 1;
+          c->e |= chanWe;
+        else {
+          if (++c->wh == c->ws)
+            c->wh = 0;
+          if (c->wh == c->wt)
+            c->e |= chanWe;
+        }
         assert(p->c);
         pthread_mutex_lock(&p->m);
         --p->c;
@@ -559,7 +584,7 @@ putWait:
       if (!(c = (a + i)->c) || !(a + i)->v)
         break;
       pthread_mutex_lock(&c->m);
-      if (!c->u && c->s & chanSsCanPut)
+      if (!(c->e & chanSu) && c->s & chanSsCanPut)
         goto put;
       pthread_mutex_unlock(&c->m);
       break;
@@ -568,7 +593,7 @@ putWait:
       if (!(c = (a + i)->c) || !(a + i)->v)
         break;
       pthread_mutex_lock(&c->m);
-      if (!c->u && c->s & chanSsCanPut)
+      if (!(c->e & chanSu) && c->s & chanSsCanPut)
         goto putWait;
       pthread_mutex_unlock(&c->m);
       break;
@@ -586,11 +611,11 @@ putWait:
       pthread_mutex_lock(&c->m);
       if (c->s & chanSsCanGet)
         goto get;
-      if (c->u) {
+      if (c->e & chanSu) {
         pthread_mutex_unlock(&c->m);
         break;
       }
-      if (!c->re && c->rh == c->rt) {
+      if (!(c->e & chanRe) && c->rh == c->rt) {
         if (!(v = c->a(c->r, (c->rs + 1) * sizeof(*c->r)))) {
           pthread_mutex_unlock(&c->m);
           goto exit0;
@@ -603,7 +628,7 @@ putWait:
       if (!c->rh)
         c->rh = c->rs;
       *(c->r + --c->rh) = m;
-      c->re = 0;
+      c->e &= ~chanRe;
       ++m->c;
       assert(m->c);
       pthread_mutex_unlock(&c->m);
@@ -613,13 +638,13 @@ putWait:
       if (!(c = (a + i)->c) || !(a + i)->v)
         break;
       pthread_mutex_lock(&c->m);
-      if (c->u) {
+      if (c->e & chanSu) {
         pthread_mutex_unlock(&c->m);
         break;
       }
       if (c->s & chanSsCanPut)
         goto put;
-      if (!c->we && c->wh == c->wt) {
+      if (!(c->e & chanWe) && c->wh == c->wt) {
         if (!(v = c->a(c->w, (c->ws + 1) * sizeof(*c->w)))) {
           pthread_mutex_unlock(&c->m);
           goto exit0;
@@ -632,7 +657,7 @@ putWait:
       if (!c->wh)
         c->wh = c->ws;
       *(c->w + --c->wh) = m;
-      c->we = 0;
+      c->e &= ~chanWe;
       ++m->c;
       assert(m->c);
       pthread_mutex_unlock(&c->m);
@@ -642,13 +667,13 @@ putWait:
       if (!(c = (a + i)->c) || !(a + i)->v)
         break;
       pthread_mutex_lock(&c->m);
-      if (c->u) {
+      if (c->e & chanSu) {
         pthread_mutex_unlock(&c->m);
         break;
       }
       if (c->s & chanSsCanPut)
         goto putWait;
-      if (!c->we && c->wh == c->wt) {
+      if (!(c->e & chanWe) && c->wh == c->wt) {
         if (!(v = c->a(c->w, (c->ws + 1) * sizeof(*c->w)))) {
           pthread_mutex_unlock(&c->m);
           goto exit0;
@@ -661,7 +686,7 @@ putWait:
       if (!c->wh)
         c->wh = c->ws;
       *(c->w + --c->wh) = m;
-      c->we = 0;
+      c->e &= ~chanWe;
       ++m->c;
       assert(m->c);
       pthread_mutex_unlock(&c->m);
