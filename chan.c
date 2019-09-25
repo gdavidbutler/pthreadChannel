@@ -625,9 +625,13 @@ putWait:
         ++c->rh;
         ++c->rs;
       }
-      if (!c->rh)
-        c->rh = c->rs;
-      *(c->r + --c->rh) = m;
+      if (c->rs == 1)
+        *c->r = m;
+      else {
+        if (!c->rh)
+          c->rh = c->rs;
+        *(c->r + --c->rh) = m;
+      }
       c->e &= ~chanRe;
       ++m->c;
       assert(m->c);
@@ -654,9 +658,13 @@ putWait:
         ++c->wh;
         ++c->ws;
       }
-      if (!c->wh)
-        c->wh = c->ws;
-      *(c->w + --c->wh) = m;
+      if (c->ws == 1)
+        *c->w = m;
+      else {
+        if (!c->wh)
+          c->wh = c->ws;
+        *(c->w + --c->wh) = m;
+      }
       c->e &= ~chanWe;
       ++m->c;
       assert(m->c);
@@ -683,9 +691,13 @@ putWait:
         ++c->wh;
         ++c->ws;
       }
-      if (!c->wh)
-        c->wh = c->ws;
-      *(c->w + --c->wh) = m;
+      if (c->ws == 1)
+        *c->w = m;
+      else {
+        if (!c->wh)
+          c->wh = c->ws;
+        *(c->w + --c->wh) = m;
+      }
       c->e &= ~chanWe;
       ++m->c;
       assert(m->c);
