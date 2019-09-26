@@ -33,7 +33,7 @@
  * After both ends have completed, the socket is closed.
  */
 
-/* a message, real size is sizeof(chanSockM_t) + (l ? l - 1 : 1) * sizeof(b[0]) */
+/* a message, real size is sizeof (chanSockM_t) + (l ? l - 1 : 1) * sizeof (b[0]) */
 /* a read limit is specified in the chanSock() call */
 typedef struct {
   unsigned int l;

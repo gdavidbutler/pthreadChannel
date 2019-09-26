@@ -38,13 +38,13 @@ chanFifoSa(
   chanFifoSc_t *c;
 
   if (!a || !f || !s)
-    return 0;
-  if (!(c = a(0, sizeof(*c) + (s - 1) * sizeof(c->q[0]))))
-    return c;
+    return (0);
+  if (!(c = a(0, sizeof (*c) + (s - 1) * sizeof (c->q[0]))))
+    return (c);
   c->f = f;
   c->s = s;
   c->h = c->t = 0;
-  return c;
+  return (c);
 }
 
 void
@@ -66,13 +66,13 @@ chanFifoSi(
     if (++((chanFifoSc_t*)c)->t == ((chanFifoSc_t*)c)->s)
       ((chanFifoSc_t*)c)->t = 0;
     if (((chanFifoSc_t*)c)->t == ((chanFifoSc_t*)c)->h)
-      return chanSsCanGet;
+      return (chanSsCanGet);
   } else {
     *v = ((chanFifoSc_t*)c)->q[((chanFifoSc_t*)c)->h];
     if (++((chanFifoSc_t*)c)->h == ((chanFifoSc_t*)c)->s)
       ((chanFifoSc_t*)c)->h = 0;
     if (((chanFifoSc_t*)c)->h == ((chanFifoSc_t*)c)->t)
-      return chanSsCanPut;
+      return (chanSsCanPut);
   }
-  return chanSsCanGet | chanSsCanPut;
+  return (chanSsCanGet | chanSsCanPut);
 }

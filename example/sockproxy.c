@@ -77,7 +77,7 @@ servT(
   /* wait for either chanSock to chanShut */
   p[0].v = p[1].v = &t;
   p[0].o = p[1].o = chanOpGet;
-  chanPoll(-1, sizeof(p) / sizeof(p[0]), p);
+  chanPoll(-1, sizeof (p) / sizeof (p[0]), p);
   pthread_cleanup_pop(1); /* chanShut(p[1].c) */
   pthread_cleanup_pop(1); /* chanClose(p[1].c) */
 exit4:
@@ -91,7 +91,7 @@ exit1:
   pthread_cleanup_pop(1); /* close(f[1]) */
 exit0:
   pthread_cleanup_pop(1); /* close(f[0]) */
-  return 0;
+  return (0);
 }
 
 static void *
@@ -121,7 +121,7 @@ listenT(
   perror("accept");
 exit0:
   pthread_cleanup_pop(1); /* close(l) */
-  return 0;
+  return (0);
 }
 
 static char const *ProgName;
@@ -137,7 +137,7 @@ usage(
    "\n"
   ,ProgName
   );
-  return 1;
+  return (1);
 }
 
 int
@@ -158,27 +158,27 @@ main(
 
   ProgName = argv[0];
 
-  memset(&shint, 0, sizeof(shint));
+  memset(&shint, 0, sizeof (shint));
   shint.ai_flags |= AI_PASSIVE;
-  memset(&chint, 0, sizeof(chint));
+  memset(&chint, 0, sizeof (chint));
   shost = sserv = 0;
   chost = cserv = 0;
 
   while ((i = getopt(argc, argv, "T:F:P:H:S:t:f:p:h:s:")) != -1) switch (i) {
   case 'T':
     if (!(shint.ai_socktype = atoi(optarg)))
-      return usage();
+      return (usage());
     break;
   case 'F':
     if (!(shint.ai_family = atoi(optarg)))
-      return usage();
+      return (usage());
     break;
   case 'P': {
     struct protoent *p;
 
     p = getprotobyname(optarg);
     if (!(shint.ai_protocol = p->p_proto))
-      return usage();
+      return (usage());
     } break;
   case 'H':
     shost = optarg;
@@ -188,18 +188,18 @@ main(
     break;
   case 't':
     if (!(chint.ai_socktype = atoi(optarg)))
-      return usage();
+      return (usage());
     break;
   case 'f':
     if (!(chint.ai_family = atoi(optarg)))
-      return usage();
+      return (usage());
     break;
   case 'p': {
     struct protoent *p;
 
     p = getprotobyname(optarg);
     if (!(chint.ai_protocol = p->p_proto))
-      return usage();
+      return (usage());
     } break;
   case 'h':
     chost = optarg;
@@ -208,7 +208,7 @@ main(
     cserv = optarg;
     break;
   default:
-    return usage();
+    return (usage());
     break;
   }
 
@@ -216,44 +216,44 @@ main(
   argv += optind;
 
   if (argc || !sserv || !chost || !cserv)
-    return usage();
+    return (usage());
 
   if (getaddrinfo(shost, sserv, &shint, &saddr) || !saddr) {
     perror("getaddrinfo(server)");
-    return 1;
+    return (1);
   }
   if (saddr->ai_next) {
     fprintf(stderr, "too many server addrinfo found, be more specific\n");
-    return 1;
+    return (1);
   }
   if (getaddrinfo(chost, cserv, &chint, &Caddr) || !Caddr) {
     perror("getaddrinfo(client)");
-    return 1;
+    return (1);
   }
   if (Caddr->ai_next) {
     fprintf(stderr, "too many client addrinfo found, be more specific\n");
-    return 1;
+    return (1);
   }
   i = 1;
   if ((fd = socket(saddr->ai_family, saddr->ai_socktype, saddr->ai_protocol)) < 0
-   || setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &i, sizeof(i))
+   || setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &i, sizeof (i))
    || bind(fd, saddr->ai_addr, saddr->ai_addrlen)) {
     perror("socket/setsockopt/bind");
-    return 1;
+    return (1);
   }
   if ((saddr->ai_socktype == SOCK_STREAM || saddr->ai_socktype == SOCK_SEQPACKET)) {
     if (pthread_create(&p, 0, listenT, (void *)(long)fd)) {
       perror("pthread_create");
-      return 1;
+      return (1);
     }
   } else {
     if (pthread_create(&p, 0, servT, (void *)(long)fd)) {
       perror("pthread_create");
-      return 1;
+      return (1);
     }
   }
   pthread_join(p, 0);
   freeaddrinfo(saddr);
   freeaddrinfo(Caddr);
-  return 0;
+  return (0);
 }

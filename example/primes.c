@@ -87,7 +87,7 @@ primeT(
   c[1].c = 0;
   c[1].v = (void **)&ip;
   c[1].o = chanOpNop;
-  if (!chanPoll(-1, sizeof(c) / sizeof(c[0]), c))
+  if (!chanPoll(-1, sizeof (c) / sizeof (c[0]), c))
     goto exit0;
 #if STORE
 #if MEMORY
@@ -114,7 +114,7 @@ primeT(
   if (pthread_create(&t, 0, primeT, c[1].c)) {
     puts("Can't create more threads, draining pipeline...");
 drain:
-    while (chanPoll(-1, sizeof(c) / sizeof(c[0]), c))
+    while (chanPoll(-1, sizeof (c) / sizeof (c[0]), c))
 #if MEMORY
       free(ip)
 #endif
@@ -122,7 +122,7 @@ drain:
     goto exit1;
   }
   for (;;) {
-    switch (chanPoll(-1, sizeof(c) / sizeof(c[0]), c)) {
+    switch (chanPoll(-1, sizeof (c) / sizeof (c[0]), c)) {
     case 1:
 #if MEMORY
       if (*ip % prime)
@@ -155,7 +155,7 @@ exit1:
   pthread_cleanup_pop(1); /* chanClose(c[1].c) */
 exit0:
   pthread_cleanup_pop(1); /* chanClose(v) */
-  return 0;
+  return (0);
 }
 
 int
@@ -184,19 +184,19 @@ main(
     h[0].c = chanCreate(realloc, free, 0, 0, 0);
   if (!h[0].c) {
     puts("Can't create channel");
-    return 0;
+    return (0);
   }
   pthread_cleanup_push((void(*)(void*))chanClose, h[0].c);
   h[0].v = (void **)&ip;
   h[0].o = chanOpPut;
   if (pthread_create(&t, 0, primeT, h[0].c)) {
     puts("Can't create thread");
-    return 0;
+    return (0);
   }
   puts("2");
   for (i = 3; i <= Goal; i += 2) {
 #if MEMORY
-    if (!(ip = malloc(sizeof(*ip)))) {
+    if (!(ip = malloc(sizeof (*ip)))) {
       puts("Can't malloc");
       break;
     }
@@ -204,14 +204,14 @@ main(
 #else
     ip = i;
 #endif
-    if (!chanPoll(-1, sizeof(h) / sizeof(h[0]), h))
+    if (!chanPoll(-1, sizeof (h) / sizeof (h[0]), h))
       break;
   }
   chanShut(h[0].c);
   pthread_join(t, 0);
   printf("joined Goal\n"); fflush(stdout);
   pthread_cleanup_pop(1); /* chanClose(h[0].c) */
-  return 0;
+  return (0);
 }
 
 #else /* POLL */
@@ -296,7 +296,7 @@ exit1:
   pthread_cleanup_pop(1); /* chanClose(c) */
 exit0:
   pthread_cleanup_pop(1); /* chanClose(v) */
-  return 0;
+  return (0);
 }
 
 int
@@ -325,19 +325,19 @@ main(
     c = chanCreate(realloc, free, 0, 0, 0);
   if (!c) {
     puts("Can't create channel");
-    return 0;
+    return (0);
   }
   pthread_cleanup_push((void(*)(void*))chanClose, c);
   if (pthread_create(&t, 0, primeT, c)) {
     puts("Can't create thread");
-    return 0;
+    return (0);
   }
   puts("2");
   for (i = 3; i <= Goal; i += 2) {
     int r;
 
 #if MEMORY
-    if (!(ip = malloc(sizeof(*ip)))) {
+    if (!(ip = malloc(sizeof (*ip)))) {
       puts("Can't malloc");
       break;
     }
@@ -354,7 +354,7 @@ main(
   pthread_join(t, 0);
   printf("joined Goal\n"); fflush(stdout);
   pthread_cleanup_pop(1); /* chanClose(c) */
-  return 0;
+  return (0);
 }
 
 #endif /* POLL */

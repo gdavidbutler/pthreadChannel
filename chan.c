@@ -83,7 +83,7 @@ gCpr(
   if (pthread_once(&o, cCpr))
     return (0);
   if (!(p = pthread_getspecific(Cpr))) {
-    if (!(p = a(0, sizeof(*p)))
+    if (!(p = a(0, sizeof (*p)))
      || pthread_mutex_init(&p->m, 0)) {
       f(p);
       return (0);
@@ -152,10 +152,10 @@ chanCreate(
 
   if (!a || !f || (q && !v))
     return (0);
-  if ((c = a(0, sizeof(*c)))) {
+  if ((c = a(0, sizeof (*c)))) {
     c->r = c->w = 0;
-    if (!(c->r = a(0, sizeof(*c->r)))
-     || !(c->w = a(0, sizeof(*c->w)))
+    if (!(c->r = a(0, sizeof (*c->r)))
+     || !(c->w = a(0, sizeof (*c->w)))
      || pthread_mutex_init(&c->m, 0)) {
       f(c->w);
       f(c->r);
@@ -375,12 +375,12 @@ get:
       return (0);
     }
     if (!(c->e & chanRe) && c->rh == c->rt) {
-      if (!(v = c->a(c->r, (c->rs + 1) * sizeof(*c->r)))) {
+      if (!(v = c->a(c->r, (c->rs + 1) * sizeof (*c->r)))) {
         pthread_mutex_unlock(&c->m);
         goto exit0;
       }
       c->r = v;
-      memmove(c->r + c->rh + 1, c->r + c->rh, (c->rs - c->rh) * sizeof(*c->r));
+      memmove(c->r + c->rh + 1, c->r + c->rh, (c->rs - c->rh) * sizeof (*c->r));
       ++c->rh;
       ++c->rs;
     }
@@ -438,12 +438,12 @@ putQueue:
       return (0);
     }
     if (!(c->e & chanWe) && c->wh == c->wt) {
-      if (!(v = c->a(c->w, (c->ws + 1) * sizeof(*c->w)))) {
+      if (!(v = c->a(c->w, (c->ws + 1) * sizeof (*c->w)))) {
         pthread_mutex_unlock(&c->m);
         goto exit0;
       }
       c->w = v;
-      memmove(c->w + c->wh + 1, c->w + c->wh, (c->ws - c->wh) * sizeof(*c->w));
+      memmove(c->w + c->wh + 1, c->w + c->wh, (c->ws - c->wh) * sizeof (*c->w));
       ++c->wh;
       ++c->ws;
     }
@@ -472,12 +472,12 @@ putWait:
         return (0);
       }
       if (!(c->e & chanWe) && c->wh == c->wt) {
-        if (!(v = c->a(c->w, (c->ws + 1) * sizeof(*c->w)))) {
+        if (!(v = c->a(c->w, (c->ws + 1) * sizeof (*c->w)))) {
           pthread_mutex_unlock(&c->m);
           goto exit0;
         }
         c->w = v;
-        memmove(c->w + c->wh + 1, c->w + c->wh, (c->ws - c->wh) * sizeof(*c->w));
+        memmove(c->w + c->wh + 1, c->w + c->wh, (c->ws - c->wh) * sizeof (*c->w));
         ++c->wh;
         ++c->ws;
       }
@@ -616,12 +616,12 @@ putWait:
         break;
       }
       if (!(c->e & chanRe) && c->rh == c->rt) {
-        if (!(v = c->a(c->r, (c->rs + 1) * sizeof(*c->r)))) {
+        if (!(v = c->a(c->r, (c->rs + 1) * sizeof (*c->r)))) {
           pthread_mutex_unlock(&c->m);
           goto exit0;
         }
         c->r = v;
-        memmove(c->r + c->rh + 1, c->r + c->rh, (c->rs - c->rh) * sizeof(*c->r));
+        memmove(c->r + c->rh + 1, c->r + c->rh, (c->rs - c->rh) * sizeof (*c->r));
         ++c->rh;
         ++c->rs;
       }
@@ -649,12 +649,12 @@ putWait:
       if (c->s & chanSsCanPut)
         goto put;
       if (!(c->e & chanWe) && c->wh == c->wt) {
-        if (!(v = c->a(c->w, (c->ws + 1) * sizeof(*c->w)))) {
+        if (!(v = c->a(c->w, (c->ws + 1) * sizeof (*c->w)))) {
           pthread_mutex_unlock(&c->m);
           goto exit0;
         }
         c->w = v;
-        memmove(c->w + c->wh + 1, c->w + c->wh, (c->ws - c->wh) * sizeof(*c->w));
+        memmove(c->w + c->wh + 1, c->w + c->wh, (c->ws - c->wh) * sizeof (*c->w));
         ++c->wh;
         ++c->ws;
       }
@@ -682,12 +682,12 @@ putWait:
       if (c->s & chanSsCanPut)
         goto putWait;
       if (!(c->e & chanWe) && c->wh == c->wt) {
-        if (!(v = c->a(c->w, (c->ws + 1) * sizeof(*c->w)))) {
+        if (!(v = c->a(c->w, (c->ws + 1) * sizeof (*c->w)))) {
           pthread_mutex_unlock(&c->m);
           goto exit0;
         }
         c->w = v;
-        memmove(c->w + c->wh + 1, c->w + c->wh, (c->ws - c->wh) * sizeof(*c->w));
+        memmove(c->w + c->wh + 1, c->w + c->wh, (c->ws - c->wh) * sizeof (*c->w));
         ++c->wh;
         ++c->ws;
       }
@@ -724,7 +724,7 @@ chanGet(
   p[0].c = c;
   p[0].v = v;
   p[0].o = chanOpGet;
-  return (chanPoll(w, sizeof(p) / sizeof(p[0]), p));
+  return (chanPoll(w, sizeof (p) / sizeof (p[0]), p));
 }
 
 unsigned int
@@ -738,7 +738,7 @@ chanPut(
   p[0].c = c;
   p[0].v = &v;
   p[0].o = chanOpPut;
-  return (chanPoll(w, sizeof(p) / sizeof(p[0]), p));
+  return (chanPoll(w, sizeof (p) / sizeof (p[0]), p));
 }
 
 unsigned int
@@ -752,5 +752,5 @@ chanPutWait(
   p[0].c = c;
   p[0].v = &v;
   p[0].o = chanOpPutWait;
-  return (chanPoll(w, sizeof(p) / sizeof(p[0]), p));
+  return (chanPoll(w, sizeof (p) / sizeof (p[0]), p));
 }
