@@ -6,9 +6,10 @@ Yet another implementation of a Communicating Sequential Process (CSP) "Channel"
 
 A Channel provides a programmable store of anonymous, pointer (void *) sized, messages.
 
-* A Channel holds a single message, by default. (See below.)
-* Any number of pthreads can chanPut to or chanGet from a Channel.
-* A pthread can chanPut to or chanGet from any number of Channels.
+* Channels hold a single message, by default. (See Store, below.)
+* Any number of pthreads can Put/Get on a Channel.
+* A pthread can Put/Get on any number of Channels.
+* Channels can be Put/Get on channels!
 
 This implementation's focus is fair access (first-come-first-serve), relaxed somewhat under pressure.
 
@@ -73,72 +74,3 @@ Connects two chanSocks back-to-back, with Channels reversed.
 ### Building
 
 Use "make" or review the file "Makefile" to build.
-
-### Notes
-
-Channels can be sent over channels!
-
-Channels are uni-directional, flowing from Put to Get.
-But a thread can use a channel in half-duplex mode (Get/Put direction can be reversed using PutWait).
-
-Many programming languages natively support channels.
-Most often, they implement typed channels passing that type of message.
-That style can be used with this implementation as well.
-
-Alternatively, channels can have roles from the perspective of threads,
-e.g. mirroring the **C stdio** conventions of *stdin*, *stdout*, *stderr* (and the missing *stdctl*).
-Where messages can be one of multiple types, e.g.:
-
-* C:
-```
-typedef struct {
-  enum {
-    msgReq
-   ,msgRes
-  } type;
-  union {
-    struct {
-      int data;
-    } req;
-    struct {
-      char data[4];
-    } res;
-  } /* if anonymous unions are supported, else u; */
-} msg_t;
-```
-
-* [JSON](https://github.com/gdavidbutler/jsonTrivialCallbackParser) (a "string" type?):
-```
-{
-  "type":"Req"
- ,"data":1
-}
-```
-
-* [XML](https://github.com/gdavidbutler/xmlTrivialCallbackParser) (a "string" type?):
-```
-<message>
-  <type>Res</type>
-  <data>dat</data>
-</message>
-```
-
-Naming conventions should be adopted and used consistently or confusion will result.
-
-In **type** style, *different* channels have the *same* name:
-
-1. Thread1: chanPut(-1, chanTypeReq, v);
-1. Thread2: chanGet(-1, chanTypeReq, &v);
-1. Thread2: chanPut(-1, chanTypeRes, v);
-1. Thread1: chanGet(-1, chanTypeRes, &v);
-
-In **role** style, the *same* channel has *different* names:
-
-1. Thread1: chanPut(-1, chanOut, v);
-1. Thread2: chanGet(-1, chanIn, &v);
-1. Thread2: chanPut(-1, chanOut, v);
-1. Thread1: chanGet(-1, chanIn, &v);
-
-As an exmaple of role style, since pthreads are created with a single void * parameter,
-it can reference a "control" channel where other channels are Get/Put.
-(see chanSock.c for an example. Each pthread's initial parameter is a control channel.)
