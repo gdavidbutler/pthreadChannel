@@ -83,11 +83,11 @@ primeT(
   pthread_cleanup_push((void(*)(void*))chanClose, v);
   c[0].c = v;
   c[0].v = (void **)&ip;
-  c[0].o = chanOpGet;
+  c[0].o = chanPoGet;
   c[1].c = 0;
   c[1].v = (void **)&ip;
-  c[1].o = chanOpNop;
-  if (!chanPoll(-1, sizeof (c) / sizeof (c[0]), c))
+  c[1].o = chanPoNop;
+  if (chanPoll(-1, sizeof (c) / sizeof (c[0]), c) != 1 || c[0].s != chanOsGet)
     goto exit0;
 #if STORE
 #if MEMORY
@@ -114,7 +114,7 @@ primeT(
   if (pthread_create(&t, 0, primeT, c[1].c)) {
     puts("Can't create more threads, draining pipeline...");
 drain:
-    while (chanPoll(-1, sizeof (c) / sizeof (c[0]), c))
+    while (chanPoll(-1, sizeof (c) / sizeof (c[0]), c) == 1 && c[0].s == chanOsGet)
 #if MEMORY
       free(ip)
 #endif
@@ -124,14 +124,16 @@ drain:
   for (;;) {
     switch (chanPoll(-1, sizeof (c) / sizeof (c[0]), c)) {
     case 1:
+      if (c[0].s != chanOsGet)
+        goto endFor;
 #if MEMORY
       if (*ip % prime)
 #else
       if (ip % prime)
 #endif
       {
-        c[0].o = chanOpNop;
-        c[1].o = chanOpPut;
+        c[0].o = chanPoNop;
+        c[1].o = chanPoPut;
       }
 #if MEMORY
       else
@@ -139,8 +141,10 @@ drain:
 #endif
       break;
     case 2:
-      c[0].o = chanOpGet;
-      c[1].o = chanOpNop;
+      if (c[1].s != chanOsPut)
+        goto endFor;
+      c[0].o = chanPoGet;
+      c[1].o = chanPoNop;
       break;
     default:
       goto endFor;
@@ -188,7 +192,7 @@ main(
   }
   pthread_cleanup_push((void(*)(void*))chanClose, h[0].c);
   h[0].v = (void **)&ip;
-  h[0].o = chanOpPut;
+  h[0].o = chanPoPut;
   if (pthread_create(&t, 0, primeT, h[0].c)) {
     puts("Can't create thread");
     return (0);
@@ -204,7 +208,7 @@ main(
 #else
     ip = i;
 #endif
-    if (!chanPoll(-1, sizeof (h) / sizeof (h[0]), h))
+    if (chanPoll(-1, sizeof (h) / sizeof (h[0]), h) != 1 || h[0].s != chanOsPut)
       break;
   }
   chanShut(h[0].c);
@@ -231,7 +235,7 @@ primeT(
 
   chanOpen(v);
   pthread_cleanup_push((void(*)(void*))chanClose, v);
-  if (!chanGet(-1, v, (void **)&ip))
+  if (chanGet(-1, v, (void **)&ip) != chanOsGet)
     goto exit0;
 #if STORE
 #if MEMORY
@@ -258,7 +262,7 @@ primeT(
   if (pthread_create(&t, 0, primeT, c)) {
 drain:
     puts("Can't create more threads, draining pipeline...");
-    while (chanGet(-1, v, (void **)&ip))
+    while (chanGet(-1, v, (void **)&ip) == chanOsGet)
 #if MEMORY
       free(ip)
 #endif
@@ -266,7 +270,7 @@ drain:
     goto exit1;
   }
   for (;;) {
-    if (!chanGet(-1, v, (void **)&ip))
+    if (chanGet(-1, v, (void **)&ip) != chanOsGet)
       break;
 #if MEMORY
     if (*ip % prime)
@@ -281,7 +285,7 @@ drain:
 #else
       r = chanPut(-1, c, (void *)ip);
 #endif
-      if (!r)
+      if (r != chanOsPut)
         break;
     }
 #if MEMORY
@@ -347,7 +351,7 @@ main(
     ip = i;
     r = chanPut(-1, c, (void *)ip);
 #endif
-    if (!r)
+    if (r != chanOsPut)
       break;
   }
   chanShut(c);

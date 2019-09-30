@@ -20,7 +20,7 @@
 #define __CHAN_H__
 
 /*
- * Channel Store.
+ * Channel Store
  */
 
 /* channel store operation */
@@ -49,7 +49,7 @@ typedef chanSs_t (*chanSi_t)(void *cntx, chanSo_t oper, void **val);
 typedef void (*chanSd_t)(void *cntx);
 
 /*
- * Channel.
+ * Channel
  */
 typedef struct chan chan_t;
 
@@ -78,7 +78,7 @@ void chanOpen(chan_t *chn);
 /* channel shutdown, afterwards chanPut() always returns 0 and chanGet() is always non-blocking */
 void chanShut(chan_t *chn);
 
-/* channel is shutdown, when a blocking chan Put/Get/Poll return 0, use this to see if this is the reason */
+/* channel is shutdown */
 int chanIsShut(chan_t *chn);
 
 /* channel close, on last close, deallocate */
@@ -94,34 +94,45 @@ void chanClose(chan_t *chn);
  *    then a meesage is opportunistically written instead of forcing a wait.
  */
 
+/* channel operation status */
+typedef enum {
+  chanOsFlr = 0 /* Failure */
+ ,chanOsGet     /* Get successful */
+ ,chanOsPut     /* Put successful (or timeout on Wait part of PutWait) */
+ ,chanOsPutWait /* PutWait successful */
+ ,chanOsShut    /* Shutdown */
+ ,chanOsTmo     /* Timeout */
+} chanOs_t;
+
 /* in each of the below, nsTimeout: -1 block forever, 0 non-blocking else timeout in nanoseconds */
 
 /* get a message */
-unsigned int chanGet(long nsTimeout, chan_t *chn, void **val); /* returns 0 on failure, see chanIsShut() */
+chanOs_t chanGet(long nsTimeout, chan_t *chn, void **val);
 
 /* put a message */
-unsigned int chanPut(long nsTimeout, chan_t *chn, void *val); /* returns 0 on failure, see chanIsShut() */
+chanOs_t chanPut(long nsTimeout, chan_t *chn, void *val);
 
-/* put a message (as chanPut) then block (forever) till a Get occurs */
-unsigned int chanPutWait(long nsTimeout, chan_t *chn, void *val); /* returns 0 on failure, see chanIsShut() */
+/* put a message (as chanPut) then block till a Get occurs */
+chanOs_t chanPutWait(long nsTimeout, chan_t *chn, void *val);
 
 /*
- * Channel poll.
+ * Channel poll
  */
 
 /* channel poll operation */
-typedef enum chanOp {
-  chanOpNop     /* no operation, skip */
- ,chanOpGet     /* get a message */
- ,chanOpPut     /* put a message */
- ,chanOpPutWait /* put a message then block (forever) till a Get occurs */
-} chanOp_t;
+typedef enum chanPo {
+  chanPoNop = 0 /* no operation, skip */
+ ,chanPoGet     /* get a message */
+ ,chanPoPut     /* put a message */
+ ,chanPoPutWait /* put a message then block till a Get occurs */
+} chanPo_t;
 
 /* channel poll array element */
 typedef struct chanPoll {
   chan_t *c;  /* channel to operate on, if 0 then behave as chanOpNop */
   void **v;   /* where to get/put a message, if 0 then behave as chanOpNop */
-  chanOp_t o;
+  chanPo_t o;
+  chanOs_t s;
 } chanPoll_t;
 
 /*
@@ -130,10 +141,10 @@ typedef struct chanPoll {
  * on a channel, set the chanOp to chanOpNop. Otherwise:
  *  When the store is full, Put blocks based on nsTimeout.
  *  When the store is empty, Get blocks based on nsTimeout.
- *  a PutWait is the same as a Put, then blocks (forever) till a Get occurs
+ *  a PutWait is the same as a Put, then blocks till a Get occurs
  * If an operation is successful (return greater than 0),
  *  the offset into the list is one less than the return value.
  */
-unsigned int chanPoll(long nsTimeout, unsigned int count, chanPoll_t *chnp); /* returns 0 on failure, see chanIsShut() */
+unsigned int chanPoll(long nsTimeout, unsigned int count, chanPoll_t *chnp); /* returns 0 on failure */
 
 #endif /* __CHAN_H__ */
