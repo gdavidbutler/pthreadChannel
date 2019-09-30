@@ -18,12 +18,12 @@ Find the API in chan.h:
 * chanCreate: Allocate an Open chan_t (reference count = 1, pair with chanClose).
 * chanOpen: Open a chan_t (increment reference count, pair with chanClose).
 * chanShut: Shutdown a chan_t (afterwards chanPut returns 0 and chanGet is non-blocking).
-* chanIsShut: Is a chan_t shutdown (to differentiate a 0 return from blocking operations).
+* chanIsShut: Is a chan_t shutdown.
 * chanClose: Close a chan_t (decrement reference count, deallocate on last chanClose).
 * chanGet: Get a message from a Channel (asynchronously).
 * chanPut: Put a message to a Channel (asynchronously).
 * chanPutWait: Put a message to a Channel (synchronously waiting for a chanGet).
-* chanPoll: perform a Channel Operation (chanOp_t) on one of an array of Channels, working to satisfy them in the order provided.
+* chanPoll: perform a Channel Operation (chanPo_t) on one of an array of Channels, working to satisfy them in the order provided.
 
 ### Store
 

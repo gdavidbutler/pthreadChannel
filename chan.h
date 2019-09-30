@@ -129,8 +129,8 @@ typedef enum chanPo {
 
 /* channel poll array element */
 typedef struct chanPoll {
-  chan_t *c;  /* channel to operate on, if 0 then behave as chanOpNop */
-  void **v;   /* where to get/put a message, if 0 then behave as chanOpNop */
+  chan_t *c;  /* channel to operate on, if 0 then behave as chanPoNop */
+  void **v;   /* where to get/put a message, if 0 then behave as chanPoNop */
   chanPo_t o;
   chanOs_t s;
 } chanPoll_t;
@@ -138,7 +138,7 @@ typedef struct chanPoll {
 /*
  * Provide a set of channel operations and return when one of them completes.
  * Instead of having to change the size of the array, if no operation is desired
- * on a channel, set the chanOp to chanOpNop. Otherwise:
+ * on a channel, set the chanPo to chanPoNop. Otherwise:
  *  When the store is full, Put blocks based on nsTimeout.
  *  When the store is empty, Get blocks based on nsTimeout.
  *  a PutWait is the same as a Put, then blocks till a Get occurs
