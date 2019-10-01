@@ -35,19 +35,31 @@
 
 /* a message, real size is sizeof (chanSockM_t) + (l ? l - 1 : 1) * sizeof (b[0]) */
 /* a read limit is specified in the chanSock() call */
-typedef struct {
+typedef struct chanSockM {
   unsigned int l;
   unsigned char b[1]; /* the first character of l characters, must be last */
 } chanSockM_t;
 
 /*
+ * Provide a hup chan_t to the thread coordinating the I/O threads:
+ *  chanShut() on the hup channel does chanShut() on the std channels and the socket is shutdown(SHUT_RDWR) and close()'d
+ *  chanGet() on the hup channel to block for chanShut when the chanSock completes
  * Provide a socket to be used by a pair of channels:
- *  When either channel is chanShut() the other is chanShut and the socket is close()'d
- *  When read() or write() on the socket fails, the channels are chanShut() and the socket is close()'d
- * Returns a chanOpen()'d control chan_t to the thread coordinating the I/O threads:
- *  chanShut() on the control channel does chanShut() on the other channels and the socket is close()'d
- * Warning: chanClose() must be called on the returned channel to prevent a memory leak.
+ *  When read() on the socket fails, the socket is shutdown(SHUT_RD) and the put chan is chanShut()
+ *  When write() on the socket fails, the socket is shutdown(SHUT_WR) and the get chan is chanShut()
+ * Provide a get chan_t
+ * Provide a put chan_t
+ * Provide a readLimit to set/limit the size of a read from the socket
  */
-chan_t *chanSock(void *(*realloc)(void *, unsigned long), void (*free)(void *), int socket, chan_t *read, chan_t *write, unsigned int readLimit); /* returns 0 on failure */
+int
+chanSock(
+  void *(*realloc)(void *, unsigned long)
+ ,void (*free)(void *)
+ ,chan_t *hup
+ ,int socket
+ ,chan_t *get
+ ,chan_t *put
+ ,unsigned int readLimit
+); /* returns 0 on failure */
 
 #endif /* __CHANSOCK_H__ */

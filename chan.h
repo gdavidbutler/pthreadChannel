@@ -43,10 +43,18 @@ typedef enum chanSs { /* bit map */
  * It returns the state of the store as it relates to Get and Put.
  * The store is called under protection of a channel operation mutex.
  */
-typedef chanSs_t (*chanSi_t)(void *cntx, chanSo_t oper, void **val);
+typedef chanSs_t
+(*chanSi_t)(
+  void *cntx
+ ,chanSo_t oper
+ ,void **val
+);
 
 /* channel store context done, called during last (deallocating) chanClose */
-typedef void (*chanSd_t)(void *cntx);
+typedef void
+(*chanSd_t)(
+  void *cntx
+);
 
 /*
  * Channel
@@ -70,19 +78,38 @@ typedef struct chan chan_t;
  *
  * Returned channel is Open.
  */
-chan_t *chanCreate(void *(*realloc)(void *, unsigned long), void (*free)(void *), chanSi_t impl, void *cntx, chanSd_t done); /* returns 0 on failure */
+chan_t *
+chanCreate(
+  void *(*realloc)(void *, unsigned long)
+ ,void (*free)(void *)
+ ,chanSi_t impl
+ ,void *cntx
+ ,chanSd_t done
+); /* returns 0 on failure */
 
 /* channel open, to keep a channel from being deallocated till chanClose */
-void chanOpen(chan_t *chn);
+void
+chanOpen(
+  chan_t *chn
+);
 
 /* channel shutdown, afterwards chanPut() always returns 0 and chanGet() is always non-blocking */
-void chanShut(chan_t *chn);
+void
+chanShut(
+  chan_t *chn
+);
 
 /* channel is shutdown */
-int chanIsShut(chan_t *chn);
+int
+chanIsShut(
+  chan_t *chn
+);
 
 /* channel close, on last close, deallocate */
-void chanClose(chan_t *chn);
+void
+chanClose(
+  chan_t *chn
+);
 
 /*
  * Channels distribute messages fairly under pressure.
@@ -95,7 +122,7 @@ void chanClose(chan_t *chn);
  */
 
 /* channel operation status */
-typedef enum {
+typedef enum chanOs {
   chanOsFlr = 0 /* Failure */
  ,chanOsGet     /* Get successful */
  ,chanOsPut     /* Put successful (or timeout on Wait part of PutWait) */
@@ -107,10 +134,20 @@ typedef enum {
 /* in each of the below, nsTimeout: -1 block forever, 0 non-blocking else timeout in nanoseconds */
 
 /* get a message */
-chanOs_t chanGet(long nsTimeout, chan_t *chn, void **val);
+chanOs_t
+chanGet(
+  long nsTimeout
+ ,chan_t *chn
+ ,void **val
+);
 
 /* put a message */
-chanOs_t chanPut(long nsTimeout, chan_t *chn, void *val);
+chanOs_t
+chanPut(
+  long nsTimeout
+ ,chan_t *chn
+ ,void *val
+);
 
 /* put a message (as chanPut) then block till a Get occurs */
 chanOs_t chanPutWait(long nsTimeout, chan_t *chn, void *val);
@@ -145,6 +182,11 @@ typedef struct chanPoll {
  * If an operation is successful (return greater than 0),
  *  the offset into the list is one less than the return value.
  */
-unsigned int chanPoll(long nsTimeout, unsigned int count, chanPoll_t *chnp); /* returns 0 on failure */
+unsigned int
+chanPoll(
+  long nsTimeout
+ ,unsigned int count
+ ,chanPoll_t *chnp
+); /* returns 0 on failure */
 
 #endif /* __CHAN_H__ */

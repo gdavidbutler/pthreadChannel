@@ -62,27 +62,36 @@ servT(
     goto exit2;
   }
   pthread_cleanup_push((void(*)(void*))chanClose, c[1]);
-  if (!(p[0].c = chanSock(realloc, free, f[0], c[0], c[1], 65535))) {
-    perror("chanSock");
+  if (!(p[0].c = chanCreate(realloc, free, 0, 0, 0))) {
+    perror("chanCreate");
     goto exit3;
   }
   pthread_cleanup_push((void(*)(void*))chanClose, p[0].c);
   pthread_cleanup_push((void(*)(void*))chanShut, p[0].c);
-  if (!(p[1].c = chanSock(realloc, free, f[1], c[1], c[0], 65535))) {
-    perror("chanSock");
+  if (!(p[1].c = chanCreate(realloc, free, 0, 0, 0))) {
+    perror("chanCreate");
     goto exit4;
   }
   pthread_cleanup_push((void(*)(void*))chanClose, p[1].c);
   pthread_cleanup_push((void(*)(void*))chanShut, p[1].c);
-  /* wait for either chanSock to chanShut */
+  if (!chanSock(realloc, free, p[0].c, f[0], c[0], c[1], 65535)) {
+    perror("chanSock");
+    goto exit5;
+  }
+  if (!chanSock(realloc, free, p[1].c, f[1], c[1], c[0], 65535)) {
+    perror("chanSock");
+    goto exit5;
+  }
+  /* wait for either control in to chanShut */
   p[0].v = p[1].v = &t;
   p[0].o = p[1].o = chanPoGet;
   chanPoll(-1, sizeof (p) / sizeof (p[0]), p);
-  pthread_cleanup_pop(1); /* chanShut(p[1].c) */
-  pthread_cleanup_pop(1); /* chanClose(p[1].c) */
+exit5:
+  pthread_cleanup_pop(1); /* chanShut(p[1]) */
+  pthread_cleanup_pop(1); /* chanClose(p[1]) */
 exit4:
-  pthread_cleanup_pop(1); /* chanShut(p[0].c) */
-  pthread_cleanup_pop(1); /* chanClose(p[0].c) */
+  pthread_cleanup_pop(1); /* chanShut(p[0]) */
+  pthread_cleanup_pop(1); /* chanClose(p[0]) */
 exit3:
   pthread_cleanup_pop(1); /* chanClose(c[1]) */
 exit2:

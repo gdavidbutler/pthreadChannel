@@ -27,15 +27,29 @@
  */
 
 /* opaque context */
-typedef struct chanFifoSc chanFifoSc_t;
+typedef struct chanFifoSc
+chanFifoSc_t;
 
 /* allocate a context of size chan messages (void *) */
-chanFifoSc_t *chanFifoSa(void *(*realloc)(void *, unsigned long), void (*free)(void *), unsigned int size); /* returns 0 on failure */
+chanFifoSc_t *
+chanFifoSa(
+  void *(*realloc)(void *, unsigned long)
+ ,void (*free)(void *)
+ ,unsigned int size
+); /* returns 0 on failure */
 
 /* deallocate context */
-void chanFifoSd(void *);
+void
+chanFifoSd(
+  void *
+);
 
 /* the chan implementation */
-chanSs_t chanFifoSi(void *, chanSo_t, void **);
+chanSs_t
+chanFifoSi(
+  void *
+ ,chanSo_t
+ ,void **
+);
 
 #endif /* __CHANFIFO_H__ */

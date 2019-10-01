@@ -1,17 +1,22 @@
 ## pthreadChannel
 
-Yet another implementation of a Communicating Sequential Process (CSP) "Channel" construct for POSIX threads (pthreads).
+Yet another implementation of a "Channel" construct for POSIX threads (pthreads).
 
 ### Channel
 
-A Channel provides a programmable store of anonymous, pointer (void *) sized, messages.
+A Channel implements a programmable store of anonymous, pointer (void *) sized, messages.
 
-* Channels hold a single message, by default. (See Store, below.)
+For a background on Channels see Russ Cox's [Bell Labs and CSP Threads](https://swtch.com/~rsc/thread/).
+
+* Channels store a single message, by default. (See Store, below.)
 * Any number of pthreads can Put/Get on a Channel.
 * A pthread can Put/Get on any number of Channels.
 * Channels can be Put/Get on channels!
+(e.g. client thread: chanPut(server, chan), response = chanGet(chan). server thread: chan = chanGet(server), chanPut(chan, response).)
+* Message semantics should include ownership transfer
+(e.g. putting thread: m = malloc(), init(m), chanPut(chan, m). getting thread: chanGet(chan, &m), use(m), free(m).)
 
-This implementation's focus is fair access (first-come-first-serve), relaxed somewhat under pressure.
+This implementation's focus is store fair access (first-come-first-serve), relaxed somewhat under pressure.
 
 Find the API in chan.h:
 
@@ -22,7 +27,7 @@ Find the API in chan.h:
 * chanClose: Close a chan_t (decrement reference count, deallocate on last chanClose).
 * chanGet: Get a message from a Channel (asynchronously).
 * chanPut: Put a message to a Channel (asynchronously).
-* chanPutWait: Put a message to a Channel (synchronously waiting for a chanGet).
+* chanPutWait: Put a message to a Channel (synchronously, waiting for a chanGet).
 * chanPoll: perform a Channel Operation (chanPo_t) on one of an array of Channels, working to satisfy them in the order provided.
 
 ### Store
@@ -55,12 +60,13 @@ Since a pthread can't both wait in a chanPoll() and in a poll()/select()/etc., s
 
 Find the API in chanSock.h:
 
-* chanSock: link a bound full duplex socket to a pair of Channels
+* chanSock: connect a bound full duplex socket (using read() and write()) to a pair of Channels
 
 ### Examples
 
 * primes: Example of using chan.h and chanFifo.h is provided in example/primes.c. It is modeled on primes.c from [libtask](https://swtch.com/libtask/).
 It is more complex because of pthread's API and various combinations of options.
+* squint: [TO DO] modeled on [Squinting at Power Series](https://swtch.com/~rsc/thread/squint.pdf).
 * sockproxy: Example of using chan.h and chanSock.h is provided in example/sockproxy.c. It is modeled on tcpproxy.c from [libtask](https://swtch.com/libtask/).
 Connects two chanSocks back-to-back, with Channels reversed.
   * Sockproxy needs numeric values for socket type (-T, -t) and family type (-F, -f).
