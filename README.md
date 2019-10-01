@@ -20,15 +20,24 @@ This implementation's focus is store fair access (first-come-first-serve), relax
 
 Find the API in chan.h:
 
-* chanCreate: Allocate an Open chan_t (reference count = 1, pair with chanClose).
-* chanOpen: Open a chan_t (increment reference count, pair with chanClose).
-* chanShut: Shutdown a chan_t (afterwards chanPut returns 0 and chanGet is non-blocking).
-* chanIsShut: Is a chan_t shutdown.
-* chanClose: Close a chan_t (decrement reference count, deallocate on last chanClose).
-* chanGet: Get a message from a Channel (asynchronously).
-* chanPut: Put a message to a Channel (asynchronously).
-* chanPutWait: Put a message to a Channel (synchronously, waiting for a chanGet).
-* chanPoll: perform a Channel Operation (chanPo_t) on one of an array of Channels, working to satisfy them in the order provided.
+* chanCreate
+  * Allocate an Open chan_t (reference count = 1, pair with chanClose).
+* chanOpen
+  * Open a chan_t (increment reference count, pair with chanClose).
+* chanShut
+  * Shutdown a chan_t (afterwards chanPut returns 0 and chanGet is non-blocking).
+* chanIsShut
+  * Is a chan_t shutdown.
+* chanClose
+  * Close a chan_t (decrement reference count, deallocate on last chanClose).
+* chanGet
+  * Get a message from a Channel (asynchronously).
+* chanPut
+  * Put a message to a Channel (asynchronously).
+* chanPutWait
+  * Put a message to a Channel (synchronously, waiting for a chanGet).
+* chanPoll
+  * perform a Channel Operation (chanPo_t) on one of an array of Channels, working to satisfy them in the order provided.
 
 ### Store
 
@@ -50,9 +59,12 @@ A Channel FIFO store implementation is provided.
 
 Find the API in chanFifo.h:
 
-* chanFifoSa: allocate a chanFifoSc (chanFifo store context)
-* chanFifoSd: deallocate a chanFifoSc (chanFifo store context)
-* chanFifoSi: chanFifo store implementation
+* chanFifoSa
+  * allocate a chanFifoSc (chanFifo store context)
+* chanFifoSd
+  * deallocate a chanFifoSc (chanFifo store context)
+* chanFifoSi
+  * chanFifo store implementation
 
 ### Poll/Select
 
@@ -64,7 +76,8 @@ Find the API in chanSock.h:
 
 ### Examples
 
-* primes: Example of using chan.h and chanFifo.h is provided in example/primes.c. It is modeled on primes.c from [libtask](https://swtch.com/libtask/).
+* primes
+  * Example of using chan.h and chanFifo.h is provided in example/primes.c. It is modeled on primes.c from [libtask](https://swtch.com/libtask/).
 It is more complex because of pthread's API and various combinations of options.
 * squint: [TO DO] modeled on [Squinting at Power Series](https://swtch.com/~rsc/thread/squint.pdf).
 * sockproxy: Example of using chan.h and chanSock.h is provided in example/sockproxy.c. It is modeled on tcpproxy.c from [libtask](https://swtch.com/libtask/).
