@@ -12,9 +12,9 @@ For a background on Channels see Russ Cox's [Bell Labs and CSP Threads](https://
 * Any number of pthreads can Put/Get on a Channel.
 * A pthread can Put/Get on any number of Channels.
 * Channels can be Put/Get on channels!
-(e.g. client thread: chanPut(server, chan), response = chanGet(chan). server thread: chan = chanGet(server), chanPut(chan, response).)
+  * (e.g. client thread: chanPut(server, chan), response = chanGet(chan). server thread: chan = chanGet(server), chanPut(chan, response).)
 * Message semantics should include ownership transfer
-(e.g. putting thread: m = malloc(), init(m), chanPut(chan, m). getting thread: chanGet(chan, &m), use(m), free(m).)
+  * (e.g. putting thread: m = malloc(), init(m), chanPut(chan, m). getting thread: chanGet(chan, &m), use(m), free(m).)
 
 This implementation's focus is store fair access (first-come-first-serve), relaxed somewhat under pressure.
 
