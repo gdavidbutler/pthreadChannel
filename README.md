@@ -79,8 +79,10 @@ Find the API in chanSock.h:
 * primes
   * Example of using chan.h and chanFifo.h is provided in example/primes.c. It is modeled on primes.c from [libtask](https://swtch.com/libtask/).
 It is more complex because of pthread's API and various combinations of options.
-* squint: [TO DO] modeled on [Squinting at Power Series](https://swtch.com/~rsc/thread/squint.pdf).
-* sockproxy: Example of using chan.h and chanSock.h is provided in example/sockproxy.c. It is modeled on tcpproxy.c from [libtask](https://swtch.com/libtask/).
+* squint
+  * [TO DO] modeled on [Squinting at Power Series](https://swtch.com/~rsc/thread/squint.pdf).
+* sockproxy
+  * Example of using chan.h and chanSock.h is provided in example/sockproxy.c. It is modeled on tcpproxy.c from [libtask](https://swtch.com/libtask/).
 Connects two chanSocks back-to-back, with Channels reversed.
   * Sockproxy needs numeric values for socket type (-T, -t) and family type (-F, -f).
   * The options protocol type (-P, -p), service type (-S, -s) and host name (-H, -h) can be symbolic (see getaddrinfo()).
