@@ -89,11 +89,7 @@ primeT(
 #endif
   printf("%d\n", prime);
 #if STORE
-#if MEMORY
-  if ((i = (Goal - *ip) / 10) > 1)
-#else
-  if ((i = (Goal - ip) / 10) > 1)
-#endif
+  if ((i = (Goal - prime) / 10) > 1)
     c = chanCreate(realloc, free, chanFifoSi, chanFifoSa(realloc, free, i), chanFifoSd);
   else
 #endif
@@ -124,7 +120,7 @@ drain:
     if (ip % prime)
 #endif
     {
-      int r;
+      chanOs_t r;
 
 #if MEMORY
       r = chanPut(-1, c, ip);
@@ -186,7 +182,7 @@ main(
   }
   puts("2");
   for (i = 3; i <= Goal; i += 2) {
-    int r;
+    chanOs_t r;
 
 #if MEMORY
     if (!(ip = malloc(sizeof (*ip)))) {
