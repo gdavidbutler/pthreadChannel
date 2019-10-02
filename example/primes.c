@@ -88,13 +88,14 @@ primeT(
   prime = ip;
 #endif
   printf("%d\n", prime);
+  c = 0;
+  pthread_cleanup_push((void(*)(void*))chanClose, c);
 #if STORE
   if ((i = (Goal - prime) / 10) > 1)
     c = chanCreate(realloc, free, chanFifoSi, chanFifoSa(realloc, free, i), chanFifoSd);
   else
 #endif
     c = chanCreate(realloc, free, 0, 0, 0);
-  pthread_cleanup_push((void(*)(void*))chanClose, c);
   if (!c) {
     puts("Can't create more channels, draining pipeline...");
     goto drain;
@@ -163,6 +164,8 @@ main(
    || (Goal = atoi(*(argv + 1))) < 2)
     Goal = 100;
   printf("Goal = %d\n", Goal);
+  c = 0;
+  pthread_cleanup_push((void(*)(void*))chanClose, c);
 #if STORE
   if ((i = Goal / 10) > 1)
     c = chanCreate(realloc, free, chanFifoSi, chanFifoSa(realloc, free, i), chanFifoSd);
@@ -171,14 +174,13 @@ main(
     c = chanCreate(realloc, free, 0, 0, 0);
   if (!c) {
     puts("Can't create channel");
-    return (0);
+    goto exit0;
   }
-  pthread_cleanup_push((void(*)(void*))chanClose, c);
   chanOpen(c);
   if (pthread_create(&t, 0, primeT, c)) {
     chanClose(c);
     puts("Can't create thread");
-    return (0);
+    goto exit0;
   }
   puts("2");
   for (i = 3; i <= Goal; i += 2) {
@@ -201,6 +203,7 @@ main(
   chanShut(c);
   pthread_join(t, 0);
   printf("joined Goal\n"); fflush(stdout);
+exit0:
   pthread_cleanup_pop(1); /* chanClose(c) */
   return (0);
 }
