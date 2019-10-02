@@ -11,10 +11,12 @@ For a background on Channels see Russ Cox's [Bell Labs and CSP Threads](https://
 * Channels store a single message, by default. (See Store, below.)
 * Any number of pthreads can Put/Get on a Channel.
 * A pthread can Put/Get on any number of Channels.
-* Channels can be Put/Get on channels!
-  * (e.g. client thread: chanPut(server, chan), response = chanGet(chan). server thread: chan = chanGet(server), chanPut(chan, response).)
-* Message semantics should include ownership transfer
-  * (e.g. putting thread: m = malloc(), init(m), chanPut(chan, m). getting thread: chanGet(chan, &m), use(m), free(m).)
+* Message semantics should include ownership transfer. E.g.:
+  * putting thread: m = malloc(), init(m), chanPut(chan, m).
+  * getting thread: chanGet(chan, &m), use(m), free(m).
+* Channels can be Put/Get on channels! E.g.:
+  * client thread: chanOpen(chan), chanPut(server, chan), response = chanGet(chan).
+  * server thread: chan = chanGet(server), chanPut(chan, response), chanClose(chan).
 
 This implementation's focus is store fair access (first-come-first-serve), relaxed somewhat under pressure.
 
@@ -23,13 +25,13 @@ Find the API in chan.h:
 * chanCreate
   * Allocate an Open chan_t (reference count = 1, pair with chanClose).
 * chanOpen
-  * Open a chan_t (increment reference count, pair with chanClose).
+  * Open a chan_t (increment reference count, pair with chanClose). Should be called on each chan_t before passing to another thread.
 * chanShut
   * Shutdown a chan_t (afterwards chanPut returns 0 and chanGet is non-blocking).
 * chanIsShut
   * Is a chan_t shutdown.
 * chanClose
-  * Close a chan_t (decrement reference count, deallocate on last chanClose).
+  * Close a chan_t (decrement reference count, deallocate on last chanClose). Should be called on each chan_t upon thread exit.
 * chanGet
   * Get a message from a Channel (asynchronously).
 * chanPut
@@ -79,8 +81,8 @@ Find the API in chanSock.h:
 * primes
   * Example of using chan.h and chanFifo.h is provided in example/primes.c. It is modeled on primes.c from [libtask](https://swtch.com/libtask/).
 It is more complex because of pthread's API and various combinations of options.
-* squint
-  * [TO DO] modeled on [Squinting at Power Series](https://swtch.com/~rsc/thread/squint.pdf).
+* powser
+  * [TO DO] modeled on [powser1.go](https://golang.org/test/chan/powser1.go) documented in [Squinting at Power Series](https://swtch.com/~rsc/thread/squint.pdf).
 * sockproxy
   * Example of using chan.h and chanSock.h is provided in example/sockproxy.c. It is modeled on tcpproxy.c from [libtask](https://swtch.com/libtask/).
 Connects two chanSocks back-to-back, with Channels reversed.

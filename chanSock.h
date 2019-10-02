@@ -50,6 +50,8 @@ typedef struct chanSockM {
  * Provide a get chan_t
  * Provide a put chan_t
  * Provide a readLimit to set/limit the size of a read from the socket
+ *
+ * chanSock() takes care of calling chanOpen on each chan_t for the sub-threads
  */
 int
 chanSock(
