@@ -82,7 +82,7 @@ Find the API in chanSock.h:
   * Example of using chan.h and chanFifo.h is provided in example/primes.c. It is modeled on primes.c from [libtask](https://swtch.com/libtask/).
 It is more complex because of pthread's API and various combinations of options.
 * powser
-  * [TO DO] modeled on [powser1.go](https://golang.org/test/chan/powser1.go) documented in [Squinting at Power Series](https://swtch.com/~rsc/thread/squint.pdf).
+  * [TO DO] translated from powser1.go [here](https://golang.org/test/chan/powser1.go) or [here](https://github.com/golang/go/blob/master/test/chan/powser1.go).
 * sockproxy
   * Example of using chan.h and chanSock.h is provided in example/sockproxy.c. It is modeled on tcpproxy.c from [libtask](https://swtch.com/libtask/).
 Connects two chanSocks back-to-back, with Channels reversed.

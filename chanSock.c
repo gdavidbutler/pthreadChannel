@@ -26,14 +26,14 @@
 struct chanSockX {
   void *(*a)(void *, unsigned long);
   void (*f)(void *);
-  chan_t *hup;
-  chan_t *get;
-  chan_t *put;
+  chan_t *hp;
+  chan_t *wr;
+  chan_t *rd;
   unsigned int rl;
   int sk;
 };
 
-/* read the chan and write the socket */
+/* get the write chan and write the socket */
 static void *
 chanSockC(
   void *v
@@ -42,6 +42,7 @@ chanSockC(
   chanSockM_t *m;
   chanPoll_t p[2];
 
+  /* ownership of v was not transferred */
   p[0].o = p[1].o = chanPoNop;
   pthread_cleanup_push((void(*)(void*))chanClose, v);
   pthread_cleanup_push((void(*)(void*))chanShut, v);
@@ -50,11 +51,11 @@ chanSockC(
   p[0].o = chanPoGet;
   if (chanPoll(-1, sizeof (p) / sizeof (p[0]), p) != 1 || p[0].s != chanOsGet)
     goto exit0;
-  pthread_cleanup_push((void(*)(void*))chanShut, x->get);
+  pthread_cleanup_push((void(*)(void*))chanShut, x->wr);
   p[0].v = (void **)&m;
   m = 0;
   pthread_cleanup_push((void(*)(void*))x->f, m);
-  p[1].c = x->get;
+  p[1].c = x->wr;
   p[1].v = (void **)&m;
   p[1].o = chanPoGet;
   while (chanPoll(-1, sizeof (p) / sizeof (p[0]), p) == 2 && p[1].s == chanOsGet
@@ -65,14 +66,14 @@ chanSockC(
   }
   shutdown(x->sk, SHUT_WR);
   pthread_cleanup_pop(1); /* x->f(m) */
-  pthread_cleanup_pop(1); /* chanShut(x->get) */
+  pthread_cleanup_pop(1); /* chanShut(x->wr) */
 exit0:
   pthread_cleanup_pop(1); /* chanShut(v) */
   pthread_cleanup_pop(1); /* chanClose(v) */
   return (0);
 }
 
-/* read the socket and write the chan */
+/* read the socket and put the read chan */
 static void *
 chanSockS(
   void *v
@@ -81,6 +82,7 @@ chanSockS(
   chanSockM_t *m;
   chanPoll_t p[2];
 
+  /* ownership of v was not transferred */
   p[0].o = p[1].o = chanPoNop;
   pthread_cleanup_push((void(*)(void*))chanClose, v);
   pthread_cleanup_push((void(*)(void*))chanShut, v);
@@ -89,11 +91,11 @@ chanSockS(
   p[0].o = chanPoGet;
   if (chanPoll(-1, sizeof (p) / sizeof (p[0]), p) != 1 || p[0].s != chanOsGet)
     goto exit0;
-  pthread_cleanup_push((void(*)(void*))chanShut, x->put);
+  pthread_cleanup_push((void(*)(void*))chanShut, x->rd);
   p[0].v = (void **)&m;
   m = 0;
   pthread_cleanup_push((void(*)(void*))x->f, m);
-  p[1].c = x->put;
+  p[1].c = x->rd;
   p[1].v = (void **)&m;
   p[1].o = chanPoPut;
   while ((m = x->a(0, sizeof (*m) + x->rl - 1))
@@ -108,14 +110,14 @@ chanSockS(
   }
   shutdown(x->sk, SHUT_RD);
   pthread_cleanup_pop(1); /* x->f(m) */
-  pthread_cleanup_pop(1); /* chanShut(x->put) */
+  pthread_cleanup_pop(1); /* chanShut(x->rd) */
 exit0:
   pthread_cleanup_pop(1); /* chanShut(v) */
   pthread_cleanup_pop(1); /* chanClose(v) */
   return (0);
 }
 
-/* start reader and writer and wait for chanShuts */
+/* start channel reader and socket reader and wait for chanShuts */
 static void *
 chanSockW(
   void *v
@@ -129,11 +131,11 @@ chanSockW(
   p[0].o = p[1].o = p[2].o = chanPoNop;
   pthread_cleanup_push((void(*)(void*))X->f, v);
   pthread_cleanup_push((void(*)(void*))close, (void *)(long)X->sk);
-  pthread_cleanup_push((void(*)(void*))chanClose, X->hup);
-  pthread_cleanup_push((void(*)(void*))chanShut, X->hup);
-  p[0].c = X->hup;
-  pthread_cleanup_push((void(*)(void*))chanShut, X->put);
-  pthread_cleanup_push((void(*)(void*))chanShut, X->get);
+  pthread_cleanup_push((void(*)(void*))chanClose, X->hp);
+  pthread_cleanup_push((void(*)(void*))chanShut, X->hp);
+  p[0].c = X->hp;
+  pthread_cleanup_push((void(*)(void*))chanShut, X->rd);
+  pthread_cleanup_push((void(*)(void*))chanShut, X->wr);
   if (!(p[1].c = chanCreate(X->a, X->f, 0, 0, 0)))
     goto exit0;
   pthread_cleanup_push((void(*)(void*))chanClose, p[1].c);
@@ -148,6 +150,7 @@ chanSockW(
     goto exit2;
   }
   pthread_detach(tC);
+  /* since the context is not modified by the thread, retain ownership, and use PutWait to avoid the race */
   p[1].v = &v;
   p[1].o = chanPoPutWait;
   if (chanPoll(-1, sizeof (p) / sizeof (p[0]), p) != 2 || p[1].s != chanOsPutWait)
@@ -159,6 +162,7 @@ chanSockW(
     goto exit2;
   }
   pthread_detach(tS);
+  /* since the context is not modified by the thread, retain ownership, and use PutWait to avoid the race */
   p[2].v = &v;
   p[2].o = chanPoPutWait;
   if (chanPoll(-1, sizeof (p) / sizeof (p[0]), p) != 3 || p[2].s != chanOsPutWait)
@@ -191,10 +195,10 @@ exit1:
   pthread_cleanup_pop(1); /* chanShut(p[1].c) */
   pthread_cleanup_pop(1); /* chanClose(p[1].c) */
 exit0:
-  pthread_cleanup_pop(1); /* chanShut(X->get) */
-  pthread_cleanup_pop(1); /* chanShut(X->put) */
-  pthread_cleanup_pop(1); /* chanShut(X->hup) */
-  pthread_cleanup_pop(1); /* chanClose(X->hup) */
+  pthread_cleanup_pop(1); /* chanShut(X->wr) */
+  pthread_cleanup_pop(1); /* chanShut(X->rd) */
+  pthread_cleanup_pop(1); /* chanShut(X->hp) */
+  pthread_cleanup_pop(1); /* chanClose(X->hp) */
   pthread_cleanup_pop(1); /* close(X->sk); */
   pthread_cleanup_pop(1); /* X->f(v) */
   return (0);
@@ -205,29 +209,29 @@ int
 chanSock(
   void *(*a)(void *, unsigned long)
  ,void (*f)(void *)
- ,chan_t *hup
+ ,chan_t *hp
  ,int sk
- ,chan_t *get
- ,chan_t *put
+ ,chan_t *rd
+ ,chan_t *wr
  ,unsigned int rl
 ){
   struct chanSockX *x;
   pthread_t t;
 
   x = 0;
-  if (!a || !f || !hup || sk < 0 || !get || !put || !rl || !(x = a(0, sizeof (*x))))
+  if (!a || !f || !hp || sk < 0 || !rd || !wr || !rl || !(x = a(0, sizeof (*x))))
     return (0);
   x->a = a;
   x->f = f;
-  chanOpen((x->hup = hup));
+  chanOpen((x->hp = hp));
   x->sk = sk;
-  chanOpen((x->get = get));
-  chanOpen((x->put = put));
+  chanOpen((x->rd = rd));
+  chanOpen((x->wr = wr));
   x->rl = rl;
   if (pthread_create(&t, 0, chanSockW, x)) {
-    chanClose(x->put);
-    chanClose(x->get);
-    chanClose(x->hup);
+    chanClose(x->wr);
+    chanClose(x->rd);
+    chanClose(x->hp);
     f(x);
     return (0);
   }

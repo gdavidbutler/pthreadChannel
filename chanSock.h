@@ -41,14 +41,14 @@ typedef struct chanSockM {
 } chanSockM_t;
 
 /*
- * Provide a hup chan_t to the thread coordinating the I/O threads:
- *  chanShut() on the hup channel does chanShut() on the std channels and the socket is shutdown(SHUT_RDWR) and close()'d
- *  chanGet() on the hup channel to block for chanShut when the chanSock completes
+ * Provide a hangup chan_t to the thread coordinating the I/O threads:
+ *  chanShut() on the hangup channel does chanShut() on the std channels and the socket is shutdown(SHUT_RDWR) and close()'d
+ *  chanGet() on the hangup channel to block for chanShut when the chanSock completes
  * Provide a socket to be used by a pair of channels:
- *  When read() on the socket fails, the socket is shutdown(SHUT_RD) and the put chan is chanShut()
- *  When write() on the socket fails, the socket is shutdown(SHUT_WR) and the get chan is chanShut()
- * Provide a get chan_t
- * Provide a put chan_t
+ *  When read() on the socket fails, the socket is shutdown(SHUT_RD) and the read chan is chanShut()
+ *  When write() on the socket fails, the socket is shutdown(SHUT_WR) and the write chan is chanShut()
+ * Provide a read chan_t
+ * Provide a write chan_t
  * Provide a readLimit to set/limit the size of a read from the socket
  *
  * chanSock() takes care of calling chanOpen on each chan_t for the sub-threads
@@ -57,10 +57,10 @@ int
 chanSock(
   void *(*realloc)(void *, unsigned long)
  ,void (*free)(void *)
- ,chan_t *hup
+ ,chan_t *hangup
  ,int socket
- ,chan_t *get
- ,chan_t *put
+ ,chan_t *read
+ ,chan_t *write
  ,unsigned int readLimit
 ); /* returns 0 on failure */
 

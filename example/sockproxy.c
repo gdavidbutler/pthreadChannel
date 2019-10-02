@@ -31,7 +31,7 @@
 struct addrinfo *Caddr;
 
 /* connect two chanSocks back to back, with read and write channels reversed */
-/* I know, it's much more efficient to create two threads with read() / write() loops... */
+/* Yes, it's much more efficient to create two threads with read() / write() loops... */
 static void *
 servT(
   void *v
@@ -82,7 +82,7 @@ servT(
     perror("chanSock");
     goto exit5;
   }
-  /* wait for either control in to chanShut */
+  /* wait for either hangup to chanShut */
   p[0].v = p[1].v = &t;
   p[0].o = p[1].o = chanPoGet;
   chanPoll(-1, sizeof (p) / sizeof (p[0]), p);
