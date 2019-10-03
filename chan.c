@@ -248,7 +248,7 @@ int
 chanIsShut(
   chan_t *c
 ){
-  return ((c->e & chanSu) == chanSu);
+  return (c && (c->e & chanSu) == chanSu);
 }
 
 void
