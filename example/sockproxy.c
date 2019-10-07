@@ -52,33 +52,33 @@ servT(
     perror("connect");
     goto exit1;
   }
-  if (!(c[0] = chanCreate(realloc, free, 0, 0, 0))) {
+  if (!(c[0] = chanCreate(0,0,0))) {
     perror("chanCreate");
     goto exit1;
   }
   pthread_cleanup_push((void(*)(void*))chanClose, c[0]);
-  if (!(c[1] = chanCreate(realloc, free, 0, 0, 0))) {
+  if (!(c[1] = chanCreate(0,0,0))) {
     perror("chanCreate");
     goto exit2;
   }
   pthread_cleanup_push((void(*)(void*))chanClose, c[1]);
-  if (!(p[0].c = chanCreate(realloc, free, 0, 0, 0))) {
+  if (!(p[0].c = chanCreate(0,0,0))) {
     perror("chanCreate");
     goto exit3;
   }
   pthread_cleanup_push((void(*)(void*))chanClose, p[0].c);
   pthread_cleanup_push((void(*)(void*))chanShut, p[0].c);
-  if (!(p[1].c = chanCreate(realloc, free, 0, 0, 0))) {
+  if (!(p[1].c = chanCreate(0,0,0))) {
     perror("chanCreate");
     goto exit4;
   }
   pthread_cleanup_push((void(*)(void*))chanClose, p[1].c);
   pthread_cleanup_push((void(*)(void*))chanShut, p[1].c);
-  if (!chanSock(realloc, free, p[0].c, f[0], c[0], c[1], 65535)) {
+  if (!chanSock(p[0].c, f[0], c[0], c[1], 65535)) {
     perror("chanSock");
     goto exit5;
   }
-  if (!chanSock(realloc, free, p[1].c, f[1], c[1], c[0], 65535)) {
+  if (!chanSock(p[1].c, f[1], c[1], c[0], 65535)) {
     perror("chanSock");
     goto exit5;
   }

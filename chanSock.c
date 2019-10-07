@@ -23,9 +23,10 @@
 #include "chan.h"
 #include "chanSock.h"
 
+extern void *(*ChanA)(void *, unsigned long);
+extern void (*ChanF)(void *);
+
 struct chanSockX {
-  void *(*a)(void *, unsigned long);
-  void (*f)(void *);
   chan_t *hp;
   chan_t *wr;
   chan_t *rd;
@@ -54,14 +55,14 @@ chanSockC(
   pthread_cleanup_push((void(*)(void*))chanShut, x->wr);
   p[0].v = (void **)&m;
   m = 0;
-  pthread_cleanup_push((void(*)(void*))x->f, m);
+  pthread_cleanup_push((void(*)(void*))ChanF, m);
   p[1].c = x->wr;
   p[1].v = (void **)&m;
   p[1].o = chanPoGet;
   while (chanPoll(-1, sizeof (p) / sizeof (p[0]), p) == 2 && p[1].s == chanOsGet
    && (m->l)
    && write(x->sk, m->b, m->l) == m->l) {
-    x->f(m);
+    ChanF(m);
     m = 0;
   }
   shutdown(x->sk, SHUT_WR);
@@ -94,16 +95,16 @@ chanSockS(
   pthread_cleanup_push((void(*)(void*))chanShut, x->rd);
   p[0].v = (void **)&m;
   m = 0;
-  pthread_cleanup_push((void(*)(void*))x->f, m);
+  pthread_cleanup_push((void(*)(void*))ChanF, m);
   p[1].c = x->rd;
   p[1].v = (void **)&m;
   p[1].o = chanPoPut;
-  while ((m = x->a(0, sizeof (*m) + x->rl - 1))
+  while ((m = ChanA(0, sizeof (*m) + x->rl - 1))
    && (int)(m->l = read(x->sk, m->b, x->rl)) > 0) {
     void *t;
 
     /* attempt to "right size" the message */
-    if ((t = x->a(m, sizeof (*m) + m->l)))
+    if ((t = ChanA(m, sizeof (*m) + m->l)))
       m = t;
     if (chanPoll(-1, sizeof (p) / sizeof (p[0]), p) != 2 || p[1].s != chanOsPut)
       break;
@@ -129,18 +130,18 @@ chanSockW(
   chanPoll_t p[3];
 
   p[0].o = p[1].o = p[2].o = chanPoNop;
-  pthread_cleanup_push((void(*)(void*))X->f, v);
+  pthread_cleanup_push((void(*)(void*))ChanF, v);
   pthread_cleanup_push((void(*)(void*))close, (void *)(long)X->sk);
   pthread_cleanup_push((void(*)(void*))chanClose, X->hp);
   pthread_cleanup_push((void(*)(void*))chanShut, X->hp);
   p[0].c = X->hp;
   pthread_cleanup_push((void(*)(void*))chanShut, X->rd);
   pthread_cleanup_push((void(*)(void*))chanShut, X->wr);
-  if (!(p[1].c = chanCreate(X->a, X->f, 0, 0, 0)))
+  if (!(p[1].c = chanCreate(0,0,0)))
     goto exit0;
   pthread_cleanup_push((void(*)(void*))chanClose, p[1].c);
   pthread_cleanup_push((void(*)(void*))chanShut, p[1].c);
-  if (!(p[2].c = chanCreate(X->a, X->f, 0, 0, 0)))
+  if (!(p[2].c = chanCreate(0,0,0)))
     goto exit1;
   pthread_cleanup_push((void(*)(void*))chanClose, p[2].c);
   pthread_cleanup_push((void(*)(void*))chanShut, p[2].c);
@@ -207,9 +208,7 @@ exit0:
 
 int
 chanSock(
-  void *(*a)(void *, unsigned long)
- ,void (*f)(void *)
- ,chan_t *hp
+  chan_t *hp
  ,int sk
  ,chan_t *rd
  ,chan_t *wr
@@ -219,10 +218,8 @@ chanSock(
   pthread_t t;
 
   x = 0;
-  if (!a || !f || !hp || sk < 0 || !rd || !wr || !rl || !(x = a(0, sizeof (*x))))
+  if (!hp || sk < 0 || !rd || !wr || !rl || !(x = ChanA(0, sizeof (*x))))
     return (0);
-  x->a = a;
-  x->f = f;
   chanOpen((x->hp = hp));
   x->sk = sk;
   chanOpen((x->rd = rd));
@@ -232,7 +229,7 @@ chanSock(
     chanClose(x->wr);
     chanClose(x->rd);
     chanClose(x->hp);
-    f(x);
+    ChanF(x);
     return (0);
   }
   pthread_detach(t);

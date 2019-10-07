@@ -92,10 +92,10 @@ primeT(
   pthread_cleanup_push((void(*)(void*))chanClose, c);
 #if STORE
   if ((i = (Goal - prime) / 10) > 1)
-    c = chanCreate(realloc, free, chanFifoSi, chanFifoSa(realloc, free, i), chanFifoSd);
+    c = chanCreate(chanFifoSi, chanFifoSa(i), chanFifoSd);
   else
 #endif
-    c = chanCreate(realloc, free, 0, 0, 0);
+    c = chanCreate(0,0,0);
   if (!c) {
     puts("Can't create more channels, draining pipeline...");
     goto drain;
@@ -168,10 +168,10 @@ main(
   pthread_cleanup_push((void(*)(void*))chanClose, c);
 #if STORE
   if ((i = Goal / 10) > 1)
-    c = chanCreate(realloc, free, chanFifoSi, chanFifoSa(realloc, free, i), chanFifoSd);
+    c = chanCreate(chanFifoSi, chanFifoSa(i), chanFifoSd);
   else
 #endif
-    c = chanCreate(realloc, free, 0, 0, 0);
+    c = chanCreate(0,0,0);
   if (!c) {
     puts("Can't create channel");
     goto exit0;

@@ -20,9 +20,11 @@
 #include "chan.h"
 #include "chanFifo.h"
 
+extern void *(*ChanA)(void *, unsigned long);
+extern void (*ChanF)(void *);
+
 /* chan fifo store context */
 struct chanFifoSc {
-  void (*f)(void *); /* free */
   unsigned int s;    /* store size */
   unsigned int h;    /* store head */
   unsigned int t;    /* store tail */
@@ -31,17 +33,14 @@ struct chanFifoSc {
 
 chanFifoSc_t *
 chanFifoSa(
-  void *(*a)(void *, unsigned long)
- ,void (*f)(void *)
- ,unsigned int s
+  unsigned int s
 ){
   chanFifoSc_t *c;
 
-  if (!a || !f || !s)
+  if (!s)
     return (0);
-  if (!(c = a(0, sizeof (*c) + (s - 1) * sizeof (c->q[0]))))
+  if (!(c = ChanA(0, sizeof (*c) + (s - 1) * sizeof (c->q[0]))))
     return (c);
-  c->f = f;
   c->s = s;
   c->h = c->t = 0;
   return (c);
@@ -51,7 +50,7 @@ void
 chanFifoSd(
   void *v
 ){
-  ((struct chanFifoSc *)v)->f(v);
+  ChanF(v);
 }
 
 /* a store is started in chanSsCanPut status */

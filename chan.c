@@ -28,9 +28,22 @@
  * cancelled, cleanup delegated to threads attempting wakeup
  */
 
+void *(*ChanA)(void *, unsigned long) = realloc;
+void (*ChanF)(void *) = free;
+
+void
+chanInit(
+  void *(*a)(void *, unsigned long)
+ ,void (*f)(void *)
+){
+  if (!a || !f)
+    return;
+  ChanA = a;
+  ChanF = f;
+}
+
 /* internal chanPoll rendezvous */
 typedef struct {
-  void (*f)(void *); /* free routine to free this */
   int t;             /* thread is active */
   unsigned int c;    /* reference count */
   pthread_mutex_t m;
@@ -51,7 +64,7 @@ dCpr(
     pthread_condattr_destroy(&p->a);
     pthread_mutex_unlock(&p->m);
     pthread_mutex_destroy(&p->m);
-    p->f(p);
+    ChanF(p);
   }
 }
 
@@ -74,8 +87,7 @@ cCpr(
 
 static cpr_t *
 gCpr(
-  void *(*a)(void *, unsigned long)
- ,void (*f)(void *)
+  void
 ){
   static pthread_once_t o = PTHREAD_ONCE_INIT;
   cpr_t *p;
@@ -83,31 +95,30 @@ gCpr(
   if (pthread_once(&o, cCpr))
     return (0);
   if (!(p = pthread_getspecific(Cpr))) {
-    if (!(p = a(0, sizeof (*p)))
+    if (!(p = ChanA(0, sizeof (*p)))
      || pthread_mutex_init(&p->m, 0)) {
-      f(p);
+      ChanF(p);
       return (0);
     }
     if (pthread_condattr_init(&p->a)) {
       pthread_mutex_destroy(&p->m);
-      f(p);
+      ChanF(p);
       return (0);
     }
     pthread_condattr_setclock(&p->a, CLOCK_MONOTONIC);
     if (pthread_cond_init(&p->r, &p->a)) {
       pthread_condattr_destroy(&p->a);
       pthread_mutex_destroy(&p->m);
-      f(p);
+      ChanF(p);
       return (0);
     }
     if (pthread_setspecific(Cpr, p)) {
       pthread_cond_destroy(&p->r);
       pthread_condattr_destroy(&p->a);
       pthread_mutex_destroy(&p->m);
-      f(p);
+      ChanF(p);
       return (0);
     }
-    p->f = f;
     p->t = 1;
     p->c = 0;
   }
@@ -117,8 +128,6 @@ gCpr(
 
 /* chan */
 struct chan {
-  void *(*a)(void *, unsigned long); /* realloc */
-  void (*f)(void *);                 /* free */
   chanSi_t q;      /* store implementation function */
   chanSd_t d;      /* store done function */
   void *v;         /* if q, store context else value */
@@ -142,30 +151,24 @@ struct chan {
 
 chan_t *
 chanCreate(
-  void *(*a)(void *, unsigned long)
- ,void (*f)(void *)
- ,chanSi_t q
+  chanSi_t q
  ,void *v
  ,chanSd_t d
 ){
   chan_t *c;
 
-  if (!a || !f || (q && !v))
-    return (0);
-  if ((c = a(0, sizeof (*c)))) {
+  if ((c = ChanA(0, sizeof (*c)))) {
     c->r = c->w = 0;
-    if (!(c->r = a(0, sizeof (*c->r)))
-     || !(c->w = a(0, sizeof (*c->w)))
+    if (!(c->r = ChanA(0, sizeof (*c->r)))
+     || !(c->w = ChanA(0, sizeof (*c->w)))
      || pthread_mutex_init(&c->m, 0)) {
-      f(c->w);
-      f(c->r);
-      f(c);
+      ChanF(c->w);
+      ChanF(c->r);
+      ChanF(c);
       return (0);
     }
   } else
     return (0);
-  c->a = a;
-  c->f = f;
   c->rs = c->ws = 1;
   c->rh = c->rt = c->wh = c->wt = 0;
   c->e = chanRe | chanWe;
@@ -264,13 +267,13 @@ chanClose(
     return;
   }
   assert(c->s == chanSsCanPut);
-  c->f(c->r);
-  c->f(c->w);
+  ChanF(c->r);
+  ChanF(c->w);
   if (c->q && c->d)
     c->d(c->v);
   pthread_mutex_unlock(&c->m);
   pthread_mutex_destroy(&c->m);
-  c->f(c);
+  ChanF(c);
 }
 
 unsigned int
@@ -415,12 +418,12 @@ get:
       ++i;
       goto exit;
     }
-    if (!m && !(m = gCpr(c->a, c->f))) {
+    if (!m && !(m = gCpr())) {
       pthread_mutex_unlock(&c->m);
       goto exit0;
     }
     if (!(c->e & chanRe) && c->rh == c->rt) {
-      if (!(v = c->a(c->r, (c->rs + 1) * sizeof (*c->r)))) {
+      if (!(v = ChanA(c->r, (c->rs + 1) * sizeof (*c->r)))) {
         pthread_mutex_unlock(&c->m);
         goto exit0;
       }
@@ -481,12 +484,12 @@ put:
       goto exit;
     }
 putQueue:
-    if (!m && !(m = gCpr(c->a, c->f))) {
+    if (!m && !(m = gCpr())) {
       pthread_mutex_unlock(&c->m);
       goto exit0;
     }
     if (!(c->e & chanWe) && c->wh == c->wt) {
-      if (!(v = c->a(c->w, (c->ws + 1) * sizeof (*c->w)))) {
+      if (!(v = ChanA(c->w, (c->ws + 1) * sizeof (*c->w)))) {
         pthread_mutex_unlock(&c->m);
         goto exit0;
       }
@@ -516,12 +519,12 @@ putQueue:
     }
     if (c->s & chanSsCanPut && (c->e & chanWe || !(c->e & chanRe))) {
 putWait:
-      if (!m && !(m = gCpr(c->a, c->f))) {
+      if (!m && !(m = gCpr())) {
         pthread_mutex_unlock(&c->m);
         goto exit0;
       }
       if (!(c->e & chanWe) && c->wh == c->wt) {
-        if (!(v = c->a(c->w, (c->ws + 1) * sizeof (*c->w)))) {
+        if (!(v = ChanA(c->w, (c->ws + 1) * sizeof (*c->w)))) {
           pthread_mutex_unlock(&c->m);
           goto exit0;
         }
@@ -678,7 +681,7 @@ putWait:
         goto exit;
       }
       if (!(c->e & chanRe) && c->rh == c->rt) {
-        if (!(v = c->a(c->r, (c->rs + 1) * sizeof (*c->r)))) {
+        if (!(v = ChanA(c->r, (c->rs + 1) * sizeof (*c->r)))) {
           pthread_mutex_unlock(&c->m);
           goto exit0;
         }
@@ -713,7 +716,7 @@ putWait:
       if (c->s & chanSsCanPut)
         goto put;
       if (!(c->e & chanWe) && c->wh == c->wt) {
-        if (!(v = c->a(c->w, (c->ws + 1) * sizeof (*c->w)))) {
+        if (!(v = ChanA(c->w, (c->ws + 1) * sizeof (*c->w)))) {
           pthread_mutex_unlock(&c->m);
           goto exit0;
         }
@@ -748,7 +751,7 @@ putWait:
       if (c->s & chanSsCanPut)
         goto putWait;
       if (!(c->e & chanWe) && c->wh == c->wt) {
-        if (!(v = c->a(c->w, (c->ws + 1) * sizeof (*c->w)))) {
+        if (!(v = ChanA(c->w, (c->ws + 1) * sizeof (*c->w)))) {
           pthread_mutex_unlock(&c->m);
           goto exit0;
         }

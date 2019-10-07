@@ -20,6 +20,15 @@
 #define __CHAN_H__
 
 /*
+ * initialize the chan API
+ */
+void
+chanInit(
+  void *(*realloc)(void *, unsigned long)
+ ,void (*free)(void *)
+);
+
+/*
  * Channel Store
  */
 
@@ -67,22 +76,18 @@ typedef struct chan chan_t;
  *  This works best (providing low latency) when threads work more and talk less.
  *
  * When allocating the channel, supply:
- *  a pointer to a function with realloc() semantics
- *  a pointer to a function with free() semantics
  *  the store implementation function (or 0 if none)
  *  the store context (or 0 if none)
  *  the store context done function (or 0 if none)
  * For example:
  *  chan_t *c;
- *  c = chanCreate(realloc, free, chanFifoSi, chanFifoSa(realloc, free, 10), chanFifoSd);
+ *  c = chanCreate(chanFifoSi, chanFifoSa(10), chanFifoSd);
  *
  * Returned channel is Open.
  */
 chan_t *
 chanCreate(
-  void *(*realloc)(void *, unsigned long)
- ,void (*free)(void *)
- ,chanSi_t impl
+  chanSi_t impl
  ,void *cntx
  ,chanSd_t done
 ); /* returns 0 on failure */

@@ -55,9 +55,7 @@ typedef struct chanSockM {
  */
 int
 chanSock(
-  void *(*realloc)(void *, unsigned long)
- ,void (*free)(void *)
- ,chan_t *hangup
+  chan_t *hangup
  ,int socket
  ,chan_t *read
  ,chan_t *write

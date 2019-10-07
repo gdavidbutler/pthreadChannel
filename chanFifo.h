@@ -33,23 +33,21 @@ chanFifoSc_t;
 /* allocate a context of size chan messages (void *) */
 chanFifoSc_t *
 chanFifoSa(
-  void *(*realloc)(void *, unsigned long)
- ,void (*free)(void *)
- ,unsigned int size
+  unsigned int size
 ); /* returns 0 on failure */
 
 /* deallocate context */
 void
 chanFifoSd(
-  void *
+  void *context
 );
 
 /* the chan implementation */
 chanSs_t
 chanFifoSi(
-  void *
- ,chanSo_t
- ,void **
+  void *context
+ ,chanSo_t operation
+ ,void **value
 );
 
 #endif /* __CHANFIFO_H__ */
