@@ -20,10 +20,10 @@
 #define __CHAN_H__
 
 /*
- * initialize the chan API
+ * initialize chan heap API
  */
 void
-chanInit(
+chanSetHeap(
   void *(*realloc)(void *, unsigned long)
  ,void (*free)(void *)
 );

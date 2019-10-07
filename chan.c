@@ -32,7 +32,7 @@ void *(*ChanA)(void *, unsigned long) = realloc;
 void (*ChanF)(void *) = free;
 
 void
-chanInit(
+chanSetHeap(
   void *(*a)(void *, unsigned long)
  ,void (*f)(void *)
 ){

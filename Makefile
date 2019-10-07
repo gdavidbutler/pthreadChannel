@@ -1,4 +1,4 @@
-CFLAGS = -Wall -Wextra -Wpedantic -I. -Os -g -DHAVE_CONDATTR_SETCLOCK
+CFLAGS = -Wall -Wextra -Wpedantic -I. -DHAVE_CONDATTR_SETCLOCK -Os -g
 
 all: chan.o chanFifo.o chanSock.o primes sockproxy
 

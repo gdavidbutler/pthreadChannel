@@ -22,8 +22,8 @@ This implementation's focus is store fair access (first-come-first-serve), relax
 
 Find the API in chan.h:
 
-* chanInit
-  * Initialize the chan API providing pointers to dynamic memory routines with realloc() and free() semantics. Otherwise, use the libc versions.
+* chanSetHeap
+  * Optionally provide pointers to dynamic memory routines with realloc() and free() semantics. Otherwise, use the libc versions.
 * chanCreate
   * Allocate an Open chan_t (reference count = 1, pair with chanClose).
 * chanOpen
