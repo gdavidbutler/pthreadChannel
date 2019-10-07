@@ -105,7 +105,9 @@ gCpr(
       ChanF(p);
       return (0);
     }
+#ifdef HAVE_CONDATTR_SETCLOCK
     pthread_condattr_setclock(&p->a, CLOCK_MONOTONIC);
+#endif
     if (pthread_cond_init(&p->r, &p->a)) {
       pthread_condattr_destroy(&p->a);
       pthread_mutex_destroy(&p->m);
@@ -357,7 +359,13 @@ chanPoll(
   else if (w > 0) {
     static long nsps = 1000000000L;
 
-    if (clock_gettime(CLOCK_MONOTONIC, &s))
+    if (
+#ifdef HAVE_CONDATTR_SETCLOCK
+        clock_gettime(CLOCK_MONOTONIC, &s)
+#else
+        clock_gettime(CLOCK_REALTIME, &s)
+#endif
+    )
       goto exit0;
     if (w > nsps) {
       s.tv_sec += w / nsps;
