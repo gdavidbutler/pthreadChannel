@@ -118,11 +118,11 @@ chanClose(
 
 /*
  * Channels distribute messages fairly under pressure.
- *  If there are waiting readers, a new reader goes to the end of the line
- *   unless there are also waiting writers (waiting readers won't wait long)
+ *  If there are waiting getters, a new getter goes to the end of the line
+ *   unless there are also waiting putters (waiting getters won't wait long)
  *    then a meesage is opportunistically read instead of forcing a wait.
- *  If there are waiting writers, a new writers goes to the end of the line
- *   unless there are also waiting readers (waiting writers won't wait long)
+ *  If there are waiting putters, a new putters goes to the end of the line
+ *   unless there are also waiting getters (waiting putters won't wait long)
  *    then a meesage is opportunistically written instead of forcing a wait.
  */
 

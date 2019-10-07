@@ -37,18 +37,18 @@ servT(
   void *v
 ){
   void *t;
-  int f[2];
-  chan_t *c[2];
-  chanPoll_t p[2];
+  int s[2];        /* server and client sockets */
+  chan_t *c[2];    /* read and write channels */
+  chanPoll_t p[2]; /* server and client hangup channels */
 
-  f[0] = (int)(long)v;
-  pthread_cleanup_push((void(*)(void*))close, (void *)(long)f[0]);
-  if ((f[1] = socket(Caddr->ai_family, Caddr->ai_socktype, Caddr->ai_protocol)) < 0) {
+  s[0] = (int)(long)v;
+  pthread_cleanup_push((void(*)(void*))close, (void *)(long)s[0]);
+  if ((s[1] = socket(Caddr->ai_family, Caddr->ai_socktype, Caddr->ai_protocol)) < 0) {
     perror("socket");
     goto exit0;
   }
-  pthread_cleanup_push((void(*)(void*))close, (void *)(long)f[1]);
-  if (connect(f[1], Caddr->ai_addr, Caddr->ai_addrlen)) {
+  pthread_cleanup_push((void(*)(void*))close, (void *)(long)s[1]);
+  if (connect(s[1], Caddr->ai_addr, Caddr->ai_addrlen)) {
     perror("connect");
     goto exit1;
   }
@@ -74,11 +74,11 @@ servT(
   }
   pthread_cleanup_push((void(*)(void*))chanClose, p[1].c);
   pthread_cleanup_push((void(*)(void*))chanShut, p[1].c);
-  if (!chanSock(p[0].c, f[0], c[0], c[1], 65535)) {
+  if (!chanSock(p[0].c, s[0], c[0], c[1], 65535)) {
     perror("chanSock");
     goto exit5;
   }
-  if (!chanSock(p[1].c, f[1], c[1], c[0], 65535)) {
+  if (!chanSock(p[1].c, s[1], c[1], c[0], 65535)) {
     perror("chanSock");
     goto exit5;
   }
@@ -97,9 +97,9 @@ exit3:
 exit2:
   pthread_cleanup_pop(1); /* chanClose(c[0]) */
 exit1:
-  pthread_cleanup_pop(1); /* close(f[1]) */
+  pthread_cleanup_pop(1); /* close(s[1]) */
 exit0:
-  pthread_cleanup_pop(1); /* close(f[0]) */
+  pthread_cleanup_pop(1); /* close(s[0]) */
   return (0);
 }
 

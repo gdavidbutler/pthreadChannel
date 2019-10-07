@@ -76,7 +76,7 @@ Since a pthread can't both wait in a chanPoll() and in a poll()/select()/etc., s
 
 Find the API in chanSock.h:
 
-* chanSock: connect a bound full duplex socket (using read() and write()) to a pair of Channels
+* chanSock: connect a bound full duplex socket (using read() and write()) to a pair of read and write Channels
 
 ### Examples
 

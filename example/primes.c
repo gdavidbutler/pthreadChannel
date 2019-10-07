@@ -60,9 +60,9 @@
  */
 #define MEMORY 1 /* 0 or 1 to delegate malloc'd memory or cast unsigned long to void* */
 
-unsigned int Goal; /* use how far to go to size the stores */
+static unsigned int Goal; /* use how far to go to size the stores */
 
-void *
+static void *
 primeT(
   void *v
 ){
