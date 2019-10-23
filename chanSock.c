@@ -28,10 +28,10 @@ extern void (*ChanF)(void *);
 
 struct chanSockX {
   chan_t *h;
-  chan_t *w;
   chan_t *r;
-  unsigned int l;
+  chan_t *w;
   int s;
+  unsigned int l;
 };
 
 /* get the write chan and write the socket */
@@ -209,21 +209,21 @@ exit0:
 int
 chanSock(
   chan_t *h
- ,int s
  ,chan_t *r
  ,chan_t *w
+ ,int s
  ,unsigned int l
 ){
   struct chanSockX *x;
   pthread_t t;
 
   x = 0;
-  if (!h || s < 0 || !r || !w || !l || !(x = ChanA(0, sizeof (*x))))
+  if (!h || !r || !w || s < 0 || !l || !(x = ChanA(0, sizeof (*x))))
     return (0);
   chanOpen((x->h = h));
-  x->s = s;
   chanOpen((x->r = r));
   chanOpen((x->w = w));
+  x->s = s;
   x->l = l;
   if (pthread_create(&t, 0, chanSockW, x)) {
     chanClose(x->w);

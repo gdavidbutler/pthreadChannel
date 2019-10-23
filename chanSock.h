@@ -42,23 +42,27 @@ typedef struct chanSockM {
 
 /*
  * Provide a hangup chan_t to the thread coordinating the I/O threads:
- *  chanShut() on the hangup channel does chanShut() on the std channels and the socket is shutdown(SHUT_RDWR) and close()'d
+ *  chanShut() on the hangup channel does chanShut() on the other channels and the socket is shutdown(SHUT_RDWR) and close()'d
  *  chanGet() on the hangup channel to block for chanShut when the chanSock completes
- * Provide a socket to be used by a pair of channels:
+ * Provide a read chan_t:
+ *   chanGet data that is read() from socket
+ *   chanShut to shutdown(SHUT_RD) on socket
+ * Provide a write chan_t:
+ *   chanPut data that is write() to socket
+ *   chanShut to shutdown(SHUT_WR) on socket
+ * Provide a socket to be used by the read and write channels:
  *  When read() on the socket fails, the socket is shutdown(SHUT_RD) and the read chan is chanShut()
  *  When write() on the socket fails, the socket is shutdown(SHUT_WR) and the write chan is chanShut()
- * Provide a read chan_t
- * Provide a write chan_t
  * Provide a readLimit to set/limit the size of a read from the socket
  *
- * chanSock() takes care of calling chanOpen on each chan_t for the sub-threads
+ * As a convenience, chanSock() chanOpen's the chan_t's (delegating chanClose's)
  */
 int
 chanSock(
   chan_t *hangup
- ,int socket
  ,chan_t *read
  ,chan_t *write
+ ,int socket
  ,unsigned int readLimit
 ); /* returns 0 on failure */
 

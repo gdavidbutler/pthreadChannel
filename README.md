@@ -14,7 +14,8 @@ For a background on Channels see Russ Cox's [Bell Labs and CSP Threads](https://
 * Message semantics should include ownership transfer. E.g.:
   * putting thread: m = malloc(), init(m), chanPut(chan, m).
   * getting thread: chanGet(chan, &m), use(m), free(m).
-* Channels can be Put/Get on channels! E.g.:
+* Channels can be Put/Get on channels!
+IMPORANT: chanOpen a chan_t before passing it (delegating chanClose) to eliminate chanClose/chanOpen races. E.g.:
   * client thread: chanOpen(chan), chanPut(server, chan), response = chanGet(chan).
   * server thread: chan = chanGet(server), chanPut(chan, response), chanClose(chan).
 
