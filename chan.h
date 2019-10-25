@@ -128,7 +128,7 @@ chanClose(
 
 /* channel operation status */
 typedef enum chanOs {
-  chanOsFlr = 0 /* Failure */
+  chanOsErr = 0 /* Error (for chanGet(), chanPut() and chanPutWait() for chanPoll() 0 return) */
  ,chanOsGet     /* Get successful */
  ,chanOsPut     /* Put successful (or timeout on Wait part of PutWait) */
  ,chanOsPutWait /* PutWait successful */
@@ -155,7 +155,12 @@ chanPut(
 );
 
 /* put a message (as chanPut) then block till a Get occurs */
-chanOs_t chanPutWait(long nsTimeout, chan_t *chn, void *val);
+chanOs_t
+chanPutWait(
+  long nsTimeout
+ ,chan_t *chn
+ ,void *val
+);
 
 /*
  * Channel poll
@@ -184,8 +189,8 @@ typedef struct chanPoll {
  *  When the store is full, Put blocks based on nsTimeout.
  *  When the store is empty, Get blocks based on nsTimeout.
  *  a PutWait is the same as a Put, then blocks till a Get occurs
- * If an operation is successful (return greater than 0),
- *  the offset into the list is one less than the return value.
+ * Returns 0 on error (should only occur for memory allocation failures)
+ *  otherwise the offset into the list is one less than the return value.
  */
 unsigned int
 chanPoll(

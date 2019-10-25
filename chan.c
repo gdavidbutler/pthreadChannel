@@ -809,7 +809,7 @@ chanGet(
   p[0].o = chanPoGet;
   if (chanPoll(w, sizeof (p) / sizeof (p[0]), p))
     return p[0].s;
-  return chanOsFlr;
+  return chanOsErr;
 }
 
 chanOs_t
@@ -825,7 +825,7 @@ chanPut(
   p[0].o = chanPoPut;
   if (chanPoll(w, sizeof (p) / sizeof (p[0]), p))
     return p[0].s;
-  return chanOsFlr;
+  return chanOsErr;
 }
 
 chanOs_t
@@ -841,5 +841,5 @@ chanPutWait(
   p[0].o = chanPoPutWait;
   if (chanPoll(w, sizeof (p) / sizeof (p[0]), p))
     return p[0].s;
-  return chanOsFlr;
+  return chanOsErr;
 }
