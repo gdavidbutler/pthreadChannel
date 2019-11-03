@@ -144,9 +144,9 @@ struct chan {
   unsigned int pt; /* putter queue tail */
   unsigned int c;  /* open count */
   enum {
-   chanSu = 1      /* is shutdown */
-  ,chanGe = 2      /* getter queue empty, to differentiate gh==gt */
-  ,chanPe = 4      /* putter queue empty, to differentiate ph==pt */
+   chanGe = 1      /* getter queue empty, to differentiate gh==gt */
+  ,chanPe = 2      /* putter queue empty, to differentiate ph==pt */
+  ,chanSu = 4      /* is shutdown */
   } e;
   pthread_mutex_t m;
 };
@@ -391,7 +391,7 @@ chanPoll(
     if (c->s & chanSsCanGet && (c->e & chanSu || c->e & chanGe || !(c->e & chanPe))) {
 get:
       if (c->q)
-        c->s = c->q(c->v, chanSoGet, (a + i)->v);
+        c->s = c->q(c->v, chanSoGet, c->e & (chanGe|chanPe), (a + i)->v);
       else {
         *((a + i)->v) = c->v;
         c->s = chanSsCanPut;
@@ -462,7 +462,7 @@ get:
     if (c->s & chanSsCanPut && (c->e & chanPe || !(c->e & chanGe))) {
 put:
       if (c->q)
-        c->s = c->q(c->v, chanSoPut, (a + i)->v);
+        c->s = c->q(c->v, chanSoPut, c->e & (chanGe|chanPe), (a + i)->v);
       else {
         c->v = *((a + i)->v);
         c->s = chanSsCanGet;
@@ -548,7 +548,7 @@ putWait:
       ++m->c;
       assert(m->c);
       if (c->q)
-        c->s = c->q(c->v, chanSoPut, (a + i)->v);
+        c->s = c->q(c->v, chanSoPut, c->e & (chanGe|chanPe), (a + i)->v);
       else {
         c->v = *((a + i)->v);
         c->s = chanSsCanGet;

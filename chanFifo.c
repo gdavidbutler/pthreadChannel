@@ -25,6 +25,7 @@ extern void (*ChanF)(void *);
 
 /* chan fifo store context */
 struct chanFifoSc {
+  unsigned int m;    /* store max */
   unsigned int s;    /* store size */
   unsigned int h;    /* store head */
   unsigned int t;    /* store tail */
@@ -33,14 +34,16 @@ struct chanFifoSc {
 
 chanFifoSc_t *
 chanFifoSa(
-  unsigned int s
+  unsigned int m
+ ,unsigned int s
 ){
   chanFifoSc_t *c;
 
-  if (!s)
+  if (!m || !s || m < s)
     return (0);
-  if (!(c = ChanA(0, sizeof (*c) + (s - 1) * sizeof (c->q[0]))))
+  if (!(c = ChanA(0, sizeof (*c) + (m - 1) * sizeof (c->q[0]))))
     return (c);
+  c->m = m;
   c->s = s;
   c->h = c->t = 0;
   return (c);
@@ -58,20 +61,35 @@ chanSs_t
 chanFifoSi(
   void *c
  ,chanSo_t o
+ ,chanSw_t w
  ,void **v
 ){
   if (o == chanSoPut) {
     ((chanFifoSc_t*)c)->q[((chanFifoSc_t*)c)->t] = *v;
     if (++((chanFifoSc_t*)c)->t == ((chanFifoSc_t*)c)->s)
       ((chanFifoSc_t*)c)->t = 0;
-    if (((chanFifoSc_t*)c)->t == ((chanFifoSc_t*)c)->h)
-      return (chanSsCanGet);
+    if (((chanFifoSc_t*)c)->t == ((chanFifoSc_t*)c)->h) {
+      if (((chanFifoSc_t*)c)->s < ((chanFifoSc_t*)c)->m && !(w & chanSwNoGet)) {
+        unsigned int i;
+
+        ++((chanFifoSc_t*)c)->h;
+        for (i = ((chanFifoSc_t*)c)->s; i > ((chanFifoSc_t*)c)->t; --i)
+          ((chanFifoSc_t*)c)->q[i] = ((chanFifoSc_t*)c)->q[i - 1];
+        ++((chanFifoSc_t*)c)->s;
+      } else
+        return (chanSsCanGet);
+    }
   } else {
     *v = ((chanFifoSc_t*)c)->q[((chanFifoSc_t*)c)->h];
     if (++((chanFifoSc_t*)c)->h == ((chanFifoSc_t*)c)->s)
       ((chanFifoSc_t*)c)->h = 0;
-    if (((chanFifoSc_t*)c)->h == ((chanFifoSc_t*)c)->t)
+    if (((chanFifoSc_t*)c)->h == ((chanFifoSc_t*)c)->t) {
+      if (((chanFifoSc_t*)c)->s > 1 && !(w & chanSwNoPut)) {
+        --((chanFifoSc_t*)c)->s;
+        ((chanFifoSc_t*)c)->h = ((chanFifoSc_t*)c)->t = 0;
+      }
       return (chanSsCanPut);
+    }
   }
   return (chanSsCanGet | chanSsCanPut);
 }

@@ -30,10 +30,11 @@
 typedef struct chanFifoSc
 chanFifoSc_t;
 
-/* allocate a context of size chan messages (void *) */
+/* allocate a context of max chan messages (void *) */
 chanFifoSc_t *
 chanFifoSa(
-  unsigned int size
+  unsigned int max
+ ,unsigned int initial
 ); /* returns 0 on failure */
 
 /* deallocate context */
@@ -47,6 +48,7 @@ chanSs_t
 chanFifoSi(
   void *context
  ,chanSo_t operation
+ ,chanSw_t wait
  ,void **value
 );
 

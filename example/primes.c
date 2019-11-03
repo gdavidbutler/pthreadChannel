@@ -44,6 +44,7 @@
  * using a FIFO store drastically decreases thread context switching.
  * Since each prime thread is a filter, there are many more messages at the head of
  * the chain than at the end. Stores are sized relative to the length of the chain.
+ * Since latency is not important (throughput is), the working size is set to max.
  */
 #define STORE 1 /* 0 or 1 to use a store */
 #if STORE
@@ -91,8 +92,8 @@ primeT(
   c = 0;
   pthread_cleanup_push((void(*)(void*))chanClose, c);
 #if STORE
-  if ((i = (Goal - prime) / 10) > 1)
-    c = chanCreate(chanFifoSi, chanFifoSa(i), chanFifoSd);
+  if ((i = (Goal - prime) / 100) > 1)
+    c = chanCreate(chanFifoSi, chanFifoSa(i, i), chanFifoSd);
   else
 #endif
     c = chanCreate(0,0,0);
@@ -167,8 +168,8 @@ main(
   c = 0;
   pthread_cleanup_push((void(*)(void*))chanClose, c);
 #if STORE
-  if ((i = Goal / 10) > 1)
-    c = chanCreate(chanFifoSi, chanFifoSa(i), chanFifoSd);
+  if ((i = (Goal - 2) / 100) > 1)
+    c = chanCreate(chanFifoSi, chanFifoSa(i, i), chanFifoSd);
   else
 #endif
     c = chanCreate(0,0,0);

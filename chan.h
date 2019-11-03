@@ -38,6 +38,12 @@ typedef enum chanSo {
  ,chanSoPut
 } chanSo_t;
 
+/* channel store wait */
+typedef enum chanSw {
+  chanSwNoGet = 1 /* no waiting Gets */
+ ,chanSwNoPut = 2 /* no waiting Puts */
+} chanSw_t;
+
 /* channel store status */
 typedef enum chanSs { /* bit map */
   chanSsCanPut = 1 /* has room */
@@ -48,6 +54,7 @@ typedef enum chanSs { /* bit map */
  *
  * A channel store takes a pointer to a context,
  *  the operation the channel wants to perform on the store
+ *  indication of waiting Gets and Puts
  *  and a value pointer
  * It returns the state of the store as it relates to Get and Put.
  * The store is called under protection of a channel operation mutex.
@@ -56,6 +63,7 @@ typedef chanSs_t
 (*chanSi_t)(
   void *cntx
  ,chanSo_t oper
+ ,chanSw_t wait
  ,void **val
 );
 
@@ -115,16 +123,6 @@ void
 chanClose(
   chan_t *chn
 );
-
-/*
- * Channels distribute messages fairly under pressure.
- *  If there are waiting getters, a new getter goes to the end of the line
- *   unless there are also waiting putters (waiting getters won't wait long)
- *    then a meesage is opportunistically read instead of forcing a wait.
- *  If there are waiting putters, a new putters goes to the end of the line
- *   unless there are also waiting getters (waiting putters won't wait long)
- *    then a meesage is opportunistically written instead of forcing a wait.
- */
 
 /* channel operation status */
 typedef enum chanOs {
