@@ -20,19 +20,13 @@ IMPORANT: chanOpen a chan_t before passing it (delegating chanClose) to eliminat
   * client pthread: chanOpen(chan), chanPut(server, chan), response = chanGet(chan).
   * server pthread: chan = chanGet(server), chanPut(chan, response), chanClose(chan).
 
-Pthreads are expensive. Channels are cheap. Use more Channels to separate concerns:
-* On source. (Pthreads' role calling Put on a Channel are "equivalent".)
-* On sink. (Pthreads' role calling Get on a Channel are "equivalent".)
-* On latency. (Time in-store is "equivalent".)
-* On bandwidth. (Number of pthreads (or CPUs) Getting or Putting on a Channel are "equivalent".)
-
 Channels distribute messages fairly under pressure:
 * If there are waiting getters, a new getter goes to the end of the line
- * unless there are also waiting putters (waiting getters won't wait long)
-  * then a meesage is opportunistically read instead of forcing a wait.
+  * unless there are also waiting putters (as waiting getters won't wait long)
+    * then a meesage is opportunistically read instead of waiting.
 * If there are waiting putters, a new putters goes to the end of the line
- * unless there are also waiting getters (waiting putters won't wait long)
-  * then a meesage is opportunistically written instead of forcing a wait.
+  * unless there are also waiting getters (as waiting putters won't wait long)
+    * then a meesage is opportunistically written instead of waiting.
 
 Find the API in chan.h:
 
@@ -65,7 +59,7 @@ In classic CSPs, a low latency synchronous rendezvous (get and put block till th
 works well when coded in machine or assembler language (jump instructions).
 If a message store is needed (queue, stack, etc.), it is implemented as another CSP.
 
-Modern CSPs (e.g. "coroutines", "functions", etc.) with "local" variables and supporting recursion, have a higher context switch overhead.
+Modern CSPs (e.g. "coroutines", "functions", etc.) with "local" variables and supporting recursion, have a higher context switch cost.
 But native support in modern processors (call/return instructions) makes it acceptable.
 A message store is still implemented as a CSP.
 
@@ -74,13 +68,13 @@ Therefore Stores are implemented as shared code executed within pthreads' contex
 
 A pluggable Store can be provided on a chanCreate call.
 If none is provided, a channel stores a single message.
-This is best (lowest Store latency) when the overhead of processing a message dominates the context switch overhead of transporting a message.
-But as the processing overhead decreases toward the context switch overhead, Stores can drastically decrease context switching and increase throughput.
-Therefore, a Store's size depends on how much Store latency can be tolerated in the quest for throughput.
+This is best (lowest latency) when the cost of processing a message dominates the cost of a context switch.
+But as the processing cost decreases toward the context switch cost, Stores can drastically decrease context switching.
+Therefore, a Store's size depends on how much latency can be tolerated in the quest for efficiency.
 
-A Channel FIFO store implementation is provided.
+A dynamic Channel FIFO store implementation is provided.
 When a context is created, a maximum size and an initial size are provided.
-The size the store allows beyond the initial size is adjusted:
+To balance latency and efficiency the size is adjusted by:
 * Before a Put, if the Store is empty and there are no waiting Getters, the size is decremented.
 * After a Put, if the Store is full and there are waiting Getters, the size is incremented.
 
