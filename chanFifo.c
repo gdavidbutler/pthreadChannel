@@ -25,11 +25,11 @@ extern void (*ChanF)(void *);
 
 /* chan fifo store context */
 struct chanFifoSc {
+  void **q;          /* circular store */
   unsigned int m;    /* store max */
   unsigned int s;    /* store size */
   unsigned int h;    /* store head */
   unsigned int t;    /* store tail */
-  void *q[1];        /* circular store, must be last */
 };
 
 chanFifoSc_t *
@@ -41,19 +41,25 @@ chanFifoSa(
 
   if (!m || !s || m < s)
     return (0);
-  if (!(c = ChanA(0, sizeof (*c) + (m - 1) * sizeof (c->q[0]))))
-    return (c);
+  if (!(c = ChanA(0, sizeof (*c)))
+   || !(c->q = ChanA(0, s * sizeof (*c->q)))) {
+    ChanF(c);
+    return (0);
+  }
   c->m = m;
   c->s = s;
   c->h = c->t = 0;
   return (c);
 }
 
+#define SC ((chanFifoSc_t*)c)
+
 void
 chanFifoSd(
-  void *v
+  void *c
 ){
-  ChanF(v);
+  ChanF(SC->q);
+  ChanF(c);
 }
 
 /* a store is started in chanSsCanPut status */
@@ -64,32 +70,39 @@ chanFifoSi(
  ,chanSw_t w
  ,void **v
 ){
-  if (o == chanSoPut) {
-    if (((chanFifoSc_t*)c)->t == ((chanFifoSc_t*)c)->h
-     && ((chanFifoSc_t*)c)->s > 2 && (w & chanSwNoGet)) {
-      --((chanFifoSc_t*)c)->s;
-      ((chanFifoSc_t*)c)->h = ((chanFifoSc_t*)c)->t = 0;
-    }
-    ((chanFifoSc_t*)c)->q[((chanFifoSc_t*)c)->t] = *v;
-    if (++((chanFifoSc_t*)c)->t == ((chanFifoSc_t*)c)->s)
-      ((chanFifoSc_t*)c)->t = 0;
-    if (((chanFifoSc_t*)c)->t == ((chanFifoSc_t*)c)->h) {
-      if (((chanFifoSc_t*)c)->s < ((chanFifoSc_t*)c)->m && !(w & chanSwNoGet)) {
-        unsigned int i;
+  void *t;
+  unsigned int i;
 
-        ++((chanFifoSc_t*)c)->h;
-        for (i = ((chanFifoSc_t*)c)->s; i > ((chanFifoSc_t*)c)->t; --i)
-          ((chanFifoSc_t*)c)->q[i] = ((chanFifoSc_t*)c)->q[i - 1];
-        ++((chanFifoSc_t*)c)->s;
+  if (o == chanSoPut) {
+    if (SC->t == SC->h
+     && SC->s > 2 && (w & chanSwNoGet)
+     && (t = ChanA(SC->q, (SC->s - 1) * sizeof (*SC->q)))) {
+      SC->q = t;
+      --SC->s;
+      SC->h = SC->t = 0;
+    }
+    SC->q[SC->t] = *v;
+    if (++SC->t == SC->s)
+      SC->t = 0;
+    if (SC->t == SC->h) {
+      if (SC->s < SC->m && !(w & chanSwNoGet)
+       && (t = ChanA(SC->q, (SC->s + 1) * sizeof (*SC->q)))) {
+        SC->q = t;
+        ++SC->h;
+        for (i = SC->s; i > SC->t; --i)
+          SC->q[i] = SC->q[i - 1];
+        ++SC->s;
       } else
         return (chanSsCanGet);
     }
   } else {
-    *v = ((chanFifoSc_t*)c)->q[((chanFifoSc_t*)c)->h];
-    if (++((chanFifoSc_t*)c)->h == ((chanFifoSc_t*)c)->s)
-      ((chanFifoSc_t*)c)->h = 0;
-    if (((chanFifoSc_t*)c)->h == ((chanFifoSc_t*)c)->t)
+    *v = SC->q[SC->h];
+    if (++SC->h == SC->s)
+      SC->h = 0;
+    if (SC->h == SC->t)
       return (chanSsCanPut);
   }
   return (chanSsCanGet | chanSsCanPut);
 }
+
+#undef SC

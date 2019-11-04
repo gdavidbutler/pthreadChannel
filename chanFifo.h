@@ -30,7 +30,7 @@
 typedef struct chanFifoSc
 chanFifoSc_t;
 
-/* allocate a context of max chan messages (void *) */
+/* allocate a context of initial chan messages (void *) */
 chanFifoSc_t *
 chanFifoSa(
   unsigned int max
