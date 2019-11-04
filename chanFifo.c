@@ -65,6 +65,11 @@ chanFifoSi(
  ,void **v
 ){
   if (o == chanSoPut) {
+    if (((chanFifoSc_t*)c)->t == ((chanFifoSc_t*)c)->h
+     && ((chanFifoSc_t*)c)->s > 2 && (w & chanSwNoGet)) {
+      --((chanFifoSc_t*)c)->s;
+      ((chanFifoSc_t*)c)->h = ((chanFifoSc_t*)c)->t = 0;
+    }
     ((chanFifoSc_t*)c)->q[((chanFifoSc_t*)c)->t] = *v;
     if (++((chanFifoSc_t*)c)->t == ((chanFifoSc_t*)c)->s)
       ((chanFifoSc_t*)c)->t = 0;
@@ -83,13 +88,8 @@ chanFifoSi(
     *v = ((chanFifoSc_t*)c)->q[((chanFifoSc_t*)c)->h];
     if (++((chanFifoSc_t*)c)->h == ((chanFifoSc_t*)c)->s)
       ((chanFifoSc_t*)c)->h = 0;
-    if (((chanFifoSc_t*)c)->h == ((chanFifoSc_t*)c)->t) {
-      if (((chanFifoSc_t*)c)->s > 1 && !(w & chanSwNoPut)) {
-        --((chanFifoSc_t*)c)->s;
-        ((chanFifoSc_t*)c)->h = ((chanFifoSc_t*)c)->t = 0;
-      }
+    if (((chanFifoSc_t*)c)->h == ((chanFifoSc_t*)c)->t)
       return (chanSsCanPut);
-    }
   }
   return (chanSsCanGet | chanSsCanPut);
 }

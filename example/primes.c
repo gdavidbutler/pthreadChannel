@@ -40,11 +40,11 @@
  */
 
 /*
- * Since this example talks more and works less (see the opposite comment in chan.h),
+ * Since this example talks more and works less (see README, chan.h and chanFifo.h),
  * using a FIFO store drastically decreases thread context switching.
  * Since each prime thread is a filter, there are many more messages at the head of
  * the chain than at the end. Stores are sized relative to the length of the chain.
- * Since latency is not important (throughput is), the working size is set to max.
+ * The context switch overhead dominates, so the initial size is set to the max.
  */
 #define STORE 1 /* 0 or 1 to use a store */
 #if STORE

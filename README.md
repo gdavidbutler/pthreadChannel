@@ -79,9 +79,10 @@ But as the processing overhead decreases toward the context switch overhead, Sto
 Therefore, a Store's size depends on how much Store latency can be tolerated in the quest for throughput.
 
 A Channel FIFO store implementation is provided.
-When a context is created, a maximum size and an intial size are provided.
-After a Put, if the Store is full and there are waiting Getters, the size is incremented.
-After a Get, if the Store is empty and there are waiting Putters, the size is decremented.
+When a context is created, a maximum size and an initial size are provided.
+The size the store allows beyond the initial size is adjusted:
+* Before a Put, if the Store is empty and there are no waiting Getters, the size is decremented.
+* After a Put, if the Store is full and there are waiting Getters, the size is incremented.
 
 Find the API in chanFifo.h:
 
