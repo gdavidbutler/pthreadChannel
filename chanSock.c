@@ -183,8 +183,8 @@ chanSockW(
   pthread_cleanup_push((void(*)(void*))chanClose, p[2].c);
   if (!(xC = ChanA(0, sizeof (*xC))))
     goto exit2;
-  chanOpen((xC->h = p[1].c));
-  chanOpen((xC->c = V->w));
+  xC->h = chanOpen(p[1].c);
+  xC->c = chanOpen(V->w);
   xC->s = V->s;
   if (pthread_create(&tC, 0, chanSockC, xC)) {
     chanClose(xC->c);
@@ -196,8 +196,8 @@ chanSockW(
   if (!(xS = ChanA(0, sizeof (*xS)))) {
     goto exit2;
   }
-  chanOpen((xS->h = p[2].c));
-  chanOpen((xS->c = V->r));
+  xS->h = chanOpen(p[2].c);
+  xS->c = chanOpen(V->r);
   xS->s = V->s;
   xS->l = V->l;
   if (pthread_create(&tS, 0, chanSockS, xS)) {
@@ -258,9 +258,9 @@ chanSock(
   x = 0;
   if (!h || !r || !w || s < 0 || !l || !(x = ChanA(0, sizeof (*x))))
     return (0);
-  chanOpen((x->h = h));
-  chanOpen((x->r = r));
-  chanOpen((x->w = w));
+  x->h = chanOpen(h);
+  x->r = chanOpen(r);
+  x->w = chanOpen(w);
   x->s = s;
   x->l = l;
   if (pthread_create(&t, 0, chanSockW, x)) {

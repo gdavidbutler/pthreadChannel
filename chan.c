@@ -183,15 +183,16 @@ chanCreate(
   return (c);
 }
 
-void
+chan_t *
 chanOpen(
   chan_t *c
 ){
-  if (!c)
-    return;
-  pthread_mutex_lock(&c->m);
-  ++c->c;
-  pthread_mutex_unlock(&c->m);
+  if (c) {
+    pthread_mutex_lock(&c->m);
+    ++c->c;
+    pthread_mutex_unlock(&c->m);
+  }
+  return (c);
 }
 
 void

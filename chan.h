@@ -101,7 +101,8 @@ chanCreate(
 ); /* returns 0 on failure */
 
 /* channel open, to keep a channel from being deallocated till chanClose */
-void
+/* return chn as a convience to allow: chanDup = chanOpen(chan) */
+chan_t *
 chanOpen(
   chan_t *chn
 );
