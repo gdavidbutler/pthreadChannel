@@ -36,8 +36,12 @@ chanSetHeap(
   void *(*a)(void *, unsigned long)
  ,void (*f)(void *)
 ){
-  if (!a || !f)
-    return;
+  void (**t)(void *);
+
+  /* force possible exceptions here and now */
+  t = a(0, sizeof (*t));
+  *t = f;
+  (**t)(t);
   ChanA = a;
   ChanF = f;
 }

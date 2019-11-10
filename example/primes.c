@@ -165,6 +165,7 @@ main(
    || (Goal = atoi(*(argv + 1))) < 2)
     Goal = 100;
   printf("Goal = %d\n", Goal);
+  chanSetHeap(realloc, free); /* only testing, this is the default */
   c = 0;
   pthread_cleanup_push((void(*)(void*))chanClose, c);
 #if STORE
