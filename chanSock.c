@@ -59,14 +59,18 @@ chanSockC(
   p[0].c = V->c;
   p[0].v = (void **)&m;
   p[0].o = chanPoGet;
-  m = 0;
-  while (chanPoll(-1, sizeof (p) / sizeof (p[0]), p) == 1 && p[0].s == chanOsGet
-   && (m->l)
-   && write(V->s, m->b, m->l) == m->l) {
-    ChanF(m);
-    m = 0;
+  while (chanPoll(-1, sizeof (p) / sizeof (p[0]), p) == 1 && p[0].s == chanOsGet) {
+    int f;
+
+    pthread_cleanup_push((void(*)(void*))ChanF, m);
+    if (m->l)
+      f = write(V->s, m->b, m->l) == m->l;
+    else
+      f = 0;
+    pthread_cleanup_pop(1); /* ChanF(m) */
+    if (!f)
+      break;
   }
-  ChanF(m);
   pthread_cleanup_pop(1); /* shutSockC(v) */
   pthread_cleanup_pop(1); /* chanShut(V->c) */
   pthread_cleanup_pop(1); /* chanClose(V->c) */
@@ -111,17 +115,23 @@ chanSockS(
   p[0].c = V->c;
   p[0].v = (void **)&m;
   p[0].o = chanPoPut;
-  while ((m = ChanA(0, sizeof (*m) + V->l - 1))
-   && (int)(m->l = read(V->s, m->b, V->l)) > 0) {
-    void *t;
+  while ((m = ChanA(0, sizeof (*m) + V->l - 1))) {
+    int f;
 
-    /* attempt to "right size" the message */
-    if ((t = ChanA(m, sizeof (*m) + m->l)))
-      m = t;
-    if (chanPoll(-1, sizeof (p) / sizeof (p[0]), p) != 1 || p[0].s != chanOsPut)
+    pthread_cleanup_push((void(*)(void*))ChanF, m);
+    if ((f = read(V->s, m->b, V->l)) > 0) {
+      void *t;
+
+      m->l = f;
+      /* attempt to "right size" the message */
+      if ((t = ChanA(m, sizeof (*m) + m->l)))
+        m = t;
+      f = chanPoll(-1, sizeof (p) / sizeof (p[0]), p) == 1 && p[0].s == chanOsPut;
+    }
+    pthread_cleanup_pop(0); /* ChanF(m) */
+    if (f <= 0)
       break;
   }
-  ChanF(m);
   pthread_cleanup_pop(1); /* shutSockS(v) */
   pthread_cleanup_pop(1); /* chanShut(V->c) */
   pthread_cleanup_pop(1); /* chanClose(V->c) */

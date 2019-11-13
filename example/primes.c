@@ -79,9 +79,20 @@ primeT(
   unsigned int i;
 #endif
 
-  pthread_cleanup_push((void(*)(void*))chanClose, v);
-  if (chanGet(-1, v, (void **)&ip) != chanOsGet)
-    goto exit0;
+  {
+  int cs;
+
+    if (pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cs)) {
+      chanClose(v);
+      return (0);
+    }
+    if (chanGet(-1, v, (void **)&ip) != chanOsGet) {
+      pthread_setcancelstate(cs, 0);
+      chanClose(v);
+      return (0);
+    }
+    pthread_setcancelstate(cs, 0);
+  }
 #if MEMORY
   prime = *ip;
   free(ip);
@@ -95,6 +106,7 @@ primeT(
   else
 #endif
     c = chanCreate(0,0,0);
+  pthread_cleanup_push((void(*)(void*))chanClose, v);
   pthread_cleanup_push((void(*)(void*))chanClose, c);
   if (!c) {
     puts("Can't create more channels, draining pipeline...");
@@ -110,8 +122,9 @@ drain:
       free(ip)
 #endif
       ;
-    goto exit1;
+    goto exit0;
   }
+  pthread_cleanup_push((void(*)(void*))chanShut, c);
   for (;;) {
     if (chanGet(-1, v, (void **)&ip) != chanOsGet)
       break;
@@ -136,12 +149,11 @@ drain:
         free(ip);
 #endif
   }
-  chanShut(c);
+  pthread_cleanup_pop(1); /* chanShut(c) */
   pthread_join(t, 0);
   printf("joined %d\n", prime); fflush(stdout);
-exit1:
-  pthread_cleanup_pop(1); /* chanClose(c) */
 exit0:
+  pthread_cleanup_pop(1); /* chanClose(c) */
   pthread_cleanup_pop(1); /* chanClose(v) */
   return (0);
 }
@@ -182,6 +194,7 @@ main(
     puts("Can't create thread");
     goto exit0;
   }
+  pthread_cleanup_push((void(*)(void*))chanShut, c);
   puts("2");
   for (i = 3; i <= Goal; i += 2) {
     chanOs_t r;
@@ -200,7 +213,7 @@ main(
     if (r != chanOsPut)
       break;
   }
-  chanShut(c);
+  pthread_cleanup_pop(1); /* chanShut(c) */
   pthread_join(t, 0);
   printf("joined Goal\n"); fflush(stdout);
 exit0:
