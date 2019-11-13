@@ -89,14 +89,13 @@ primeT(
   prime = ip;
 #endif
   printf("%d\n", prime);
-  c = 0;
-  pthread_cleanup_push((void(*)(void*))chanClose, c);
 #if STORE
   if ((i = (Goal - prime) / 100) > 1)
     c = chanCreate(chanFifoSi, chanFifoSa(i, i), chanFifoSd);
   else
 #endif
     c = chanCreate(0,0,0);
+  pthread_cleanup_push((void(*)(void*))chanClose, c);
   if (!c) {
     puts("Can't create more channels, draining pipeline...");
     goto drain;
@@ -166,14 +165,13 @@ main(
     Goal = 100;
   printf("Goal = %d\n", Goal);
   chanSetHeap(realloc, free); /* only testing, this is the default */
-  c = 0;
-  pthread_cleanup_push((void(*)(void*))chanClose, c);
 #if STORE
   if ((i = (Goal - 2) / 100) > 1)
     c = chanCreate(chanFifoSi, chanFifoSa(i, i), chanFifoSd);
   else
 #endif
     c = chanCreate(0,0,0);
+  pthread_cleanup_push((void(*)(void*))chanClose, c);
   if (!c) {
     puts("Can't create channel");
     goto exit0;

@@ -56,18 +56,17 @@ chanSockC(
   pthread_cleanup_push((void(*)(void*))chanClose, V->c);
   pthread_cleanup_push((void(*)(void*))chanShut, V->c);
   pthread_cleanup_push((void(*)(void*))shutSockC, v);
-  m = 0;
-  pthread_cleanup_push((void(*)(void*))ChanF, m);
   p[0].c = V->c;
   p[0].v = (void **)&m;
   p[0].o = chanPoGet;
+  m = 0;
   while (chanPoll(-1, sizeof (p) / sizeof (p[0]), p) == 1 && p[0].s == chanOsGet
    && (m->l)
    && write(V->s, m->b, m->l) == m->l) {
     ChanF(m);
     m = 0;
   }
-  pthread_cleanup_pop(1); /* ChanF(m) */
+  ChanF(m);
   pthread_cleanup_pop(1); /* shutSockC(v) */
   pthread_cleanup_pop(1); /* chanShut(V->c) */
   pthread_cleanup_pop(1); /* chanClose(V->c) */
@@ -109,8 +108,6 @@ chanSockS(
   pthread_cleanup_push((void(*)(void*))chanClose, V->c);
   pthread_cleanup_push((void(*)(void*))chanShut, V->c);
   pthread_cleanup_push((void(*)(void*))shutSockS, v);
-  m = 0;
-  pthread_cleanup_push((void(*)(void*))ChanF, m);
   p[0].c = V->c;
   p[0].v = (void **)&m;
   p[0].o = chanPoPut;
@@ -124,7 +121,7 @@ chanSockS(
     if (chanPoll(-1, sizeof (p) / sizeof (p[0]), p) != 1 || p[0].s != chanOsPut)
       break;
   }
-  pthread_cleanup_pop(1); /* ChanF(m) */
+  ChanF(m);
   pthread_cleanup_pop(1); /* shutSockS(v) */
   pthread_cleanup_pop(1); /* chanShut(V->c) */
   pthread_cleanup_pop(1); /* chanClose(V->c) */
