@@ -20,11 +20,10 @@
 #include "chan.h"
 #include "chanFifo.h"
 
-extern void *(*ChanA)(void *, unsigned long);
-extern void (*ChanF)(void *);
-
 /* chan fifo store context */
 struct chanFifoSc {
+  void *(*a)(void *, unsigned long);
+  void (*f)(void *);
   void **q;          /* circular store */
   unsigned int m;    /* store max */
   unsigned int s;    /* store size */
@@ -34,16 +33,32 @@ struct chanFifoSc {
 
 chanFifoSc_t *
 chanFifoSa(
-  unsigned int m
+  void *(*a)(void *, unsigned long)
+ ,void (*f)(void *)
+ ,unsigned int m
  ,unsigned int s
 ){
   chanFifoSc_t *c;
 
-  if (!m || !s || m < s)
+  if (((a || f) && (!a || !f)) || !m || !s || m < s)
     return (0);
-  if (!(c = ChanA(0, sizeof (*c)))
-   || !(c->q = ChanA(0, s * sizeof (*c->q)))) {
-    ChanF(c);
+  if (a) {
+    /* force exceptions here and now */
+    if (!(c = a(0, sizeof (*c))))
+      return (0);
+    f(c);
+    if (!(c = a(0, sizeof (*c))))
+      return (0);
+    c->a = a;
+    c->f = f;
+  } else {
+    if (!(c = realloc(0, sizeof (*c))))
+      return (0);
+    c->a = realloc;
+    c->f = free;
+  }
+  if (!(c->q = c->a(0, s * sizeof (*c->q)))) {
+    c->f(c);
     return (0);
   }
   c->m = m;
@@ -58,8 +73,8 @@ void
 chanFifoSd(
   void *c
 ){
-  ChanF(SC->q);
-  ChanF(c);
+  SC->f(SC->q);
+  SC->f(c);
 }
 
 /* a store is started in chanSsCanPut status */
@@ -76,7 +91,7 @@ chanFifoSi(
   if (o == chanSoPut) {
     if (SC->t == SC->h
      && SC->s > 2 && (w & chanSwNoGet)
-     && (t = ChanA(SC->q, (SC->s - 1) * sizeof (*SC->q)))) {
+     && (t = SC->a(SC->q, (SC->s - 1) * sizeof (*SC->q)))) {
       SC->q = t;
       --SC->s;
       SC->h = SC->t = 0;
@@ -86,7 +101,7 @@ chanFifoSi(
       SC->t = 0;
     if (SC->t == SC->h) {
       if (SC->s < SC->m && !(w & chanSwNoGet)
-       && (t = ChanA(SC->q, (SC->s + 1) * sizeof (*SC->q)))) {
+       && (t = SC->a(SC->q, (SC->s + 1) * sizeof (*SC->q)))) {
         SC->q = t;
         ++SC->h;
         for (i = SC->s; i > SC->t; --i)

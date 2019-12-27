@@ -30,8 +30,6 @@ Channels distribute messages fairly under pressure:
 
 Find the API in chan.h:
 
-* chanSetHeap
-  * Optionally provide pointers to dynamic memory routines with realloc() and free() semantics. Otherwise, use the libc versions.
 * chanCreate
   * Allocate an Open chan_t (reference count = 1, pair with chanClose).
 * chanOpen

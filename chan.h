@@ -20,15 +20,6 @@
 #define __CHAN_H__
 
 /*
- * initialize chan heap API
- */
-void
-chanSetHeap(
-  void *(*realloc)(void *, unsigned long)
- ,void (*free)(void *)
-);
-
-/*
  * Channel Store
  */
 
@@ -84,6 +75,8 @@ typedef struct chan chan_t;
  *  This works best (providing low latency) when threads work more and talk less.
  *
  * When allocating the channel, supply:
+ *  the realloc semantics implementation function (or 0 to use system realloc)
+ *  the free semantics implementation function (or 0 to use system free)
  *  the store implementation function (or 0 if none)
  *  the store context (or 0 if none)
  *  the store context done function (or 0 if none)
@@ -95,7 +88,9 @@ typedef struct chan chan_t;
  */
 chan_t *
 chanCreate(
-  chanSi_t impl
+  void *(*realloc)(void *, unsigned long)
+ ,void (*free)(void *)
+ ,chanSi_t impl
  ,void *cntx
  ,chanSd_t done
 ); /* returns 0 on failure */

@@ -102,10 +102,10 @@ primeT(
   printf("%d\n", prime);
 #if STORE
   if ((i = (Goal - prime) / 100) > 1)
-    c = chanCreate(chanFifoSi, chanFifoSa(i, i), chanFifoSd);
+    c = chanCreate(0,0, chanFifoSi, chanFifoSa(0,0, i, i), chanFifoSd);
   else
 #endif
-    c = chanCreate(0,0,0);
+    c = chanCreate(0,0, 0,0,0);
   pthread_cleanup_push((void(*)(void*))chanClose, v);
   pthread_cleanup_push((void(*)(void*))chanClose, c);
   if (!c) {
@@ -176,13 +176,12 @@ main(
    || (Goal = atoi(*(argv + 1))) < 2)
     Goal = 100;
   printf("Goal = %d\n", Goal);
-  chanSetHeap(realloc, free); /* only testing, this is the default */
 #if STORE
   if ((i = (Goal - 2) / 100) > 1)
-    c = chanCreate(chanFifoSi, chanFifoSa(i, i), chanFifoSd);
+    c = chanCreate(0,0, chanFifoSi, chanFifoSa(0,0, i, i), chanFifoSd);
   else
 #endif
-    c = chanCreate(0,0,0);
+    c = chanCreate(0,0, 0,0,0);
   pthread_cleanup_push((void(*)(void*))chanClose, c);
   if (!c) {
     puts("Can't create channel");

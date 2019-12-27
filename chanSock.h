@@ -41,6 +41,9 @@ typedef struct chanSockM {
 } chanSockM_t;
 
 /*
+ * Provide:
+ *  the realloc semantics implementation function (or 0 to use system realloc)
+ *  the free semantics implementation function (or 0 to use system free)
  * Provide a hangup chan_t to the thread coordinating the I/O threads:
  *  chanShut() on the hangup channel does chanShut() on the other channels and the socket is shutdown(SHUT_RDWR) and close()'d
  *  chanGet() on the hangup channel to block for chanShut when the chanSock completes
@@ -59,7 +62,9 @@ typedef struct chanSockM {
  */
 int
 chanSock(
-  chan_t *hangup
+  void *(*realloc)(void *, unsigned long)
+ ,void (*free)(void *)
+ ,chan_t *hangup
  ,chan_t *read
  ,chan_t *write
  ,int socket

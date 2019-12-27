@@ -33,7 +33,9 @@ chanFifoSc_t;
 /* allocate a context of initial chan messages (void *) */
 chanFifoSc_t *
 chanFifoSa(
-  unsigned int max
+  void *(*realloc)(void *, unsigned long)
+ ,void (*free)(void *)
+ ,unsigned int max
  ,unsigned int initial
 ); /* returns 0 on failure */
 
