@@ -163,7 +163,7 @@ main(
   struct addrinfo *saddr;
   int i;
   int fd;
-  pthread_t p;
+  pthread_t t;
 
   ProgName = argv[0];
 
@@ -251,17 +251,17 @@ main(
     return (1);
   }
   if ((saddr->ai_socktype == SOCK_STREAM || saddr->ai_socktype == SOCK_SEQPACKET)) {
-    if (pthread_create(&p, 0, listenT, (void *)(long)fd)) {
+    if (pthread_create(&t, 0, listenT, (void *)(long)fd)) {
       perror("pthread_create");
       return (1);
     }
   } else {
-    if (pthread_create(&p, 0, servT, (void *)(long)fd)) {
+    if (pthread_create(&t, 0, servT, (void *)(long)fd)) {
       perror("pthread_create");
       return (1);
     }
   }
-  pthread_join(p, 0);
+  pthread_join(t, 0);
   freeaddrinfo(saddr);
   freeaddrinfo(Caddr);
   return (0);
