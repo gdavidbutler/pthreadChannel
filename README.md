@@ -17,16 +17,16 @@ For a background on Channels see Russ Cox's [Bell Labs and CSP Threads](https://
   * getting pthread: chanGet(chan, &m), use(m), free(m).
 * Channels can be Put/Get on channels!
 IMPORANT: chanOpen a chan_t before passing it (delegating chanClose) to eliminate chanClose/chanOpen races. E.g.:
-  * client pthread: chanOpen(chan), chanPut(server, chan), response = chanGet(chan).
-  * server pthread: chan = chanGet(server), chanPut(chan, response), chanClose(chan).
+  * requesting pthread: chanOpen(responseChan), chanPut(theirChan, responseChan), response = chanGet(responseChan).
+  * responding pthread: responseChan = chanGet(myChan), chanPut(responseChan, response), chanClose(responseChan).
 
 Channels distribute messages fairly under pressure:
 * If there are waiting getters, a new getter goes to the end of the line
   * unless there are also waiting putters (as waiting getters won't wait long)
-    * then a meesage is opportunistically read instead of waiting.
+    * then a meesage is opportunistically get instead of waiting.
 * If there are waiting putters, a new putters goes to the end of the line
   * unless there are also waiting getters (as waiting putters won't wait long)
-    * then a meesage is opportunistically written instead of waiting.
+    * then a meesage is opportunistically put instead of waiting.
 
 Find the API in chan.h:
 
