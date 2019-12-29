@@ -16,10 +16,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include <stdlib.h>
-#include <string.h>
-#include <errno.h>
-#include <assert.h>
+#include <stdlib.h> /* for abort() and to support chanCreate(0,0 ,...) to indicate realloc() and free() */
 #include <pthread.h>
 #include "chan.h"
 
@@ -226,7 +223,6 @@ chanShut(
       if (c->ph == c->pt)
         c->l |= chanPe;
     }
-    assert(p->c);
     pthread_mutex_lock(&p->m);
     --p->c;
     if (!pthread_cond_signal(&p->r)) {
@@ -245,7 +241,6 @@ chanShut(
       if (c->gh == c->gt)
         c->l |= chanGe;
     }
-    assert(p->c);
     pthread_mutex_lock(&p->m);
     --p->c;
     if (!pthread_cond_signal(&p->r)) {
@@ -276,7 +271,6 @@ chanClose(
     pthread_mutex_unlock(&c->m);
     return;
   }
-  assert(c->s == chanSsCanPut);
   c->f(c->g);
   c->f(c->p);
   if (c->q && c->d)
@@ -295,9 +289,11 @@ chanPoll(
   chan_t *c;
   cpr_t *p;
   cpr_t *m;
+  cpr_t **qp;
   void *v;
   unsigned int i;
   unsigned int j;
+  unsigned int k;
   struct timespec s;
 
   m = 0;
@@ -414,7 +410,6 @@ get:
           if (c->ph == c->pt)
             c->l |= chanPe;
         }
-        assert(p->c);
         pthread_mutex_lock(&p->m);
         --p->c;
         if (!pthread_cond_signal(&p->r)) {
@@ -444,7 +439,9 @@ get:
         goto exit0;
       }
       c->g = v;
-      memmove(c->g + c->gh + 1, c->g + c->gh, (c->gs - c->gh) * sizeof (*c->g));
+      if ((k = c->gs - c->gh))
+        for (qp = c->g + c->gh + k; k; --k, --qp)
+          *qp = *(qp - 1);
       ++c->gh;
       ++c->gs;
     }
@@ -453,7 +450,6 @@ get:
       c->gt = 0;
     c->l &= ~chanGe;
     ++m->c;
-    assert(m->c);
     pthread_mutex_unlock(&c->m);
     break;
 
@@ -485,7 +481,6 @@ put:
           if (c->gh == c->gt)
             c->l |= chanGe;
         }
-        assert(p->c);
         pthread_mutex_lock(&p->m);
         --p->c;
         if (!pthread_cond_signal(&p->r)) {
@@ -510,7 +505,9 @@ putQueue:
         goto exit0;
       }
       c->p = v;
-      memmove(c->p + c->ph + 1, c->p + c->ph, (c->ps - c->ph) * sizeof (*c->p));
+      if ((k = c->ps - c->ph))
+        for (qp = c->p + c->ph + k; k; --k, --qp)
+          *qp = *(qp - 1);
       ++c->ph;
       ++c->ps;
     }
@@ -519,7 +516,6 @@ putQueue:
       c->pt = 0;
     c->l &= ~chanPe;
     ++m->c;
-    assert(m->c);
     pthread_mutex_unlock(&c->m);
     break;
 
@@ -545,7 +541,9 @@ putWait:
           goto exit0;
         }
         c->p = v;
-        memmove(c->p + c->ph + 1, c->p + c->ph, (c->ps - c->ph) * sizeof (*c->p));
+        if ((k = c->ps - c->ph))
+          for (qp = c->p + c->ph + k; k; --k, --qp)
+            *qp = *(qp - 1);
         ++c->ph;
         ++c->ps;
       }
@@ -554,7 +552,6 @@ putWait:
         c->pt = 0;
       c->l &= ~chanPe;
       ++m->c;
-      assert(m->c);
       if (c->q)
         c->s = c->q(c->v, chanSoPut, c->l & (chanGe|chanPe), (a + i)->v);
       else {
@@ -571,7 +568,6 @@ putWait:
           if (c->gh == c->gt)
             c->l |= chanGe;
         }
-        assert(p->c);
         pthread_mutex_lock(&p->m);
         --p->c;
         if (!pthread_cond_signal(&p->r)) {
@@ -601,7 +597,6 @@ putWait:
           if (c->ph == c->pt)
             c->l |= chanPe;
         }
-        assert(p->c);
         pthread_mutex_lock(&p->m);
         --p->c;
         if (!pthread_cond_signal(&p->r)) {
@@ -702,7 +697,9 @@ putWait:
           goto exit0;
         }
         c->g = v;
-        memmove(c->g + c->gh + 1, c->g + c->gh, (c->gs - c->gh) * sizeof (*c->g));
+        if ((k = c->gs - c->gh))
+          for (qp = c->g + c->gh + k; k; --k, --qp)
+            *qp = *(qp - 1);
         ++c->gh;
         ++c->gs;
       }
@@ -715,7 +712,6 @@ putWait:
       }
       c->l &= ~chanGe;
       ++m->c;
-      assert(m->c);
       pthread_mutex_unlock(&c->m);
       break;
 
@@ -737,7 +733,9 @@ putWait:
           goto exit0;
         }
         c->p = v;
-        memmove(c->p + c->ph + 1, c->p + c->ph, (c->ps - c->ph) * sizeof (*c->p));
+        if ((k = c->ps - c->ph))
+          for (qp = c->p + c->ph + k; k; --k, --qp)
+            *qp = *(qp - 1);
         ++c->ph;
         ++c->ps;
       }
@@ -750,7 +748,6 @@ putWait:
       }
       c->l &= ~chanPe;
       ++m->c;
-      assert(m->c);
       pthread_mutex_unlock(&c->m);
       break;
 
@@ -772,7 +769,9 @@ putWait:
           goto exit0;
         }
         c->p = v;
-        memmove(c->p + c->ph + 1, c->p + c->ph, (c->ps - c->ph) * sizeof (*c->p));
+        if ((k = c->ps - c->ph))
+          for (qp = c->p + c->ph + k; k; --k, --qp)
+            *qp = *(qp - 1);
         ++c->ph;
         ++c->ps;
       }
@@ -785,7 +784,6 @@ putWait:
       }
       c->l &= ~chanPe;
       ++m->c;
-      assert(m->c);
       pthread_mutex_unlock(&c->m);
       break;
     }
