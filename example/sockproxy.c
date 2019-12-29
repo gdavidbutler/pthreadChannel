@@ -22,9 +22,9 @@
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <pthread.h>
 #include <sys/socket.h>
 #include <netdb.h>
+#include <pthread.h>
 #include "chan.h"
 #include "chanSock.h"
 

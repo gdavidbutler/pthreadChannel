@@ -16,7 +16,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include <stdlib.h>
+#include <stdlib.h> /* to support chanFifoSa(0,0 ,...) to indicate realloc() and free() */
 #include "chan.h"
 #include "chanFifo.h"
 

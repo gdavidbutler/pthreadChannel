@@ -16,11 +16,10 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include <string.h>
-#include <stdlib.h>
-#include <unistd.h>
+#include <stdlib.h>     /* to support chanSock(0,0 ,...) to indicate realloc() and free() */
+#include <unistd.h>     /* for read(), write() and close() */
+#include <sys/socket.h> /* for shutdown() */
 #include <pthread.h>
-#include <sys/socket.h>
 #include "chan.h"
 #include "chanSock.h"
 
