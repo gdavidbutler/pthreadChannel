@@ -56,7 +56,8 @@ typedef struct chanSockM {
  * Provide a socket to be used by the read and write channels:
  *  When read() on the socket fails, the socket is shutdown(SHUT_RD) and the read chan is chanShut()
  *  When write() on the socket fails, the socket is shutdown(SHUT_WR) and the write chan is chanShut()
- * Provide a readLimit to set/limit the size of a read from the socket
+ * Provide a readSize for reads from the socket
+ *  If socket is a DGRAM type, this size must be at least as large as the largest expected message size
  *
  * As a convenience, chanSock() chanOpen's the chan_t's (delegating chanClose's)
  */
@@ -68,7 +69,7 @@ chanSock(
  ,chan_t *read
  ,chan_t *write
  ,int socket
- ,unsigned int readLimit
+ ,unsigned int readSize
 ); /* returns 0 on failure */
 
 #endif /* __CHANSOCK_H__ */

@@ -130,8 +130,10 @@ chanSockS(
       f = chanPoll(-1, sizeof (p) / sizeof (p[0]), p) == 1 && p[0].s == chanOsPut;
     }
     pthread_cleanup_pop(0); /* V->f(m) */
-    if (f <= 0)
+    if (f <= 0) {
+      V->f(m);
       break;
+    }
   }
   pthread_cleanup_pop(1); /* shutSockS(v) */
   pthread_cleanup_pop(1); /* chanShut(V->c) */
