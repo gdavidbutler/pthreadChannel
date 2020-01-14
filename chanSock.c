@@ -186,45 +186,65 @@ chanSockW(
   pthread_cleanup_push((void(*)(void*))chanClose, V->w);
   pthread_cleanup_push((void(*)(void*))chanShut, V->w);
   pthread_cleanup_push((void(*)(void*))shutSockW, v);
-  p[0].c = V->h;
-  if (!(p[1].c = chanCreate(V->a, V->f, 0,0,0)))
-    goto exit0;
+  if ((p[0].c = V->h))
+    p[0].o = chanPoGet;
+  else
+    p[0].o = chanPoNop;
+  if (V->w) {
+    if (!(p[1].c = chanCreate(V->a, V->f, 0,0,0)))
+      goto exit0;
+    p[1].o = chanPoGet;
+  } else {
+    p[1].c = 0;
+    p[1].o = chanPoNop;
+  }
   pthread_cleanup_push((void(*)(void*))chanClose, p[1].c);
-  if (!(p[2].c = chanCreate(V->a, V->f, 0,0,0)))
-    goto exit1;
+  if (V->r) {
+    if (!(p[2].c = chanCreate(V->a, V->f, 0,0,0)))
+      goto exit1;
+    p[2].o = chanPoGet;
+  } else {
+    p[2].c = 0;
+    p[2].o = chanPoNop;
+  }
   pthread_cleanup_push((void(*)(void*))chanClose, p[2].c);
-  if (!(xC = V->a(0, sizeof (*xC))))
-    goto exit2;
-  xC->a = V->a;
-  xC->f = V->f;
-  xC->h = chanOpen(p[1].c);
-  xC->c = chanOpen(V->w);
-  xC->s = V->s;
-  if (pthread_create(&tC, 0, chanSockC, xC)) {
-    chanClose(xC->c);
-    chanClose(xC->h);
-    V->f(xC);
-    goto exit2;
-  }
-  pthread_detach(tC);
-  if (!(xS = V->a(0, sizeof (*xS)))) {
-    goto exit2;
-  }
-  xS->a = V->a;
-  xS->f = V->f;
-  xS->h = chanOpen(p[2].c);
-  xS->c = chanOpen(V->r);
-  xS->s = V->s;
-  xS->l = V->l;
-  if (pthread_create(&tS, 0, chanSockS, xS)) {
-    chanClose(xS->c);
-    chanClose(xS->h);
-    V->f(xS);
-    goto exit2;
-  }
-  pthread_detach(tS);
+  if (V->w) {
+    if (!(xC = V->a(0, sizeof (*xC))))
+      goto exit2;
+    xC->a = V->a;
+    xC->f = V->f;
+    xC->h = chanOpen(p[1].c);
+    xC->c = chanOpen(V->w);
+    xC->s = V->s;
+    if (pthread_create(&tC, 0, chanSockC, xC)) {
+      chanClose(xC->c);
+      chanClose(xC->h);
+      V->f(xC);
+      goto exit2;
+    }
+    pthread_detach(tC);
+  } else
+    shutdown(V->s, SHUT_WR);
+  if (V->r) {
+    if (!(xS = V->a(0, sizeof (*xS)))) {
+      goto exit2;
+    }
+    xS->a = V->a;
+    xS->f = V->f;
+    xS->h = chanOpen(p[2].c);
+    xS->c = chanOpen(V->r);
+    xS->s = V->s;
+    xS->l = V->l;
+    if (pthread_create(&tS, 0, chanSockS, xS)) {
+      chanClose(xS->c);
+      chanClose(xS->h);
+      V->f(xS);
+      goto exit2;
+    }
+    pthread_detach(tS);
+  } else
+    shutdown(V->s, SHUT_RD);
   p[0].v = p[1].v = p[2].v = &t;
-  p[0].o = p[1].o = p[2].o = chanPoGet;
   while (p[1].o != chanPoNop || p[2].o != chanPoNop) switch (chanPoll(-1, sizeof (p) / sizeof (p[0]), p)) {
     case 1:
       if (p[0].s != chanOsGet)
@@ -273,7 +293,7 @@ chanSock(
   struct chanSockW *x;
   pthread_t t;
 
-  if (((a || f) && (!a || !f)) || !h || !r || !w || s < 0 || !l)
+  if (((a || f) && (!a || !f)) || (!r && !w) || s < 0 || (r && !l))
     return (0);
   if (a) {
     /* force exceptions here and now */

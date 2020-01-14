@@ -44,19 +44,20 @@ typedef struct chanSockM {
  * Provide:
  *  the realloc semantics implementation function (or 0 to use system realloc)
  *  the free semantics implementation function (or 0 to use system free)
- * Provide a hangup chan_t to the thread coordinating the I/O threads:
- *  chanShut() on the hangup channel does chanShut() on the other channels and the socket is shutdown(SHUT_RDWR) and close()'d
- *  chanGet() on the hangup channel to block for chanShut when the chanSock completes
- * Provide a read chan_t:
+ * Provide an optional hangup chan_t to the thread coordinating the I/O threads:
+ *  chanShut() on the hangup channel does chanShut() on the other channels
+ *  chanGet() on the hangup channel for chanShut when the socket is close()'d
+ * Provide an optional read chan_t: (if not provided, socket is immediately shutdown(SHUT_RD))
  *   chanGet data that is read() from socket
  *   chanShut to shutdown(SHUT_RD) on socket
- * Provide a write chan_t:
+ * Provide an optional write chan_t: (if not provided, socket is immediately shutdown(SHUT_WR))
  *   chanPut data that is write() to socket
  *   chanShut to shutdown(SHUT_WR) on socket
  * Provide a socket to be used by the read and write channels:
  *  When read() on the socket fails, the socket is shutdown(SHUT_RD) and the read chan is chanShut()
  *  When write() on the socket fails, the socket is shutdown(SHUT_WR) and the write chan is chanShut()
- * Provide a readSize for reads from the socket
+ *  After both channels have been chanShut and the socket is shutdown, the socket is close()'d
+ * Provide an optional non-zero readSize for reads from the socket (required if there is a read chan_t)
  *  If socket is a DGRAM type, this size must be at least as large as the largest expected message size
  *
  * As a convenience, chanSock() chanOpen's the chan_t's (delegating chanClose's)
