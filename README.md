@@ -75,6 +75,8 @@ When a context is created, a maximum size and an initial size are provided.
 To balance latency and efficiency the size is adjusted by:
 * Before a Put, if the Store is empty and there are no waiting Getters, the size is decremented.
 * After a Put, if the Store is full and there are waiting Getters, the size is incremented.
+* Before a Get, if the Store is full and there are waiting Putters, the size is incremented.
+* After a Get, if the Store is empty and there are no waiting Putters, the size is decremented.
 
 Find the API in chanFifo.h:
 

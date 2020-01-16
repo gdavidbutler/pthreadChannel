@@ -106,11 +106,25 @@ chanFifoSi(
         return (chanSsCanGet);
     }
   } else {
+    if (SC->t == SC->h
+     && !(w & chanSwNoPut)
+     && SC->s < SC->m) {
+      for (i = SC->s; i > SC->t; --i)
+        SC->q[i] = SC->q[i - 1];
+      ++SC->s;
+      ++SC->h;
+    }
     *v = SC->q[SC->h];
     if (++SC->h == SC->s)
       SC->h = 0;
-    if (SC->h == SC->t)
+    if (SC->h == SC->t) {
+      if ((w & chanSwNoPut)
+       && SC->s > 2) {
+        --SC->s;
+        SC->h = SC->t = 0;
+      }
       return (chanSsCanPut);
+    }
   }
   return (chanSsCanGet | chanSsCanPut);
 }
