@@ -29,6 +29,7 @@
 typedef struct {
   void (*f)(void *);
   int t;             /* thread is active */
+  int w;             /* thread is waiting */
   unsigned int c;    /* reference count */
   pthread_mutex_t m;
   pthread_condattr_t a;
@@ -57,7 +58,7 @@ cdCpr(
   void *v
 ){
   pthread_mutex_lock(&((cpr_t *)v)->m);
-  ((cpr_t *)v)->t = 0;
+  ((cpr_t *)v)->t = ((cpr_t *)v)->w = 0;
   dCpr((cpr_t *)v);
 }
 
@@ -108,6 +109,7 @@ gCpr(
       return (0);
     }
     p->t = 1;
+    p->w = 0;
     p->c = 0;
   }
   pthread_mutex_lock(&p->m);
@@ -225,10 +227,8 @@ chanShut(
     }
     pthread_mutex_lock(&p->m);
     --p->c;
-    if (!pthread_cond_signal(&p->r)) {
-      pthread_mutex_unlock(&p->m);
-      continue;
-    }
+    if (p->w)
+      pthread_cond_signal(&p->r);
     dCpr(p);
   }
   while (!(c->l & chanGe)) {
@@ -243,10 +243,8 @@ chanShut(
     }
     pthread_mutex_lock(&p->m);
     --p->c;
-    if (!pthread_cond_signal(&p->r)) {
-      pthread_mutex_unlock(&p->m);
-      continue;
-    }
+    if (p->w)
+      pthread_cond_signal(&p->r);
     dCpr(p);
   }
   pthread_mutex_unlock(&c->m);
@@ -412,7 +410,7 @@ get:
         }
         pthread_mutex_lock(&p->m);
         --p->c;
-        if (!pthread_cond_signal(&p->r)) {
+        if (p->w && !pthread_cond_signal(&p->r)) {
           pthread_mutex_unlock(&p->m);
           break;
         }
@@ -483,7 +481,7 @@ put:
         }
         pthread_mutex_lock(&p->m);
         --p->c;
-        if (!pthread_cond_signal(&p->r)) {
+        if (p->w && !pthread_cond_signal(&p->r)) {
           pthread_mutex_unlock(&p->m);
           break;
         }
@@ -570,13 +568,14 @@ putWait:
         }
         pthread_mutex_lock(&p->m);
         --p->c;
-        if (!pthread_cond_signal(&p->r)) {
+        if (p->w && !pthread_cond_signal(&p->r)) {
           pthread_mutex_unlock(&p->m);
           break;
         }
         dCpr(p);
       }
       pthread_mutex_unlock(&c->m);
+      m->w = 1;
       if (w > 0) {
         if (pthread_cond_timedwait(&m->r, &m->m, &s)) {
           (a + i)->s = chanOsPut;
@@ -585,6 +584,7 @@ putWait:
         }
       } else
         pthread_cond_wait(&m->r, &m->m);
+      m->w = 0;
       pthread_mutex_lock(&c->m);
       /* since not taking a message, wake the next putter */
       if (c->s & chanSsCanPut) while (!(c->l & chanPe)) {
@@ -599,7 +599,7 @@ putWait:
         }
         pthread_mutex_lock(&p->m);
         --p->c;
-        if (!pthread_cond_signal(&p->r)) {
+        if (p->w && !pthread_cond_signal(&p->r)) {
           pthread_mutex_unlock(&p->m);
           break;
         }
@@ -616,11 +616,13 @@ putWait:
   if (!m)
     goto timeO;
   while (m->c) {
+    m->w = 1;
     if (w > 0) {
       if (pthread_cond_timedwait(&m->r, &m->m, &s))
         goto timeO;
     } else
       pthread_cond_wait(&m->r, &m->m);
+    m->w = 0;
     /* third pass through array looking for quick exit */
     for (i = 0; i < t; ++i) switch ((a + i)->o) {
 
