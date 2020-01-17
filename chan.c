@@ -227,9 +227,10 @@ chanShut(
     }
     pthread_mutex_lock(&p->m);
     --p->c;
-    if (p->w)
-      pthread_cond_signal(&p->r);
-    dCpr(p);
+    if (p->w && !pthread_cond_signal(&p->r))
+      pthread_mutex_unlock(&p->m);
+    else
+      dCpr(p);
   }
   while (!(c->l & chanGe)) {
     p = *(c->g + c->gh);
@@ -243,9 +244,10 @@ chanShut(
     }
     pthread_mutex_lock(&p->m);
     --p->c;
-    if (p->w)
-      pthread_cond_signal(&p->r);
-    dCpr(p);
+    if (p->w && !pthread_cond_signal(&p->r))
+      pthread_mutex_unlock(&p->m);
+    else
+      dCpr(p);
   }
   pthread_mutex_unlock(&c->m);
 }
