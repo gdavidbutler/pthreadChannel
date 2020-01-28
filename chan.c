@@ -580,6 +580,7 @@ putWait:
       m->w = 1;
       if (w > 0) {
         if (pthread_cond_timedwait(&m->r, &m->m, &s)) {
+          m->w = 0;
           (a + i)->s = chanOsPut;
           ++i;
           goto exit;
