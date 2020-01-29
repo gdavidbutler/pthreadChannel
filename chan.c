@@ -621,8 +621,10 @@ putWait:
   while (m->c) {
     m->w = 1;
     if (w > 0) {
-      if (pthread_cond_timedwait(&m->r, &m->m, &s))
+      if (pthread_cond_timedwait(&m->r, &m->m, &s)) {
+        m->w = 0;
         goto timeO;
+      }
     } else
       pthread_cond_wait(&m->r, &m->m);
     m->w = 0;
