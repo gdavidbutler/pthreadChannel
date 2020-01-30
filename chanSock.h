@@ -19,31 +19,28 @@
 #ifndef __CHANSOCK_H__
 #define __CHANSOCK_H__
 
+/* a chanSock message (a length prefixed array of bytes) */
+typedef struct {
+  unsigned int l;     /* not transmitted, no byte order issues */
+  unsigned char b[1]; /* the first character of l characters */
+} chanSock_t;
+
 /*
  * Channel Sock
  *
- * Support I/O on a bound full duplex socket via a pair of send and receive channels.
+ * Support I/O on a bound full duplex socket via read and write channels.
  *
- * A chanPut() of chanSockM_t messages on the write channel does write()s on the socket:
+ * A chanPut() of chanSer_t messages on the write channel does write()s on the socket:
  *  A chanGet() or socket write() failure will shutdown(socket, SHUT_WR) the socket and chanShut() the channel.
  *
- * A chanGet() on the read channel will receive chanSockM_t messages from read()s on the socket:
+ * A chanGet() on the read channel will return chanSer_t messages from read()s on the socket:
  *  A chanPut() or socket read() failure will shutdown(socket, SHUT_RD) the socket and chanShut() the channel.
  *
  * After both ends have completed, the socket is closed.
- */
-
-/* a message, real size is sizeof (chanSockM_t) + (l ? l - 1 : 1) * sizeof (b[0]) */
-/* a read limit is specified in the chanSock() call */
-typedef struct chanSockM {
-  unsigned int l;
-  unsigned char b[1]; /* the first character of l characters, must be last */
-} chanSockM_t;
-
-/*
+ *
  * Provide:
- *  the realloc semantics implementation function (or 0 to use system realloc)
- *  the free semantics implementation function (or 0 to use system free)
+ *  realloc semantics implementation function (or 0 to use system realloc)
+ *  free semantics implementation function (or 0 to use system free)
  * Provide an optional hangup chan_t to the thread coordinating the I/O threads:
  *  chanShut() on the hangup channel does chanShut() on the other channels
  *  chanGet() on the hangup channel for chanShut when the socket is close()'d

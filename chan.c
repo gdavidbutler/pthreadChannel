@@ -583,17 +583,19 @@ putWait:
       }
       pthread_mutex_unlock(&c->m);
       pthread_mutex_lock(&m->m);
-      m->w = 1;
-      if (w > 0) {
-        if (pthread_cond_timedwait(&m->r, &m->m, &s)) {
-          m->w = 0;
-          pthread_mutex_unlock(&m->m);
-          (a + i)->s = chanOsPut;
-          ++i;
-          goto exit;
-        }
-      } else
-        pthread_cond_wait(&m->r, &m->m);
+      if (m->c) {
+        m->w = 1;
+        if (w > 0) {
+          if (pthread_cond_timedwait(&m->r, &m->m, &s)) {
+            m->w = 0;
+            pthread_mutex_unlock(&m->m);
+            (a + i)->s = chanOsPut;
+            ++i;
+            goto exit;
+          }
+        } else
+          pthread_cond_wait(&m->r, &m->m);
+      }
       m->w = 0;
       pthread_mutex_unlock(&m->m);
       pthread_mutex_lock(&c->m);

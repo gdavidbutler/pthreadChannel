@@ -27,7 +27,7 @@ struct chanSockC {
   void *(*a)(void *, unsigned long);
   void (*f)(void *);
   chan_t *h; /* no message */
-  chan_t *c; /* chanSockM_t message */
+  chan_t *c; /* chanSock_t message */
   int s;
 };
 
@@ -46,7 +46,7 @@ chanSockC(
   void *v
 ){
 #define V ((struct chanSockC *)v)
-  chanSockM_t *m;
+  chanSock_t *m;
   chanPoll_t p[1];
 
   pthread_cleanup_push((void(*)(void*))V->f, v);
@@ -59,15 +59,13 @@ chanSockC(
   p[0].v = (void **)&m;
   p[0].o = chanPoGet;
   while (chanPoll(-1, sizeof (p) / sizeof (p[0]), p) == 1 && p[0].s == chanOsGet) {
+    unsigned int l;
     int f;
 
     pthread_cleanup_push((void(*)(void*))V->f, m);
-    if (m->l)
-      f = write(V->s, m->b, m->l) == m->l;
-    else
-      f = 0;
+    for (l = 0, f = 1; l < m->l && (f = write(V->s, m->b + l, m->l - l)) > 0; l += f);
     pthread_cleanup_pop(1); /* V->f(m) */
-    if (!f)
+    if (f <= 0)
       break;
   }
   pthread_cleanup_pop(1); /* shutSockC(v) */
@@ -84,7 +82,7 @@ struct chanSockS {
   void *(*a)(void *, unsigned long);
   void (*f)(void *);
   chan_t *h; /* no message */
-  chan_t *c; /* chanSockM_t message */
+  chan_t *c; /* chanSock_t message */
   int s;
   unsigned int l;
 };
@@ -104,7 +102,7 @@ chanSockS(
   void *v
 ){
 #define V ((struct chanSockS *)v)
-  chanSockM_t *m;
+  chanSock_t *m;
   chanPoll_t p[1];
 
   pthread_cleanup_push((void(*)(void*))V->f, v);
@@ -116,7 +114,7 @@ chanSockS(
   p[0].c = V->c;
   p[0].v = (void **)&m;
   p[0].o = chanPoPut;
-  while ((m = V->a(0, sizeof (*m) + V->l - 1))) {
+  while ((m = V->a(0, sizeof (*m) + V->l - sizeof (m->b)))) {
     int f;
 
     pthread_cleanup_push((void(*)(void*))V->f, m);
@@ -125,7 +123,7 @@ chanSockS(
 
       m->l = f;
       /* attempt to "right size" the message */
-      if ((t = V->a(m, sizeof (*m) + m->l)))
+      if ((t = V->a(m, sizeof (*m) + m->l - sizeof (m->b))))
         m = t;
       f = chanPoll(-1, sizeof (p) / sizeof (p[0]), p) == 1 && p[0].s == chanOsPut;
     }
@@ -149,8 +147,8 @@ struct chanSockW {
   void *(*a)(void *, unsigned long);
   void (*f)(void *);
   chan_t *h; /* no message */
-  chan_t *r; /* chanSockM_t message */
-  chan_t *w; /* chanSockM_t message */
+  chan_t *r; /* chanSock_t message */
+  chan_t *w; /* chanSock_t message */
   int s;
   unsigned int l;
 };

@@ -8,15 +8,15 @@ A Channel implements a pluggable store of, pointer (void *) sized, messages.
 
 For a background on Channels see Russ Cox's [Bell Labs and CSP Threads](https://swtch.com/~rsc/thread/).
 
-* Channels, by default, store a single message. (See Store, below.)
+* Channels, by default, store a single message. (For more, see Store, below.)
 * Any number of pthreads can Put/Get on a Channel.
 * A pthread can Put/Get on any number of Channels.
-* Two pthreads can use a Channel in bi-directional (half-duplex) mode (alternating PutWait/Get calls).
-* Message semantics should include ownership delegation. E.g.:
+* Message semantics can include ownership delegation (to avoid application level locking complexities).
+NOTE: messages are discarded on last chanClose(). (To avoid leaking memory, chanGet() till chanOsShut).
   * putting pthread: m = malloc(), init(m), chanPut(chan, m).
   * getting pthread: chanGet(chan, &m), use(m), free(m).
 * Channels can be Put/Get on channels!
-IMPORANT: chanOpen a chan_t before passing it (delegating chanClose) to eliminate chanClose/chanOpen races. E.g.:
+NOTE: chanOpen a chan_t before passing it (delegating chanClose) to eliminate chanClose/chanOpen races.
   * requesting pthread: chanOpen(responseChan), chanPut(theirChan, responseChan), response = chanGet(responseChan).
   * responding pthread: responseChan = chanGet(myChan), chanPut(responseChan, response), chanClose(responseChan).
 
@@ -24,7 +24,7 @@ Channels distribute messages fairly under pressure:
 * If there are waiting getters, a new getter goes to the end of the line
   * unless there are also waiting putters (as waiting getters won't wait long)
     * then a meesage is opportunistically get instead of waiting.
-* If there are waiting putters, a new putters goes to the end of the line
+* If there are waiting putters, a new putter goes to the end of the line
   * unless there are also waiting getters (as waiting putters won't wait long)
     * then a meesage is opportunistically put instead of waiting.
 
@@ -45,7 +45,7 @@ Find the API in chan.h:
 * chanPut
   * Put a message to a Channel (asynchronously).
 * chanPutWait
-  * Put a message to a Channel (synchronously, waiting for a chanGet).
+  * Put a message to a Channel (synchronously, waiting for another pthread to chanGet).
 * chanPoll
   * perform a Channel Operation (chanPo_t) on one of an array of Channels, working to satisfy them in the order provided.
 
@@ -57,12 +57,12 @@ In classic CSPs, a low latency synchronous rendezvous (get and put block till th
 works well when coded in machine or assembler language (jump instructions).
 If a message store is needed (queue, stack, etc.), it is implemented as another CSP.
 
-Modern CSPs (e.g. "coroutines", "functions", etc.) with "local" variables and supporting recursion, have a higher context switch cost.
+Modern CSPs (e.g. "coroutines", "functions", etc.) with "local" variables and recursion support, have a higher context switch cost.
 But native support in modern processors (call/return instructions) makes it acceptable.
-A message store is still implemented as a CSP.
+A message store is still implemented as another CSP.
 
 However pthreads require operating system support and context switches are prohibitively expensive for simple message stores.
-Therefore Stores are implemented as shared code executed within pthreads' contexts.
+Therefore Stores are implemented as function callbacks executed within pthreads' contexts.
 
 A pluggable Store can be provided on a chanCreate call.
 If none is provided, a channel stores a single message.
@@ -72,11 +72,11 @@ Therefore, a Store's size depends on how much latency can be tolerated in the qu
 
 A dynamic Channel FIFO store implementation is provided.
 When a context is created, a maximum size and an initial size are provided.
-To balance latency and efficiency the size is adjusted by:
+To balance latency and efficiency size is adjusted by:
 * Before a Put, if the Store is empty and there are no waiting Getters, the size is decremented.
 * After a Put, if the Store is full and there are waiting Getters, the size is incremented.
-* Before a Get, if the Store is full and there are waiting Putters, the size is incremented.
 * After a Get, if the Store is empty and there are no waiting Putters, the size is decremented.
+* Before a Get, if the Store is full and there are waiting Putters, the size is incremented.
 
 Find the API in chanFifo.h:
 
@@ -93,7 +93,7 @@ Since a pthread can't both wait in a chanPoll() and in a poll()/select()/etc., s
 
 Find the API in chanSock.h:
 
-* chanSock: connect a bound full duplex socket (using read() and write()) to a pair of read and write Channels
+* chanSock: Use a pair of Channels (read and write) to read() and write() a bound full duplex socket.
 
 ### Examples
 
