@@ -101,6 +101,9 @@ gCpr(
       p->f(p);
       return (0);
     }
+    p->t = 1;
+    p->w = 0;
+    p->c = 0;
     if (pthread_setspecific(Cpr, p)) {
       pthread_cond_destroy(&p->r);
       pthread_condattr_destroy(&p->a);
@@ -108,11 +111,7 @@ gCpr(
       p->f(p);
       return (0);
     }
-    p->t = 1;
-    p->w = 0;
-    p->c = 0;
   }
-  pthread_mutex_lock(&p->m);
   return (p);
 }
 
@@ -445,11 +444,13 @@ get:
       ++c->gh;
       ++c->gs;
     }
+    pthread_mutex_lock(&m->m);
+    ++m->c;
+    pthread_mutex_unlock(&m->m);
     *(c->g + c->gt) = m;
     if (c->gs != 1 && ++c->gt == c->gs)
       c->gt = 0;
     c->l &= ~chanGe;
-    ++m->c;
     pthread_mutex_unlock(&c->m);
     break;
 
@@ -511,11 +512,13 @@ putQueue:
       ++c->ph;
       ++c->ps;
     }
+    pthread_mutex_lock(&m->m);
+    ++m->c;
+    pthread_mutex_unlock(&m->m);
     *(c->p + c->pt) = m;
     if (c->ps != 1 && ++c->pt == c->ps)
       c->pt = 0;
     c->l &= ~chanPe;
-    ++m->c;
     pthread_mutex_unlock(&c->m);
     break;
 
@@ -547,11 +550,13 @@ putWait:
         ++c->ph;
         ++c->ps;
       }
+      pthread_mutex_lock(&m->m);
+      ++m->c;
+      pthread_mutex_unlock(&m->m);
       *(c->p + c->pt) = m;
       if (c->ps != 1 && ++c->pt == c->ps)
         c->pt = 0;
       c->l &= ~chanPe;
-      ++m->c;
       if (c->q)
         c->s = c->q(c->v, chanSoPut, c->l & (chanGe|chanPe), (a + i)->v);
       else {
@@ -577,10 +582,12 @@ putWait:
         dCpr(p);
       }
       pthread_mutex_unlock(&c->m);
+      pthread_mutex_lock(&m->m);
       m->w = 1;
       if (w > 0) {
         if (pthread_cond_timedwait(&m->r, &m->m, &s)) {
           m->w = 0;
+          pthread_mutex_unlock(&m->m);
           (a + i)->s = chanOsPut;
           ++i;
           goto exit;
@@ -588,6 +595,7 @@ putWait:
       } else
         pthread_cond_wait(&m->r, &m->m);
       m->w = 0;
+      pthread_mutex_unlock(&m->m);
       pthread_mutex_lock(&c->m);
       /* since not taking a message, wake the next putter */
       if (c->s & chanSsCanPut) while (!(c->l & chanPe)) {
@@ -618,16 +626,21 @@ putWait:
   }
   if (!m)
     goto timeO;
-  while (m->c) {
-    m->w = 1;
-    if (w > 0) {
-      if (pthread_cond_timedwait(&m->r, &m->m, &s)) {
-        m->w = 0;
-        goto timeO;
-      }
-    } else
-      pthread_cond_wait(&m->r, &m->m);
-    m->w = 0;
+  for (;;) {
+    pthread_mutex_lock(&m->m);
+    if (m->c) {
+      m->w = 1;
+      if (w > 0) {
+        if (pthread_cond_timedwait(&m->r, &m->m, &s)) {
+          m->w = 0;
+          pthread_mutex_unlock(&m->m);
+          break;
+        }
+      } else
+        pthread_cond_wait(&m->r, &m->m);
+      m->w = 0;
+    }
+    pthread_mutex_unlock(&m->m);
     /* third pass through array looking for quick exit */
     for (i = 0; i < t; ++i) switch ((a + i)->o) {
 
@@ -710,6 +723,9 @@ putWait:
         ++c->gh;
         ++c->gs;
       }
+      pthread_mutex_lock(&m->m);
+      ++m->c;
+      pthread_mutex_unlock(&m->m);
       if (c->gs == 1)
         *c->g = m;
       else {
@@ -718,7 +734,6 @@ putWait:
         *(c->g + --c->gh) = m;
       }
       c->l &= ~chanGe;
-      ++m->c;
       pthread_mutex_unlock(&c->m);
       break;
 
@@ -746,6 +761,9 @@ putWait:
         ++c->ph;
         ++c->ps;
       }
+      pthread_mutex_lock(&m->m);
+      ++m->c;
+      pthread_mutex_unlock(&m->m);
       if (c->ps == 1)
         *c->p = m;
       else {
@@ -754,7 +772,6 @@ putWait:
         *(c->p + --c->ph) = m;
       }
       c->l &= ~chanPe;
-      ++m->c;
       pthread_mutex_unlock(&c->m);
       break;
 
@@ -782,6 +799,9 @@ putWait:
         ++c->ph;
         ++c->ps;
       }
+      pthread_mutex_lock(&m->m);
+      ++m->c;
+      pthread_mutex_unlock(&m->m);
       if (c->ps == 1)
         *c->p = m;
       else {
@@ -790,7 +810,6 @@ putWait:
         *(c->p + --c->ph) = m;
       }
       c->l &= ~chanPe;
-      ++m->c;
       pthread_mutex_unlock(&c->m);
       break;
     }
@@ -804,8 +823,6 @@ timeO:
 exit0:
   i = 0;
 exit:
-  if (m)
-    pthread_mutex_unlock(&m->m);
   return (i);
 }
 
