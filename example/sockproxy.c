@@ -31,15 +31,12 @@
 struct addrinfo *Caddr;
 
 /* connect two chanSocks back to back, with read and write channels reversed */
-/* Yes, it's much more efficient to create two threads with read() / write() loops... */
 static void *
 servT(
   void *v
 ){
-  void *t;
   int s[2];        /* server and client sockets */
-  chan_t *c[2];    /* read and write channels */
-  chanPoll_t p[2]; /* server and client hangup channels */
+  chanPoll_t p[2]; /* read and write channels */
 
   s[0] = (int)(long)v;
   pthread_cleanup_push((void(*)(void*))close, (void *)(long)s[0]);
@@ -52,50 +49,32 @@ servT(
     perror("connect");
     goto exit1;
   }
-  if (!(c[0] = chanCreate(0,0, 0,0,0))) {
+  if (!(p[0].c = chanCreate(0,0, 0,0,0))) {
     perror("chanCreate");
     goto exit1;
   }
-  pthread_cleanup_push((void(*)(void*))chanClose, c[0]);
-  if (!(c[1] = chanCreate(0,0, 0,0,0))) {
+  pthread_cleanup_push((void(*)(void*))chanClose, p[0].c);
+  if (!(p[1].c = chanCreate(0,0, 0,0,0))) {
     perror("chanCreate");
     goto exit2;
   }
-  pthread_cleanup_push((void(*)(void*))chanClose, c[1]);
-  if (!(p[0].c = chanCreate(0,0, 0,0,0))) {
-    perror("chanCreate");
+  pthread_cleanup_push((void(*)(void*))chanClose, p[1].c);
+  if (!chanSock(0,0, p[0].c, p[1].c, s[0], 65535)) {
+    perror("chanSock");
     goto exit3;
   }
-  pthread_cleanup_push((void(*)(void*))chanClose, p[0].c);
-  pthread_cleanup_push((void(*)(void*))chanShut, p[0].c);
-  if (!(p[1].c = chanCreate(0,0, 0,0,0))) {
-    perror("chanCreate");
-    goto exit4;
-  }
-  pthread_cleanup_push((void(*)(void*))chanClose, p[1].c);
-  pthread_cleanup_push((void(*)(void*))chanShut, p[1].c);
-  if (!chanSock(0,0, p[0].c, c[0], c[1], s[0], 65535)) {
+  if (!chanSock(0,0, p[1].c, p[0].c, s[1], 65535)) {
     perror("chanSock");
-    goto exit5;
+    goto exit3;
   }
-  if (!chanSock(0,0, p[1].c, c[1], c[0], s[1], 65535)) {
-    perror("chanSock");
-    goto exit5;
-  }
-  /* wait for either hangup to chanShut */
-  p[0].v = p[1].v = &t;
-  p[0].o = p[1].o = chanPoGet;
+  /* wait for either chanShut */
+  p[0].v = p[1].v = 0;
+  p[0].o = p[1].o = chanPoSht;
   chanPoll(-1, sizeof (p) / sizeof (p[0]), p);
-exit5:
-  pthread_cleanup_pop(1); /* chanShut(p[1]) */
-  pthread_cleanup_pop(1); /* chanClose(p[1]) */
-exit4:
-  pthread_cleanup_pop(1); /* chanShut(p[0]) */
-  pthread_cleanup_pop(1); /* chanClose(p[0]) */
 exit3:
-  pthread_cleanup_pop(1); /* chanClose(c[1]) */
+  pthread_cleanup_pop(1); /* chanClose(p[1].c) */
 exit2:
-  pthread_cleanup_pop(1); /* chanClose(c[0]) */
+  pthread_cleanup_pop(1); /* chanClose(p[0].c) */
 exit1:
   pthread_cleanup_pop(1); /* close(s[1]) */
 exit0:

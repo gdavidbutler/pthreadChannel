@@ -19,7 +19,7 @@
 #ifndef __CHANSOCK_H__
 #define __CHANSOCK_H__
 
-/* a chanSock message (a length prefixed array of bytes) */
+/* a chanSock item (a length prefixed array of bytes) */
 typedef struct {
   unsigned int l;     /* not transmitted, no byte order issues */
   unsigned char b[1]; /* the first character of l characters */
@@ -30,20 +30,17 @@ typedef struct {
  *
  * Support I/O on a bound full duplex socket via read and write channels.
  *
- * A chanPut() of chanSer_t messages on the write channel does write()s on the socket:
+ * A chanPut() of chanSer_t items on the write channel does write()s on the socket:
  *  A chanGet() or socket write() failure will shutdown(socket, SHUT_WR) the socket and chanShut() the channel.
  *
- * A chanGet() on the read channel will return chanSer_t messages from read()s on the socket:
+ * A chanGet() on the read channel will return chanSer_t items from read()s on the socket:
  *  A chanPut() or socket read() failure will shutdown(socket, SHUT_RD) the socket and chanShut() the channel.
  *
- * After both ends have completed, the socket is closed.
+ * After both ends have completed, the socket has been shutdown() but NOT closed.
  *
  * Provide:
  *  realloc semantics implementation function (or 0 to use system realloc)
  *  free semantics implementation function (or 0 to use system free)
- * Provide an optional hangup chan_t to the thread coordinating the I/O threads:
- *  chanShut() on the hangup channel does chanShut() on the other channels
- *  chanGet() on the hangup channel for chanShut when the socket is close()'d
  * Provide an optional read chan_t: (if not provided, socket is immediately shutdown(SHUT_RD))
  *   chanGet data that is read() from socket
  *   chanShut to shutdown(SHUT_RD) on socket
@@ -53,9 +50,8 @@ typedef struct {
  * Provide a socket to be used by the read and write channels:
  *  When read() on the socket fails, the socket is shutdown(SHUT_RD) and the read chan is chanShut()
  *  When write() on the socket fails, the socket is shutdown(SHUT_WR) and the write chan is chanShut()
- *  After both channels have been chanShut and the socket is shutdown, the socket is close()'d
  * Provide an optional non-zero readSize for reads from the socket (required if there is a read chan_t)
- *  If socket is a DGRAM type, this size must be at least as large as the largest expected message size
+ *  If socket is a DGRAM type, this size must be at least as large as the largest expected payload size
  *
  * As a convenience, chanSock() chanOpen's the chan_t's (delegating chanClose's)
  */
@@ -63,7 +59,6 @@ int
 chanSock(
   void *(*realloc)(void *, unsigned long)
  ,void (*free)(void *)
- ,chan_t *hangup
  ,chan_t *read
  ,chan_t *write
  ,int socket

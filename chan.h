@@ -71,7 +71,7 @@ typedef struct chan chan_t;
 
 /*
  * A store can be provided at channel allocation.
- *  If none is provided, a channel stores a single message.
+ *  If none is provided, a channel stores a single item.
  *  This works best (providing low latency) when threads work more and talk less.
  *
  * When allocating the channel, supply:
@@ -82,7 +82,7 @@ typedef struct chan chan_t;
  *  the store context done function (or 0 if none)
  * For example:
  *  chan_t *c;
- *  c = chanCreate(chanFifoSi, chanFifoSa(10), chanFifoSd);
+ *  c = chanCreate(0,0, chanFifoSi, chanFifoSa(10), chanFifoSd);
  *
  * Returned channel is Open.
  */
@@ -108,12 +108,6 @@ chanShut(
   chan_t *chn
 );
 
-/* channel is shutdown */
-int
-chanIsShut(
-  chan_t *chn
-);
-
 /* channel close, on last close, deallocate */
 void
 chanClose(
@@ -122,17 +116,24 @@ chanClose(
 
 /* channel operation status */
 typedef enum chanOs {
-  chanOsErr = 0 /* Error (for chanGet(), chanPut() and chanPutWait() for chanPoll() 0 return) */
+  chanOsErr = 0 /* Error */
+ ,chanOsSht     /* Shutdown */
  ,chanOsGet     /* Get successful */
  ,chanOsPut     /* Put successful (or timeout on Wait part of PutWait) */
  ,chanOsPutWait /* PutWait successful */
- ,chanOsShut    /* Shutdown */
  ,chanOsTmo     /* Timeout */
 } chanOs_t;
 
 /* in each of the below, nsTimeout: -1 block forever, 0 non-blocking else timeout in nanoseconds */
 
-/* get a message */
+/* check for shut */
+chanOs_t
+chanSht(
+  long nsTimeout
+ ,chan_t *chn
+);
+
+/* get an item */
 chanOs_t
 chanGet(
   long nsTimeout
@@ -140,7 +141,7 @@ chanGet(
  ,void **val
 );
 
-/* put a message */
+/* put an item */
 chanOs_t
 chanPut(
   long nsTimeout
@@ -148,7 +149,7 @@ chanPut(
  ,void *val
 );
 
-/* put a message (as chanPut) then block till a Get occurs */
+/* put an item (as chanPut) then block till a Get occurs */
 chanOs_t
 chanPutWait(
   long nsTimeout
@@ -163,15 +164,16 @@ chanPutWait(
 /* channel poll operation */
 typedef enum chanPo {
   chanPoNop = 0 /* no operation, skip */
- ,chanPoGet     /* get a message */
- ,chanPoPut     /* put a message */
- ,chanPoPutWait /* put a message then block till a Get occurs */
+ ,chanPoSht     /* check for shut */
+ ,chanPoGet     /* get an item */
+ ,chanPoPut     /* put an item */
+ ,chanPoPutWait /* put an item then block till a Get occurs */
 } chanPo_t;
 
 /* channel poll array element */
 typedef struct chanPoll {
   chan_t *c;  /* channel to operate on, if 0 then behave as chanPoNop */
-  void **v;   /* where to get/put a message, if 0 then behave as chanPoNop */
+  void **v;   /* where to get/put an item, if 0 then behave as chanPoNop */
   chanPo_t o;
   chanOs_t s;
 } chanPoll_t;

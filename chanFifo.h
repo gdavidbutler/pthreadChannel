@@ -23,14 +23,14 @@
  * Channel FIFO Store
  *
  * When threads talk more and work less,
- * a store of more than one message may be desired.
+ * a store of more than one item may be desired.
  */
 
 /* opaque context */
 typedef struct chanFifoSc
 chanFifoSc_t;
 
-/* allocate a context of initial chan messages (void *) */
+/* allocate a context of initial items (void *) */
 chanFifoSc_t *
 chanFifoSa(
   void *(*realloc)(void *, unsigned long)

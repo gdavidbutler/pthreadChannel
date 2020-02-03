@@ -4,23 +4,23 @@ Yet another implementation of a "Channel" construct for POSIX threads (pthreads)
 
 ### Channel
 
-A Channel implements a pluggable store of, pointer (void *) sized, messages.
+A Channel is an anonymous, pthread coordinating, store of pointer (void *) sized items.
 
 For a background on Channels see Russ Cox's [Bell Labs and CSP Threads](https://swtch.com/~rsc/thread/).
 
-* Channels, by default, store a single message. (For more, see Store, below.)
+* Channels, by default, store a single item. (For more, see [Store](#store), below.)
 * Any number of pthreads can Put/Get on a Channel.
 * A pthread can Put/Get on any number of Channels.
-* Message semantics can include ownership delegation (to avoid application level locking complexities).
-NOTE: messages are discarded on last chanClose(). (To avoid leaking memory, chanGet() till chanOsShut).
+* Channel semantics can include ownership transfer (to avoid application level locking complexities).
+NOTE: items are discarded on last chanClose(). (To avoid leaking memory, chanGet() till chanOsSht).
   * putting pthread: m = malloc(), init(m), chanPut(chan, m).
   * getting pthread: chanGet(chan, &m), use(m), free(m).
 * Channels can be Put/Get on channels!
 NOTE: chanOpen a chan_t before passing it (delegating chanClose) to eliminate chanClose/chanOpen races.
-  * requesting pthread: chanOpen(responseChan), chanPut(theirChan, responseChan), response = chanGet(responseChan).
-  * responding pthread: responseChan = chanGet(myChan), chanPut(responseChan, response), chanClose(responseChan).
+  * requesting pthread: chanOpen(responseChan), chanPut(theChan, responseChan), response = chanGet(responseChan).
+  * responding pthread: responseChan = chanGet(theChan), chanPut(responseChan, response), chanClose(responseChan).
 
-Channels distribute messages fairly under pressure:
+Channels distribute items fairly under pressure:
 * If there are waiting getters, a new getter goes to the end of the line
   * unless there are also waiting putters (as waiting getters won't wait long)
     * then a meesage is opportunistically get instead of waiting.
@@ -31,42 +31,38 @@ Channels distribute messages fairly under pressure:
 Find the API in chan.h:
 
 * chanCreate
-  * Allocate an Open chan_t (reference count = 1, pair with chanClose).
+  * Allocate an Open chan_t (initialize reference count to 1, pair with chanClose).
 * chanOpen
   * Open a chan_t (increment reference count, pair with chanClose). Should be called on each chan_t before passing to another pthread.
 * chanShut
   * Shutdown a chan_t (afterwards chanPut returns 0 and chanGet is non-blocking).
-* chanIsShut
-  * Is a chan_t shutdown.
 * chanClose
-  * Close a chan_t (decrement reference count, deallocate on last chanClose). Should be called on each chan_t upon pthread exit.
+  * Close a chan_t (decrement reference count, deallocate on 0). Should be called on each open chan_t upon pthread exit.
 * chanGet
-  * Get a message from a Channel (asynchronously).
+  * Get an item from a Channel (asynchronously).
 * chanPut
-  * Put a message to a Channel (asynchronously).
+  * Put an item to a Channel (asynchronously).
 * chanPutWait
-  * Put a message to a Channel (synchronously, waiting for another pthread to chanGet).
+  * Put an item to a Channel (synchronously, waiting for another pthread to chanGet).
 * chanPoll
   * perform a Channel Operation (chanPo_t) on one of an array of Channels, working to satisfy them in the order provided.
 
 ### Store
 
-A Channel's store implementation is pluggable.
-
-In classic CSPs, a low latency synchronous rendezvous (get and put block till the other arrives to exchange a message)
+In classic CSPs, a low latency synchronous rendezvous (get and put block till the other arrives to exchange an item)
 works well when coded in machine or assembler language (jump instructions).
-If a message store is needed (queue, stack, etc.), it is implemented as another CSP.
+If a store is needed (queue, stack, etc.), it is implemented as another CSP.
 
 Modern CSPs (e.g. "coroutines", "functions", etc.) with "local" variables and recursion support, have a higher context switch cost.
 But native support in modern processors (call/return instructions) makes it acceptable.
-A message store is still implemented as another CSP.
+A store is still implemented as another CSP.
 
-However pthreads require operating system support and context switches are prohibitively expensive for simple message stores.
+However pthreads require operating system support and context switches are prohibitively expensive for simple stores.
 Therefore Stores are implemented as function callbacks executed within pthreads' contexts.
 
-A pluggable Store can be provided on a chanCreate call.
-If none is provided, a channel stores a single message.
-This is best (lowest latency) when the cost of processing a message dominates the cost of a context switch.
+A Store can be provided on a chanCreate call.
+If none is provided, a channel stores a single item.
+This is best (lowest latency) when the cost of processing an item dominates the cost of a context switch.
 But as the processing cost decreases toward the context switch cost, Stores can drastically decrease context switching.
 Therefore, a Store's size depends on how much latency can be tolerated in the quest for efficiency.
 
@@ -87,23 +83,20 @@ Find the API in chanFifo.h:
 * chanFifoSi
   * chanFifo store implementation
 
-### Poll/Select
+### Utility
 
-Since a pthread can't both wait in a chanPoll() and in a poll()/select()/etc., support for integrating bound sockets with Channels is provided.
+* chanSock (API in chanSock.h)
+  * Since a pthread can't both wait in a chanPoll() and in a poll()/select()/etc., use the old Unix pipe() (Channel) and fork() (pthread) style.
 
-Find the API in chanSock.h:
-
-* chanSock: Use a pair of Channels (read and write) to read() and write() a bound full duplex socket.
-
-### Examples
+### Example
 
 * primes
-  * Example of using chan.h and chanFifo.h is provided in example/primes.c. It is modeled on primes.c from [libtask](https://swtch.com/libtask/).
+  * Modeled on primes.c from [libtask](https://swtch.com/libtask/).
 It is more complex because of pthread's API and various combinations of options.
 * powser
-  * [TO DO] implementation of [Squinting at Power Series](https://swtch.com/~rsc/thread/squint.pdf).
+  * [TO DO] Implementation of [Squinting at Power Series](https://swtch.com/~rsc/thread/squint.pdf).
 * sockproxy
-  * Example of using chan.h and chanSock.h is provided in example/sockproxy.c. It is modeled on tcpproxy.c from [libtask](https://swtch.com/libtask/).
+  * Modeled on tcpproxy.c from [libtask](https://swtch.com/libtask/).
 Connects two chanSocks back-to-back, with Channels reversed.
   * Sockproxy needs numeric values for socket type (-T, -t) and family type (-F, -f).
   * The options protocol type (-P, -p), service type (-S, -s) and host name (-H, -h) can be symbolic (see getaddrinfo()).
