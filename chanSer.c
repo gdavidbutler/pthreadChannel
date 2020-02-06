@@ -16,25 +16,34 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include <stdlib.h>     /* to support chanSock(0,0 ,...) to indicate realloc() and free() */
+#include <stdlib.h>     /* to support 0,0 to indicate realloc() and free() */
 #include <unistd.h>     /* for read(), write() and close() */
 #include <sys/socket.h> /* for shutdown() */
 #include <pthread.h>
 #include "chan.h"
-#include "chanSock.h"
+#include "chanSer.h"
 
-struct chanSockW {
+struct chanSerW {
   void *(*a)(void *, unsigned long);
   void (*f)(void *);
   chan_t *c;
   int s;
 };
 
+struct chanSerR {
+  void *(*a)(void *, unsigned long);
+  void (*f)(void *);
+  chan_t *c;
+  int s;
+  unsigned int l;
+};
+
+
 static void
 shutSockW(
   void *v
 ){
-#define V ((struct chanSockW *)v)
+#define V ((struct chanSerW *)v)
   shutdown(V->s, SHUT_WR);
 #undef V
 }
@@ -43,7 +52,7 @@ static void *
 chanSockW(
   void *v
 ){
-#define V ((struct chanSockW *)v)
+#define V ((struct chanSerW *)v)
   chanSer_t *m;
   chanPoll_t p[1];
 
@@ -72,19 +81,11 @@ chanSockW(
 #undef V
 }
 
-struct chanSockR {
-  void *(*a)(void *, unsigned long);
-  void (*f)(void *);
-  chan_t *c;
-  int s;
-  unsigned int l;
-};
-
 static void
 shutSockR(
   void *v
 ){
-#define V ((struct chanSockR *)v)
+#define V ((struct chanSerR *)v)
   shutdown(V->s, SHUT_RD);
 #undef V
 }
@@ -93,7 +94,7 @@ static void *
 chanSockR(
   void *v
 ){
-#define V ((struct chanSockR *)v)
+#define V ((struct chanSerR *)v)
   chanSer_t *m;
   chanPoll_t p[1];
 
@@ -149,7 +150,7 @@ chanSock(
     f = free;
   }
   if (w) {
-    struct chanSockW *x;
+    struct chanSerW *x;
 
     if (!(x = a(0, sizeof (*x))))
       goto error;
@@ -163,10 +164,9 @@ chanSock(
       goto error;
     }
     pthread_detach(t);
-  } else
-    shutdown(s, SHUT_WR);
+  }
   if (r) {
-    struct chanSockR *x;
+    struct chanSerR *x;
 
     if (!(x = a(0, sizeof (*x))))
       goto error;
@@ -181,12 +181,144 @@ chanSock(
       goto error;
     }
     pthread_detach(t);
-  } else
+  }
+  if (!w)
+    shutdown(s, SHUT_WR);
+  if (!r)
     shutdown(s, SHUT_RD);
   return (1);
 error:
-  chanShut(r);
-  chanShut(w);
-  shutdown(s, SHUT_RDWR);
+  return (0);
+}
+
+
+static void *
+chanPipeW(
+  void *v
+){
+#define V ((struct chanSerW *)v)
+  chanSer_t *m;
+  chanPoll_t p[1];
+
+  pthread_cleanup_push((void(*)(void*))V->f, v);
+  pthread_cleanup_push((void(*)(void*))chanClose, V->c);
+  pthread_cleanup_push((void(*)(void*))chanShut, V->c);
+  pthread_cleanup_push((void(*)(void*))close, v);
+  p[0].c = V->c;
+  p[0].v = (void **)&m;
+  p[0].o = chanPoGet;
+  while (chanPoll(-1, sizeof (p) / sizeof (p[0]), p) == 1 && p[0].s == chanOsGet) {
+    unsigned int l;
+    int f;
+
+    pthread_cleanup_push((void(*)(void*))V->f, m);
+    for (l = 0, f = 1; l < m->l && (f = write(V->s, m->b + l, m->l - l)) > 0; l += f);
+    pthread_cleanup_pop(1); /* V->f(m) */
+    if (f <= 0)
+      break;
+  }
+  pthread_cleanup_pop(1); /* close(v) */
+  pthread_cleanup_pop(1); /* chanShut(V->c) */
+  pthread_cleanup_pop(1); /* chanClose(V->c) */
+  pthread_cleanup_pop(1); /* V->f(v) */
+  return (0);
+#undef V
+}
+
+static void *
+chanPipeR(
+  void *v
+){
+#define V ((struct chanSerR *)v)
+  chanSer_t *m;
+  chanPoll_t p[1];
+
+  pthread_cleanup_push((void(*)(void*))V->f, v);
+  pthread_cleanup_push((void(*)(void*))chanClose, V->c);
+  pthread_cleanup_push((void(*)(void*))chanShut, V->c);
+  pthread_cleanup_push((void(*)(void*))close, v);
+  p[0].c = V->c;
+  p[0].v = (void **)&m;
+  p[0].o = chanPoPut;
+  while ((m = V->a(0, sizeof (*m) + V->l - sizeof (m->b)))) {
+    int f;
+
+    pthread_cleanup_push((void(*)(void*))V->f, m);
+    if ((f = read(V->s, m->b, V->l)) > 0) {
+      void *t;
+
+      m->l = f;
+      /* attempt to "right size" the item */
+      if ((t = V->a(m, sizeof (*m) + m->l - sizeof (m->b))))
+        m = t;
+      f = chanPoll(-1, sizeof (p) / sizeof (p[0]), p) == 1 && p[0].s == chanOsPut;
+    }
+    pthread_cleanup_pop(0); /* V->f(m) */
+    if (f <= 0) {
+      V->f(m);
+      break;
+    }
+  }
+  pthread_cleanup_pop(1); /* close(v) */
+  pthread_cleanup_pop(1); /* chanShut(V->c) */
+  pthread_cleanup_pop(1); /* chanClose(V->c) */
+  pthread_cleanup_pop(1); /* V->f(v) */
+  return (0);
+#undef V
+}
+
+int
+chanPipe(
+  void *(*a)(void *, unsigned long)
+ ,void (*f)(void *)
+ ,chan_t *r
+ ,chan_t *w
+ ,int d
+ ,int e
+ ,unsigned int l
+){
+  pthread_t t;
+
+  if (((a || f) && (!a || !f)) || (!r && !w) || (r && d < 0) || (w && e < 0) || (r && !l))
+    goto error;
+  if (!a) {
+    a = realloc;
+    f = free;
+  }
+  if (w) {
+    struct chanSerW *x;
+
+    if (!(x = a(0, sizeof (*x))))
+      goto error;
+    x->a = a;
+    x->f = f;
+    x->c = chanOpen(w);
+    x->s = e;
+    if (pthread_create(&t, 0, chanPipeW, x)) {
+      chanClose(x->c);
+      f(x);
+      goto error;
+    }
+    pthread_detach(t);
+  }
+  if (r) {
+    struct chanSerR *x;
+
+    if (!(x = a(0, sizeof (*x))))
+      goto error;
+    x->a = a;
+    x->f = f;
+    x->c = chanOpen(r);
+    x->s = d;
+    x->l = l;
+    if (pthread_create(&t, 0, chanPipeR, x)) {
+      chanClose(x->c);
+      f(x);
+      goto error;
+    }
+    pthread_detach(t);
+  }
+  return (1);
+error:
   return (0);
 }

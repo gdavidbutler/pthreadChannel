@@ -16,8 +16,14 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#ifndef __CHANSOCK_H__
-#define __CHANSOCK_H__
+#ifndef __CHANSER_H__
+#define __CHANSER_H__
+
+/* a serialized item (a length prefixed array of bytes) */
+typedef struct {
+  unsigned int l;     /* not transmitted, no byte order issues */
+  unsigned char b[1]; /* the first character of l characters */
+} chanSer_t;
 
 /*
  * Channel Sock
@@ -59,4 +65,42 @@ chanSock(
  ,unsigned int readSize
 ); /* returns 0 on failure */
 
-#endif /* __CHANSOCK_H__ */
+/*
+ * Channel Pipe
+ *
+ * Support I/O on a pair of half duplex pipes via read and write channels.
+ *
+ * A chanPut() of chanSer_t items on the write channel does write()s on the writeFd:
+ *  A chanGet() or writeFd write() failure will close() the writeFd and chanShut() the channel.
+ *
+ * A chanGet() on the read channel will return chanSer_t items from read()s on the readFd:
+ *  A chanPut() or readFd read() failure will close() the readFd and chanShut() the channel.
+ *
+ * Provide:
+ *  realloc semantics implementation function (or 0 to use system realloc)
+ *  free semantics implementation function (or 0 to use system free)
+ * Provide an optional read chan_t
+ *   chanGet data that is read() from readFd
+ *   chanShut to close() readFd
+ * Provide an optional write chan_t
+ *   chanPut data that is write() to writeFd
+ *   chanShut to close() writeFd
+ * Provide readFd and writeFd to be used by the read and write channels:
+ *  When read() on the readFd fails, the read chan is chanShut()
+ *  When write() on the writeFd fails, the write chan is chanShut()
+ * Provide an optional non-zero readSize for reads from the readFd (required if there is a read chan_t)
+ *
+ * As a convenience, chanPipe() chanOpen's the chan_t's (delegating chanClose's)
+ */
+int
+chanPipe(
+  void *(*realloc)(void *, unsigned long)
+ ,void (*free)(void *)
+ ,chan_t *read
+ ,chan_t *write
+ ,int readFd
+ ,int writeFd
+ ,unsigned int readSize
+); /* returns 0 on failure */
+
+#endif /* __CHANSER_H__ */

@@ -26,7 +26,7 @@
 #include <netdb.h>
 #include <pthread.h>
 #include "chan.h"
-#include "chanSock.h"
+#include "chanSer.h"
 
 struct addrinfo *Caddr;
 
