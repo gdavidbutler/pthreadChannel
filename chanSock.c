@@ -26,7 +26,7 @@
 struct chanSockW {
   void *(*a)(void *, unsigned long);
   void (*f)(void *);
-  chan_t *c; /* chanSock_t item */
+  chan_t *c;
   int s;
 };
 
@@ -44,7 +44,7 @@ chanSockW(
   void *v
 ){
 #define V ((struct chanSockW *)v)
-  chanSock_t *m;
+  chanSer_t *m;
   chanPoll_t p[1];
 
   pthread_cleanup_push((void(*)(void*))V->f, v);
@@ -75,7 +75,7 @@ chanSockW(
 struct chanSockR {
   void *(*a)(void *, unsigned long);
   void (*f)(void *);
-  chan_t *c; /* chanSock_t item */
+  chan_t *c;
   int s;
   unsigned int l;
 };
@@ -94,7 +94,7 @@ chanSockR(
   void *v
 ){
 #define V ((struct chanSockR *)v)
-  chanSock_t *m;
+  chanSer_t *m;
   chanPoll_t p[1];
 
   pthread_cleanup_push((void(*)(void*))V->f, v);

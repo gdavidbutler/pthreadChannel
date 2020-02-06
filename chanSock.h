@@ -19,12 +19,6 @@
 #ifndef __CHANSOCK_H__
 #define __CHANSOCK_H__
 
-/* a chanSock item (a length prefixed array of bytes) */
-typedef struct {
-  unsigned int l;     /* not transmitted, no byte order issues */
-  unsigned char b[1]; /* the first character of l characters */
-} chanSock_t;
-
 /*
  * Channel Sock
  *
