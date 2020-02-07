@@ -9,7 +9,7 @@ A Channel is an anonymous, pthread coordinating, store of pointer (void *) sized
 For a background on Channels see Russ Cox's [Bell Labs and CSP Threads](https://swtch.com/~rsc/thread/).
 
 * Channels, by default, store a single item. (For more, see [Store](#store), below.)
-* Channels only support intra-process stores. (For inter-process, see [Serial](#serial), below.)
+* Channels only support intra-process pthreads. (For inter-process, see [Blob](#blob), below.)
 * Any number of pthreads can Put/Get on a Channel.
 * A pthread can Put/Get on any number of Channels.
 * Channel semantics can include ownership transfer (to avoid application level locking complexities).
@@ -84,17 +84,24 @@ Find the API in chanFifo.h:
 * chanFifoSi
   * chanFifo store implementation
 
-### Serial
+### Blob
 
-To support inter-process interactions, serialization and deserialization are required.
-Since a pthread can't both wait in a chanPoll() and in a poll()/select()/etc., the old Unix pipe() (Channel) and fork() (pthread) style is used.
+To support homogeneous inter-process interactions, a blob is useful over sockets and pipes.
+(Since a pthread can't both wait in a chanPoll() and in a poll()/select()/etc., the old Unix pipe() (Channel) and fork() (pthread) style is used.)
 
-Find the API in chanSer.h:
+Find the API in chanBlb.h:
 
 * chanSock
   * Support full duplex I/O on a bound socket over read and write Channels.
 * chanPipe
   * Support half duplex I/O on read and write pipes over read and write Channels.
+
+### Serial
+
+To support heterogeneous inter-process interactions, serialization and deserialization of Blob](#blob)s is needed.
+
+* [JSON](https://github.com/gdavidbutler/jsonTrivialCallbackParser)
+* [XML](https://github.com/gdavidbutler/xmlTrivialCallbackParser)
 
 ### Example
 

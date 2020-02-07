@@ -16,24 +16,24 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#ifndef __CHANSER_H__
-#define __CHANSER_H__
+#ifndef __CHANBLB_H__
+#define __CHANBLB_H__
 
-/* a serialized item (a length prefixed array of bytes) */
+/* a blob item (a length prefixed array of bytes) */
 typedef struct {
   unsigned int l;     /* not transmitted, no byte order issues */
   unsigned char b[1]; /* the first character of l characters */
-} chanSer_t;
+} chanBlb_t;
 
 /*
  * Channel Sock
  *
  * Support I/O on a bound full duplex socket via read and write channels.
  *
- * A chanPut() of chanSer_t items on the write channel does write()s on the socket:
+ * A chanPut() of chanBlb_t items on the write channel does write()s on the socket:
  *  A chanGet() or socket write() failure will shutdown(socket, SHUT_WR) the socket and chanShut() the channel.
  *
- * A chanGet() on the read channel will return chanSer_t items from read()s on the socket:
+ * A chanGet() on the read channel will return chanBlb_t items from read()s on the socket:
  *  A chanPut() or socket read() failure will shutdown(socket, SHUT_RD) the socket and chanShut() the channel.
  *
  * After both ends have completed, the socket has been shutdown() but NOT closed.
@@ -70,10 +70,10 @@ chanSock(
  *
  * Support I/O on a pair of half duplex pipes via read and write channels.
  *
- * A chanPut() of chanSer_t items on the write channel does write()s on the writeFd:
+ * A chanPut() of chanBlb_t items on the write channel does write()s on the writeFd:
  *  A chanGet() or writeFd write() failure will close() the writeFd and chanShut() the channel.
  *
- * A chanGet() on the read channel will return chanSer_t items from read()s on the readFd:
+ * A chanGet() on the read channel will return chanBlb_t items from read()s on the readFd:
  *  A chanPut() or readFd read() failure will close() the readFd and chanShut() the channel.
  *
  * Provide:
@@ -103,4 +103,4 @@ chanPipe(
  ,unsigned int readSize
 ); /* returns 0 on failure */
 
-#endif /* __CHANSER_H__ */
+#endif /* __CHANBLB_H__ */

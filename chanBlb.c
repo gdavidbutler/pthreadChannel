@@ -21,16 +21,16 @@
 #include <sys/socket.h> /* for shutdown() */
 #include <pthread.h>
 #include "chan.h"
-#include "chanSer.h"
+#include "chanBlb.h"
 
-struct chanSerW {
+struct chanBlbW {
   void *(*a)(void *, unsigned long);
   void (*f)(void *);
   chan_t *c;
   int s;
 };
 
-struct chanSerR {
+struct chanBlbR {
   void *(*a)(void *, unsigned long);
   void (*f)(void *);
   chan_t *c;
@@ -43,7 +43,7 @@ static void
 shutSockW(
   void *v
 ){
-#define V ((struct chanSerW *)v)
+#define V ((struct chanBlbW *)v)
   shutdown(V->s, SHUT_WR);
 #undef V
 }
@@ -52,8 +52,8 @@ static void *
 chanSockW(
   void *v
 ){
-#define V ((struct chanSerW *)v)
-  chanSer_t *m;
+#define V ((struct chanBlbW *)v)
+  chanBlb_t *m;
   chanPoll_t p[1];
 
   pthread_cleanup_push((void(*)(void*))V->f, v);
@@ -85,7 +85,7 @@ static void
 shutSockR(
   void *v
 ){
-#define V ((struct chanSerR *)v)
+#define V ((struct chanBlbR *)v)
   shutdown(V->s, SHUT_RD);
 #undef V
 }
@@ -94,8 +94,8 @@ static void *
 chanSockR(
   void *v
 ){
-#define V ((struct chanSerR *)v)
-  chanSer_t *m;
+#define V ((struct chanBlbR *)v)
+  chanBlb_t *m;
   chanPoll_t p[1];
 
   pthread_cleanup_push((void(*)(void*))V->f, v);
@@ -150,7 +150,7 @@ chanSock(
     f = free;
   }
   if (w) {
-    struct chanSerW *x;
+    struct chanBlbW *x;
 
     if (!(x = a(0, sizeof (*x))))
       goto error;
@@ -166,7 +166,7 @@ chanSock(
     pthread_detach(t);
   }
   if (r) {
-    struct chanSerR *x;
+    struct chanBlbR *x;
 
     if (!(x = a(0, sizeof (*x))))
       goto error;
@@ -196,8 +196,8 @@ static void *
 chanPipeW(
   void *v
 ){
-#define V ((struct chanSerW *)v)
-  chanSer_t *m;
+#define V ((struct chanBlbW *)v)
+  chanBlb_t *m;
   chanPoll_t p[1];
 
   pthread_cleanup_push((void(*)(void*))V->f, v);
@@ -229,8 +229,8 @@ static void *
 chanPipeR(
   void *v
 ){
-#define V ((struct chanSerR *)v)
-  chanSer_t *m;
+#define V ((struct chanBlbR *)v)
+  chanBlb_t *m;
   chanPoll_t p[1];
 
   pthread_cleanup_push((void(*)(void*))V->f, v);
@@ -286,7 +286,7 @@ chanPipe(
     f = free;
   }
   if (w) {
-    struct chanSerW *x;
+    struct chanBlbW *x;
 
     if (!(x = a(0, sizeof (*x))))
       goto error;
@@ -302,7 +302,7 @@ chanPipe(
     pthread_detach(t);
   }
   if (r) {
-    struct chanSerR *x;
+    struct chanBlbR *x;
 
     if (!(x = a(0, sizeof (*x))))
       goto error;
