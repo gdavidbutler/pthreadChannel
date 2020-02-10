@@ -105,7 +105,7 @@ chanSockR(
   p[0].c = V->c;
   p[0].v = (void **)&m;
   p[0].o = chanPoPut;
-  while ((m = V->a(0, sizeof (*m) + V->l - sizeof (m->b)))) {
+  while ((m = V->a(0, sizeof (*m) - sizeof (m->l) + V->l))) {
     int f;
 
     pthread_cleanup_push((void(*)(void*))V->f, m);
@@ -114,7 +114,7 @@ chanSockR(
 
       m->l = f;
       /* attempt to "right size" the item */
-      if ((t = V->a(m, sizeof (*m) + m->l - sizeof (m->b))))
+      if ((t = V->a(m, sizeof (*m) - sizeof (m->l) + m->l)))
         m = t;
       f = chanPoll(-1, sizeof (p) / sizeof (p[0]), p) == 1 && p[0].s == chanOsPut;
     }
@@ -257,7 +257,7 @@ chanPipeR(
   p[0].c = V->c;
   p[0].v = (void **)&m;
   p[0].o = chanPoPut;
-  while ((m = V->a(0, sizeof (*m) + V->l - sizeof (m->b)))) {
+  while ((m = V->a(0, sizeof (*m) - sizeof (m->l) + V->l))) {
     int f;
 
     pthread_cleanup_push((void(*)(void*))V->f, m);
@@ -266,7 +266,7 @@ chanPipeR(
 
       m->l = f;
       /* attempt to "right size" the item */
-      if ((t = V->a(m, sizeof (*m) + m->l - sizeof (m->b))))
+      if ((t = V->a(m, sizeof (*m) - sizeof (m->l) + m->l)))
         m = t;
       f = chanPoll(-1, sizeof (p) / sizeof (p[0]), p) == 1 && p[0].s == chanOsPut;
     }
