@@ -4,7 +4,7 @@ Yet another implementation of a "Channel" construct for POSIX threads (pthreads)
 
 ### Channel
 
-A Channel is an anonymous, pthread coordinating, store of pointer (void *) sized items.
+A Channel is an anonymous, pthread coordinating, Store of pointer (void *) sized items.
 
 For a background on Channels see Russ Cox's [Bell Labs and CSP Threads](https://swtch.com/~rsc/thread/).
 
@@ -13,7 +13,7 @@ For a background on Channels see Russ Cox's [Bell Labs and CSP Threads](https://
 * Any number of pthreads can Put/Get on a Channel.
 * A pthread can Put/Get on any number of Channels.
 * Channel semantics can include ownership transfer (to avoid application level locking complexities).
-NOTE: items are discarded on last chanClose(). (To avoid leaking memory, chanGet() till chanOsSht).
+NOTE: Items are discarded on last chanClose(). (To avoid leaking memory, chanGet() till chanOsSht).
   * putting pthread: m = malloc(), init(m), chanPut(chan, m).
   * getting pthread: chanGet(chan, &m), use(m), free(m).
 * Channels can be Put/Get on channels!
@@ -24,10 +24,10 @@ NOTE: chanOpen a chan_t before passing it (delegating chanClose) to eliminate ch
 Channels distribute items fairly under pressure:
 * If there are waiting getters, a new getter goes to the end of the line
   * unless there are also waiting putters (as waiting getters won't wait long)
-    * then a meesage is opportunistically get instead of waiting.
+    * then an item is opportunistically get instead of waiting.
 * If there are waiting putters, a new putter goes to the end of the line
   * unless there are also waiting getters (as waiting putters won't wait long)
-    * then a meesage is opportunistically put instead of waiting.
+    * then an item is opportunistically put instead of waiting.
 
 Find the API in chan.h:
 
@@ -52,22 +52,22 @@ Find the API in chan.h:
 
 In classic CSPs, a low latency synchronous rendezvous (get and put block till the other arrives to exchange an item)
 works well when coded in machine or assembler language (jump instructions).
-If a store is needed (queue, stack, etc.), it is implemented as another CSP.
+If a Store is needed (queue, stack, etc.), it is implemented as another CSP.
 
 Modern CSPs (e.g. "coroutines", "functions", etc.) with "local" variables and recursion support, have a higher context switch cost.
 But native support in modern processors (call/return instructions) makes it acceptable.
-A store is still implemented as another CSP.
+A Store is still implemented as another CSP.
 
-However pthreads require operating system support and context switches are prohibitively expensive for simple stores.
+However pthreads require operating system support and context switches are prohibitively expensive for simple Stores.
 Therefore Stores are implemented as function callbacks executed within pthreads' contexts.
 
 A Store can be provided on a chanCreate call.
-If none is provided, a channel stores a single item.
+If none is provided, a Channel contains a single item.
 This is best (lowest latency) when the cost of processing an item dominates the cost of a context switch.
 But as the processing cost decreases toward the context switch cost, Stores can drastically decrease context switching.
 Therefore, a Store's size depends on how much latency can be tolerated in the quest for efficiency.
 
-A dynamic Channel FIFO store implementation is provided.
+A dynamic Channel FIFO Store implementation is provided.
 When a context is created, a maximum size and an initial size are provided.
 To balance latency and efficiency size is adjusted by:
 * Before a Put, if the Store is empty and there are no waiting Getters, the size is decremented.
@@ -78,11 +78,11 @@ To balance latency and efficiency size is adjusted by:
 Find the API in chanFifo.h:
 
 * chanFifoSa
-  * allocate a chanFifoSc (chanFifo store context)
+  * allocate a chanFifoSc (chanFifo Store context)
 * chanFifoSd
-  * deallocate a chanFifoSc (chanFifo store context)
+  * deallocate a chanFifoSc (chanFifo Store context)
 * chanFifoSi
-  * chanFifo store implementation
+  * chanFifo Store implementation
 
 ### Blob
 
@@ -92,9 +92,9 @@ To support homogeneous inter-process interactions, a blob is useful over sockets
 Find the API in chanBlb.h:
 
 * chanSock
-  * Support full duplex I/O on a bound socket over read and write Channels.
+  * Support I/O on a full duplex bound socket over read and write Channels.
 * chanPipe
-  * Support half duplex I/O on read and write pipes over read and write Channels.
+  * Support I/O on half duplex read and write pipes over read and write Channels.
 
 ### Serial
 

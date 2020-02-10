@@ -191,6 +191,14 @@ error:
   return (0);
 }
 
+static void
+closeFdW(
+  void *v
+){
+#define V ((struct chanBlbW *)v)
+  close(V->s);
+#undef V
+}
 
 static void *
 chanPipeW(
@@ -203,7 +211,7 @@ chanPipeW(
   pthread_cleanup_push((void(*)(void*))V->f, v);
   pthread_cleanup_push((void(*)(void*))chanClose, V->c);
   pthread_cleanup_push((void(*)(void*))chanShut, V->c);
-  pthread_cleanup_push((void(*)(void*))close, v);
+  pthread_cleanup_push((void(*)(void*))closeFdW, v);
   p[0].c = V->c;
   p[0].v = (void **)&m;
   p[0].o = chanPoGet;
@@ -217,11 +225,20 @@ chanPipeW(
     if (f <= 0)
       break;
   }
-  pthread_cleanup_pop(1); /* close(v) */
+  pthread_cleanup_pop(1); /* closeFdW(v) */
   pthread_cleanup_pop(1); /* chanShut(V->c) */
   pthread_cleanup_pop(1); /* chanClose(V->c) */
   pthread_cleanup_pop(1); /* V->f(v) */
   return (0);
+#undef V
+}
+
+static void
+closeFdR(
+  void *v
+){
+#define V ((struct chanBlbR *)v)
+  close(V->s);
 #undef V
 }
 
@@ -236,7 +253,7 @@ chanPipeR(
   pthread_cleanup_push((void(*)(void*))V->f, v);
   pthread_cleanup_push((void(*)(void*))chanClose, V->c);
   pthread_cleanup_push((void(*)(void*))chanShut, V->c);
-  pthread_cleanup_push((void(*)(void*))close, v);
+  pthread_cleanup_push((void(*)(void*))closeFdR, v);
   p[0].c = V->c;
   p[0].v = (void **)&m;
   p[0].o = chanPoPut;
@@ -259,7 +276,7 @@ chanPipeR(
       break;
     }
   }
-  pthread_cleanup_pop(1); /* close(v) */
+  pthread_cleanup_pop(1); /* closeFdR(v) */
   pthread_cleanup_pop(1); /* chanShut(V->c) */
   pthread_cleanup_pop(1); /* chanClose(V->c) */
   pthread_cleanup_pop(1); /* V->f(v) */
