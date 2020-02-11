@@ -50,8 +50,9 @@ typedef struct {
  * Provide a socket to be used by the read and write channels:
  *  When read() on the socket fails, the socket is shutdown(SHUT_RD) and the read chan is chanShut()
  *  When write() on the socket fails, the socket is shutdown(SHUT_WR) and the write chan is chanShut()
- * Provide an optional non-zero readSize for reads from the socket (required if there is a read chan_t)
- *  If socket is a DGRAM type, this size must be at least as large as the largest expected payload size
+ * Provide readSize
+ *  When zero, blob sizes are preserved (using Netstring). If socket is a DGRAM, the "#...:" and "," must be separate datagrams
+ *  Else, in stream mode. If socket is a DGRAM type, this size must be at least as large as the largest expected payload size
  *
  * As a convenience, chanSock() chanOpen's the chan_t's (delegating chanClose's)
  */
@@ -88,7 +89,9 @@ chanSock(
  * Provide readFd and writeFd to be used by the read and write channels:
  *  When read() on the readFd fails, the read chan is chanShut()
  *  When write() on the writeFd fails, the write chan is chanShut()
- * Provide an optional non-zero readSize for reads from the readFd (required if there is a read chan_t)
+ * Provide readSize
+ *  When zero, blob sizes are preserved (using Netstring)
+ *  Else, in stream mode
  *
  * As a convenience, chanPipe() chanOpen's the chan_t's (delegating chanClose's)
  */

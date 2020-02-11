@@ -54,3 +54,4 @@ dkms.conf
 # Local Executables
 primes
 sockproxy
+primeproxy

@@ -9,7 +9,7 @@ A Channel is an anonymous, pthread coordinating, Store of pointer (void *) sized
 For a background on Channels see Russ Cox's [Bell Labs and CSP Threads](https://swtch.com/~rsc/thread/).
 
 * Channels, by default, store a single item. (For more, see [Store](#store), below.)
-* Channels only support intra-process pthreads. (For inter-process, see [Blob](#blob), below.)
+* Channels only support intra-process exchanges. (For inter-process, see [Blob](#blob), below.)
 * Any number of pthreads can Put/Get on a Channel.
 * A pthread can Put/Get on any number of Channels.
 * Channel semantics can include ownership transfer (to avoid application level locking complexities).
@@ -86,19 +86,20 @@ Find the API in chanFifo.h:
 
 ### Blob
 
-To support homogeneous inter-process interactions, a blob is useful over sockets and pipes.
+To support inter-process exchanges, blob items are transported through sockets and pipes.
 (Since a pthread can't both wait in a chanPoll() and in a poll()/select()/etc., the old Unix pipe() (Channel) and fork() (pthread) style is used.)
+Both stream and size preserving (using [Netstring](https://en.wikipedia.org/wiki/Netstring) protocol) modes are supported.
 
 Find the API in chanBlb.h:
 
 * chanSock
-  * Support I/O on a full duplex bound socket over read and write Channels.
+  * Blob exchange through a reliable full duplex bound socket over read and write Channels.
 * chanPipe
-  * Support I/O on half duplex read and write pipes over read and write Channels.
+  * Blob exchange through half duplex read and write pipes over read and write Channels.
 
 ### Serial
 
-To support heterogeneous inter-process interactions, serialization and deserialization of Blob](#blob)s is needed.
+TODO: create examples
 
 * [JSON](https://github.com/gdavidbutler/jsonTrivialCallbackParser)
 * [XML](https://github.com/gdavidbutler/xmlTrivialCallbackParser)
@@ -108,8 +109,8 @@ To support heterogeneous inter-process interactions, serialization and deseriali
 * primes
   * Modeled on primes.c from [libtask](https://swtch.com/libtask/).
 It is more complex because of pthread's API and various combinations of options.
-* powser
-  * [TO DO] Implementation of [Squinting at Power Series](https://swtch.com/~rsc/thread/squint.pdf).
+* pipeproxy
+  * Copy stdin to stdout through chanPipe preserving "line" boundaries
 * sockproxy
   * Modeled on tcpproxy.c from [libtask](https://swtch.com/libtask/).
 Connects two chanSocks back-to-back, with Channels reversed.
@@ -120,6 +121,8 @@ Connects two chanSocks back-to-back, with Channels reversed.
   * For example, to listen (because of the server SOCK_STREAM socket type) for connections on any IPv4 stream socket on service 2222 and connect them to any IPv4 stream socket on service ssh at host localhost (letting the system choose the protocol):
     1. ./sockproxy -T 1 -F 2 -S 2222 -t 1 -f 2 -h localhost -s ssh &
     1. ssh -p 2222 user@localhost
+* powser
+  * TODO: Implementation of [Squinting at Power Series](https://swtch.com/~rsc/thread/squint.pdf).
 
 ### Building
 
