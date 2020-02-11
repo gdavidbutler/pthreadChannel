@@ -181,7 +181,7 @@ chanPktR(
   p[0].c = V->c;
   p[0].v = (void **)&m;
   p[0].o = chanPoPut;
-  r = f = 0;
+  r = 0;
   while ((f = read(V->s, b + r, sizeof (b) - r)) > 0) {
     unsigned int l;
     int i;
@@ -199,16 +199,16 @@ chanPktR(
       m->b[l++] = b[i++];
     for (r = 0; i < f;)
       b[r++] = b[i++];
-    for (; l < m->l && (f = read(V->s, m->b + l, m->l - l)) > 0; l += f);
-    if (f > 0) {
+    for (; l < m->l && (i = read(V->s, m->b + l, m->l - l)) > 0; l += i);
+    if (i > 0) {
       if ((r && b[--r] == ',')
-       || (!r && (f = read(V->s, b, 1)) > 0 && b[0] == ','))
-        f = chanPoll(-1, sizeof (p) / sizeof (p[0]), p) == 1 && p[0].s == chanOsPut;
+       || (!r && (i = read(V->s, b, 1)) > 0 && b[0] == ','))
+        i = chanPoll(-1, sizeof (p) / sizeof (p[0]), p) == 1 && p[0].s == chanOsPut;
       else
-        f = 0;
+        i = 0;
     }
     pthread_cleanup_pop(0); /* V->f(m) */
-    if (f <= 0) {
+    if (i <= 0) {
       V->f(m);
       break;
     }

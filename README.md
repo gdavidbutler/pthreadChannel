@@ -109,8 +109,6 @@ TODO: create examples
 * primes
   * Modeled on primes.c from [libtask](https://swtch.com/libtask/).
 It is more complex because of pthread's API and various combinations of options.
-* pipeproxy
-  * Copy stdin to stdout through chanPipe preserving "line" boundaries
 * sockproxy
   * Modeled on tcpproxy.c from [libtask](https://swtch.com/libtask/).
 Connects two chanSocks back-to-back, with Channels reversed.
@@ -121,6 +119,8 @@ Connects two chanSocks back-to-back, with Channels reversed.
   * For example, to listen (because of the server SOCK_STREAM socket type) for connections on any IPv4 stream socket on service 2222 and connect them to any IPv4 stream socket on service ssh at host localhost (letting the system choose the protocol):
     1. ./sockproxy -T 1 -F 2 -S 2222 -t 1 -f 2 -h localhost -s ssh &
     1. ssh -p 2222 user@localhost
+* pipeproxy
+  * Copy stdin to stdout through chanPipe preserving "line" boundaries
 * powser
   * TODO: Implementation of [Squinting at Power Series](https://swtch.com/~rsc/thread/squint.pdf).
 
