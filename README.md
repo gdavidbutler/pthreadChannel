@@ -86,8 +86,8 @@ Find the API in chanFifo.h:
 
 ### Blob
 
-To support inter-process exchanges, blob items are transported through sockets and pipes.
-(Since a pthread can't both wait in a chanPoll() and in a poll()/select()/etc., the old Unix pipe() (Channel) and fork() (pthread) style is used.)
+To support inter-process exchanges, blob items can be transported through sockets and pipes.
+(Since a pthread can't both wait in a chanPoll() and in a poll()/select()/etc., the old Unix fork() (using pthreads) reader / writer technique is used.)
 Both stream and size preserving (using [Netstring](https://en.wikipedia.org/wiki/Netstring) protocol) modes are supported.
 
 Find the API in chanBlb.h:

@@ -85,8 +85,8 @@ chanPktW(
     char b[16];
 
     pthread_cleanup_push((void(*)(void*))V->f, m);
-    f = sizeof (b);
-    b[--f] = ':';
+    f = sizeof (b) - 1;
+    b[f] = ':';
     l = m->l;
     do {
       b[--f] = l % 10 + '0';
@@ -94,14 +94,13 @@ chanPktW(
     } while (f && l);
     if (!l
      && (l = sizeof (b) - f, f = write(V->s, &b[f], l)) > 0
-     && (unsigned int)f == l) /* fail on partial small write */
+     && (unsigned int)f == l)
       for (l = 0; l < m->l && (f = write(V->s, m->b + l, m->l - l)) > 0; l += f);
     else
       f = 0;
     pthread_cleanup_pop(1); /* V->f(m) */
-    if (f > 0)
-      f = write(V->s, ",", 1);
-    if (f <= 0)
+    if (f <= 0
+     || write(V->s, ",", 1) <= 0)
       break;
   }
   pthread_cleanup_pop(1); /* V->d(v) */
@@ -189,9 +188,9 @@ chanPktR(
     f += r;
     for (i = 0, l = 0; i < f && b[i] >= '0' && b[i] <= '9'; ++i)
       l = l * 10 + (b[i] - '0');
-    if (i == f || b[i++] != ':')
-      break; /* fail on partial small read */
-    if (!(m = V->a(0, sizeof (*m) - sizeof (m->l) + l)))
+    if (i == f
+     || b[i++] != ':'
+     || !(m = V->a(0, sizeof (*m) - sizeof (m->l) + l)))
       break;
     m->l = l;
     pthread_cleanup_push((void(*)(void*))V->f, m);
