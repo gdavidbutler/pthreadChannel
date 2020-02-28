@@ -30,7 +30,7 @@
 typedef struct chanFifoSc
 chanFifoSc_t;
 
-/* allocate a context of initial items (void *) */
+/* allocate a context of items (void *) */
 chanFifoSc_t *
 chanFifoSa(
   void *(*realloc)(void *, unsigned long)

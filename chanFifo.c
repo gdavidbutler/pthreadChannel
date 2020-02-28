@@ -39,7 +39,7 @@ chanFifoSa(
 ){
   chanFifoSc_t *c;
 
-  if (((a || f) && (!a || !f)) || !s || s > m)
+  if (((a || f) && (!a || !f)) || !s || (m && s > m))
     return (0);
   if (a) {
     /* force exceptions here and now */
@@ -55,7 +55,7 @@ chanFifoSa(
     a = realloc;
     c->f = f = free;
   }
-  if (!(c->q = a(0, m * sizeof (*c->q)))) {
+  if (!(c->q = a(0, (m ? m : s) * sizeof (*c->q)))) {
     f(c);
     return (0);
   }
@@ -86,7 +86,8 @@ chanFifoSi(
   unsigned int i;
 
   if (o == chanSoPut) {
-    if (SC->t == SC->h
+    if (SC->m
+     && SC->t == SC->h
      && (w & chanSwNoGet)
      && SC->s > 2) {
       --SC->s;
@@ -96,7 +97,8 @@ chanFifoSi(
     if (++SC->t == SC->s)
       SC->t = 0;
     if (SC->t == SC->h) {
-      if (!(w & chanSwNoGet)
+      if (SC->m
+       && !(w & chanSwNoGet)
        && SC->s < SC->m) {
         for (i = SC->s; i > SC->t; --i)
           SC->q[i] = SC->q[i - 1];
@@ -106,7 +108,8 @@ chanFifoSi(
         return (chanSsCanGet);
     }
   } else {
-    if (SC->t == SC->h
+    if (SC->m
+     && SC->t == SC->h
      && !(w & chanSwNoPut)
      && SC->s < SC->m) {
       for (i = SC->s; i > SC->t; --i)
@@ -118,7 +121,8 @@ chanFifoSi(
     if (++SC->h == SC->s)
       SC->h = 0;
     if (SC->h == SC->t) {
-      if ((w & chanSwNoPut)
+      if (SC->m
+       && (w & chanSwNoPut)
        && SC->s > 2) {
         --SC->s;
         SC->h = SC->t = 0;

@@ -67,9 +67,10 @@ This is best (lowest latency) when the cost of processing an item dominates the 
 But as the processing cost decreases toward the context switch cost, Stores can drastically decrease context switching.
 Therefore, a Store's size depends on how much latency can be tolerated in the quest for efficiency.
 
-A dynamic Channel FIFO Store implementation is provided.
-When a context is created, a maximum size and an initial size are provided.
-To balance latency and efficiency size is adjusted by:
+An optionally dynamic Channel FIFO Store implementation is provided.
+When a context is created, an initial size and optional maximum size are provided.
+If maximum size is 0, the store size is fixed at initial size.
+Otherwise, to balance latency and efficiency size is adjusted by:
 * Before a Put, if the Store is empty and there are no waiting Getters, the size is decremented.
 * After a Put, if the Store is full and there are waiting Getters, the size is incremented.
 * After a Get, if the Store is empty and there are no waiting Putters, the size is decremented.
