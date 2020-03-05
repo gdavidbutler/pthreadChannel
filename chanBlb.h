@@ -25,6 +25,12 @@ typedef struct {
   unsigned char b[1]; /* the first character of l characters */
 } chanBlb_t;
 
+/* return size to allocate given a number of octets */
+unsigned int
+chanBlb_tSize(
+  unsigned int octets
+);
+
 /*
  * Channel Sock
  *

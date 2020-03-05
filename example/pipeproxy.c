@@ -43,12 +43,12 @@ main(
     perror("chanPipe");
     return (1);
   }
-  while ((m = malloc(sizeof (*m) - sizeof (m->l) + BUFSIZ))
+  while ((m = malloc(chanBlb_tSize(BUFSIZ)))
    && fgets((char *)m->b, BUFSIZ, stdin)) {
     void *t;
 
     m->l = strlen((char *)m->b);
-    if ((t = realloc(m, sizeof (*m) - sizeof (m->l) + m->l)))
+    if ((t = realloc(m, chanBlb_tSize(m->l))))
       m = t;
     if (chanPut(-1, c[1], m) != chanOsPut) {
       perror("chanPut");

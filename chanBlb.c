@@ -23,6 +23,13 @@
 #include "chan.h"
 #include "chanBlb.h"
 
+unsigned int
+chanBlb_tSize(
+  unsigned int l
+){
+  return (l > sizeof (chanBlb_t) - sizeof (((chanBlb_t *)0)->l) ? l + sizeof (((chanBlb_t *)0)->l) : sizeof (chanBlb_t));
+}
+
 struct chanBlbW {
   void *(*a)(void *, unsigned long);
   void (*f)(void *);
@@ -135,7 +142,7 @@ chanStrR(
   p[0].c = V->c;
   p[0].v = (void **)&m;
   p[0].o = chanPoPut;
-  while ((m = V->a(0, sizeof (*m) - sizeof (m->l) + V->l))) {
+  while ((m = V->a(0, chanBlb_tSize(V->l)))) {
     int f;
 
     pthread_cleanup_push((void(*)(void*))V->f, m);
@@ -144,7 +151,7 @@ chanStrR(
 
       m->l = f;
       /* attempt to "right size" the item */
-      if ((t = V->a(m, sizeof (*m) - sizeof (m->l) + m->l)))
+      if ((t = V->a(m, chanBlb_tSize(m->l))))
         m = t;
       f = chanPoll(-1, sizeof (p) / sizeof (p[0]), p) == 1 && p[0].s == chanOsPut;
     }
@@ -190,7 +197,7 @@ chanPktR(
       l = l * 10 + (b[i] - '0');
     if (i == f
      || b[i++] != ':'
-     || !(m = V->a(0, sizeof (*m) - sizeof (m->l) + l)))
+     || !(m = V->a(0, chanBlb_tSize(l))))
       break;
     m->l = l;
     pthread_cleanup_push((void(*)(void*))V->f, m);
