@@ -27,7 +27,7 @@ unsigned int
 chanBlb_tSize(
   unsigned int l
 ){
-  return (l > sizeof (chanBlb_t) - sizeof (((chanBlb_t *)0)->l) ? l + sizeof (((chanBlb_t *)0)->l) : sizeof (chanBlb_t));
+  return (l > sizeof (chanBlb_t) - (unsigned long)&((chanBlb_t *)0)->b ? l + (unsigned long)&((chanBlb_t *)0)->b : sizeof (chanBlb_t));
 }
 
 struct chanBlbW {
