@@ -67,8 +67,11 @@ This is best (lowest latency) when the cost of processing an item dominates the 
 But as the processing cost decreases toward the context switch cost, Stores can drastically decrease context switching.
 Therefore, a Store's size depends on how much latency can be tolerated in the quest for efficiency.
 
-An optionally dynamic Channel FIFO Store implementation is provided.
-When a context is created, an initial size and optional maximum size are provided.
+A statically sized Channel FIFO Store implementation is provided.
+When a context is created, a size is provided.
+
+A dynamically sized Channel FIFO Store implementation is provided.
+When a context is created, an initial and maximum size are provided.
 If maximum size is 0, the store size is fixed at initial size.
 Otherwise, to balance latency and efficiency size is adjusted by:
 * Before a Put, if the Store is empty and there are no waiting Getters, the size is decremented.
@@ -78,12 +81,15 @@ Otherwise, to balance latency and efficiency size is adjusted by:
 
 Find the API in chanFifo.h:
 
-* chanFifoSa
-  * allocate a chanFifoSc (chanFifo Store context)
-* chanFifoSd
-  * deallocate a chanFifoSc (chanFifo Store context)
-* chanFifoSi
-  * chanFifo Store implementation
+* allocate a chanFifoSc (chanFifo Store context)
+  * chanFifoStSa static
+  * chanFifoDySa dynamic
+* deallocate a chanFifoSc (chanFifo Store context)
+  * chanFifoStSd static
+  * chanFifoDySd dynamic
+* chanFifo Store implementation
+  * chanFifoStSi static
+  * chanFifoDySi dynamic
 
 ### Blob
 

@@ -102,7 +102,7 @@ primeT(
   printf("%d\n", prime);
 #if STORE
   if ((i = (Goal - prime) / 500) > 1)
-    c = chanCreate(0,0, chanFifoSi, chanFifoSa(0,0, i, i/2), chanFifoSd);
+    c = chanCreate(0,0, chanFifoDySi, chanFifoDySa(0,0, i, i / 2), chanFifoDySd);
   else
 #endif
     c = chanCreate(0,0, 0,0,0);
@@ -178,7 +178,7 @@ main(
   printf("Goal = %d\n", Goal);
 #if STORE
   if ((i = (Goal - 2) / 500) > 1)
-    c = chanCreate(0,0, chanFifoSi, chanFifoSa(0,0, i, i/2), chanFifoSd);
+    c = chanCreate(0,0, chanFifoDySi, chanFifoDySa(0,0, i, i / 2), chanFifoDySd);
   else
 #endif
     c = chanCreate(0,0, 0,0,0);

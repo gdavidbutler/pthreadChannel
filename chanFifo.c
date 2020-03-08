@@ -16,30 +16,28 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include <stdlib.h> /* to support chanFifoSa(0,0 ,...) to indicate realloc() and free() */
+#include <stdlib.h> /* to support chanFifoXxSa(0,0 ,...) to indicate realloc() and free() */
 #include "chan.h"
 #include "chanFifo.h"
 
 /* chan fifo store context */
-struct chanFifoSc {
+struct chanFifoStSc {
   void (*f)(void *);
   void **q;          /* circular store */
-  unsigned int m;    /* store max */
   unsigned int s;    /* store size */
   unsigned int h;    /* store head */
   unsigned int t;    /* store tail */
 };
 
-chanFifoSc_t *
-chanFifoSa(
+chanFifoStSc_t *
+chanFifoStSa(
   void *(*a)(void *, unsigned long)
  ,void (*f)(void *)
- ,unsigned int m
  ,unsigned int s
 ){
-  chanFifoSc_t *c;
+  chanFifoStSc_t *c;
 
-  if (((a || f) && (!a || !f)) || !s || (m && s > m))
+  if (((a || f) && (!a || !f)) || !s)
     return (0);
   if (a) {
     /* force exceptions here and now */
@@ -55,7 +53,88 @@ chanFifoSa(
     a = realloc;
     c->f = f = free;
   }
-  if (!(c->q = a(0, (m ? m : s) * sizeof (*c->q)))) {
+  if (!(c->q = a(0, s * sizeof (*c->q)))) {
+    f(c);
+    return (0);
+  }
+  c->s = s;
+  c->h = c->t = 0;
+  return (c);
+}
+
+#define SC ((chanFifoStSc_t*)c)
+
+void
+chanFifoStSd(
+  void *c
+){
+  SC->f(SC->q);
+  SC->f(c);
+}
+
+/* a store is started in chanSsCanPut status */
+chanSs_t
+chanFifoStSi(
+  void *c
+ ,chanSo_t o
+ ,chanSw_t w
+ ,void **v
+){
+  (void) w;
+  if (o == chanSoPut) {
+    SC->q[SC->t] = *v;
+    if (++SC->t == SC->s)
+      SC->t = 0;
+    if (SC->t == SC->h)
+      return (chanSsCanGet);
+  } else {
+    *v = SC->q[SC->h];
+    if (++SC->h == SC->s)
+      SC->h = 0;
+    if (SC->h == SC->t)
+      return (chanSsCanPut);
+  }
+  return (chanSsCanGet | chanSsCanPut);
+}
+
+#undef SC
+
+/* chan fifo store context */
+struct chanFifoDySc {
+  void (*f)(void *);
+  void **q;          /* circular store */
+  unsigned int m;    /* store max */
+  unsigned int s;    /* store size */
+  unsigned int h;    /* store head */
+  unsigned int t;    /* store tail */
+};
+
+chanFifoDySc_t *
+chanFifoDySa(
+  void *(*a)(void *, unsigned long)
+ ,void (*f)(void *)
+ ,unsigned int m
+ ,unsigned int s
+){
+  chanFifoDySc_t *c;
+
+  if (((a || f) && (!a || !f)) || !m || !s || m < s)
+    return (0);
+  if (a) {
+    /* force exceptions here and now */
+    if (!(c = a(0, sizeof (*c))))
+      return (0);
+    f(c);
+    if (!(c = a(0, sizeof (*c))))
+      return (0);
+    c->f = f;
+  } else {
+    if (!(c = realloc(0, sizeof (*c))))
+      return (0);
+    a = realloc;
+    c->f = f = free;
+  }
+  if (!(c->q = a(0, m * sizeof (*c->q)))) {
     f(c);
     return (0);
   }
@@ -65,10 +144,10 @@ chanFifoSa(
   return (c);
 }
 
-#define SC ((chanFifoSc_t*)c)
+#define SC ((chanFifoDySc_t*)c)
 
 void
-chanFifoSd(
+chanFifoDySd(
   void *c
 ){
   SC->f(SC->q);
@@ -77,7 +156,7 @@ chanFifoSd(
 
 /* a store is started in chanSsCanPut status */
 chanSs_t
-chanFifoSi(
+chanFifoDySi(
   void *c
  ,chanSo_t o
  ,chanSw_t w
@@ -86,8 +165,7 @@ chanFifoSi(
   unsigned int i;
 
   if (o == chanSoPut) {
-    if (SC->m
-     && SC->t == SC->h
+    if (SC->t == SC->h
      && (w & chanSwNoGet)
      && SC->s > 2) {
       --SC->s;
@@ -97,8 +175,7 @@ chanFifoSi(
     if (++SC->t == SC->s)
       SC->t = 0;
     if (SC->t == SC->h) {
-      if (SC->m
-       && !(w & chanSwNoGet)
+      if (!(w & chanSwNoGet)
        && SC->s < SC->m) {
         for (i = SC->s; i > SC->t; --i)
           SC->q[i] = SC->q[i - 1];
@@ -108,8 +185,7 @@ chanFifoSi(
         return (chanSsCanGet);
     }
   } else {
-    if (SC->m
-     && SC->t == SC->h
+    if (SC->t == SC->h
      && !(w & chanSwNoPut)
      && SC->s < SC->m) {
       for (i = SC->s; i > SC->t; --i)
@@ -121,8 +197,7 @@ chanFifoSi(
     if (++SC->h == SC->s)
       SC->h = 0;
     if (SC->h == SC->t) {
-      if (SC->m
-       && (w & chanSwNoPut)
+      if ((w & chanSwNoPut)
        && SC->s > 2) {
         --SC->s;
         SC->h = SC->t = 0;

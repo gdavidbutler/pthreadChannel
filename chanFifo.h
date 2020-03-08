@@ -27,12 +27,39 @@
  */
 
 /* opaque context */
-typedef struct chanFifoSc
-chanFifoSc_t;
+typedef struct chanFifoStSc
+chanFifoStSc_t;
 
 /* allocate a context of items (void *) */
-chanFifoSc_t *
-chanFifoSa(
+chanFifoStSc_t *
+chanFifoStSa(
+  void *(*realloc)(void *, unsigned long)
+ ,void (*free)(void *)
+ ,unsigned int size
+); /* returns 0 on failure */
+
+/* deallocate context */
+void
+chanFifoStSd(
+  void *context
+);
+
+/* the chan implementation */
+chanSs_t
+chanFifoStSi(
+  void *context
+ ,chanSo_t operation
+ ,chanSw_t wait
+ ,void **value
+);
+
+/* opaque context */
+typedef struct chanFifoDySc
+chanFifoDySc_t;
+
+/* allocate a context of items (void *) */
+chanFifoDySc_t *
+chanFifoDySa(
   void *(*realloc)(void *, unsigned long)
  ,void (*free)(void *)
  ,unsigned int max
@@ -41,13 +68,13 @@ chanFifoSa(
 
 /* deallocate context */
 void
-chanFifoSd(
+chanFifoDySd(
   void *context
 );
 
 /* the chan implementation */
 chanSs_t
-chanFifoSi(
+chanFifoDySi(
   void *context
  ,chanSo_t operation
  ,chanSw_t wait
