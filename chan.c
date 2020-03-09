@@ -28,9 +28,9 @@
 /* internal chanPoll rendezvous */
 typedef struct {
   void (*f)(void *);
+  unsigned int c;    /* reference count */
   int t;             /* thread is active */
   int w;             /* thread is waiting */
-  unsigned int c;    /* reference count */
   pthread_mutex_t m;
   pthread_condattr_t a;
   pthread_cond_t r;
@@ -301,9 +301,9 @@ chanPoll(
   unsigned int k;
   struct timespec s;
 
-  m = 0;
-  if (!t || !a)
+  if (!a)
     goto exit0;
+  m = 0;
   j = 0; /* to apply chanOsTmo to the first non-chanPoNop entry */
 
   /* first pass through array looking for non-blocking exit */
@@ -961,12 +961,11 @@ fndPutWait4:
 
 timeO:
   if (j) {
-    i = j;
     (a + (j - 1))->s = chanOsTmo;
-    goto exit;
+    return (j);
   }
 exit0:
-  i = 0;
+  return (0);
 exit:
   return (i);
 }
