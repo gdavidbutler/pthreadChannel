@@ -99,11 +99,11 @@ Both stream and size preserving (using [Netstring](https://en.wikipedia.org/wiki
 Find the API in chanBlb.h:
 
 * chanSock
-  * Blob exchange through a reliable full duplex bound socket over read and write Channels.
+  * Blob exchange through a reliable, full duplex, bound socket over read and write Channels.
 * chanPipe
-  * Blob exchange through half duplex read and write pipes over read and write Channels.
+  * Blob exchange through reliable, half duplex, read and write pipes over read and write Channels.
 
-### Serial
+### Serialize
 
 TODO: create examples
 
@@ -114,7 +114,7 @@ TODO: create examples
 
 * primes
   * Modeled on primes.c from [libtask](https://swtch.com/libtask/).
-It is more complex because of pthread's API and various combinations of options.
+It is more complex because of pthread's API and Channel's features.
 * sockproxy
   * Modeled on tcpproxy.c from [libtask](https://swtch.com/libtask/).
 Connects two chanSocks back-to-back, with Channels reversed.
