@@ -92,14 +92,22 @@ Find the API in chanFifo.h:
 
 ### Blob
 
-To support inter-process exchanges, blob items can be transported through sockets and pipes.
-(Since a pthread can't both wait in a chanPoll() and in a poll()/select()/etc., the old Unix fork() (using pthreads) reader / writer technique is used.)
-Both stream and size preserving (using [Netstring](https://en.wikipedia.org/wiki/Netstring) protocol) modes are supported.
+To support inter-process exchanges, blobs can be transported through sockets and pipes.
+(Since a pthread can't both wait in a chanPoll() and in a poll()/select()/etc., the classic Unix fork() style (using pthreads) reader / writer technique is used.)
+
+Several framing methods are supported:
+
+* chanBlbNf
+  * No framing. Read size is count from read() limited by the specified size. Write size is blob size.
+* chanBlbNs
+  * Read and write framed using [Netstring](https://en.wikipedia.org/wiki/Netstring).
+* chanBlbH1
+  * Read framed using [HTTP/1.1](https://en.wikipedia.org/wiki/Hypertext_Transfer_Protocol) on Content-Length: and Transfer-Encoding:chunked headers. Write size is blob size.
 
 Find the API in chanBlb.h:
 
 * chanSock
-  * Blob exchange through a reliable, full duplex, bound socket over read and write Channels.
+  * Blob exchange through a reliable, full duplex, connected socket over read and write Channels.
 * chanPipe
   * Blob exchange through reliable, half duplex, read and write pipes over read and write Channels.
 
@@ -107,14 +115,14 @@ Find the API in chanBlb.h:
 
 TODO: create examples
 
-* [JSON](https://github.com/gdavidbutler/jsonTrivialCallbackParser)
-* [XML](https://github.com/gdavidbutler/xmlTrivialCallbackParser)
+* [JSON parser](https://github.com/gdavidbutler/jsonTrivialCallbackParser) and [JSON dom](https://github.com/gdavidbutler/jsonTrivialDom)
+* [XML parser](https://github.com/gdavidbutler/xmlTrivialCallbackParser) and [XML dom](https://github.com/gdavidbutler/xmlTrivialDom)
 
 ### Example
 
 * primes
   * Modeled on primes.c from [libtask](https://swtch.com/libtask/).
-It is more complex because of pthread's API and Channel's features.
+It is a bit more complex because of pthread's API and Channel's features.
 * sockproxy
   * Modeled on tcpproxy.c from [libtask](https://swtch.com/libtask/).
 Connects two chanSocks back-to-back, with Channels reversed.
@@ -126,7 +134,7 @@ Connects two chanSocks back-to-back, with Channels reversed.
     1. ./sockproxy -T 1 -F 2 -S 2222 -t 1 -f 2 -h localhost -s ssh &
     1. ssh -p 2222 user@localhost
 * pipeproxy
-  * Copy stdin to stdout through chanPipe preserving "line" boundaries
+  * Copy stdin to stdout through chanPipe preserving read boundaries using NetString framing
 * powser
   * TODO: Implementation of [Squinting at Power Series](https://swtch.com/~rsc/thread/squint.pdf).
 

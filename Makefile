@@ -1,4 +1,4 @@
-CFLAGS=-Wall -Wextra -Wpedantic -I. -DHAVE_CONDATTR_SETCLOCK -Os -g
+CFLAGS = -DHAVE_CONDATTR_SETCLOCK -I. -Os -g
 
 all: chan.o chanFifo.o chanBlb.o primes sockproxy pipeproxy
 
@@ -17,3 +17,6 @@ sockproxy: example/sockproxy.c chan.h chanBlb.h chan.o chanBlb.o
 
 pipeproxy: example/pipeproxy.c chan.h chanBlb.h chan.o chanBlb.o
 	$(CC) $(CFLAGS) -o pipeproxy example/pipeproxy.c chan.o chanBlb.o -lpthread
+
+check: primes
+	./primes 10

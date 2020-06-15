@@ -20,8 +20,27 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <pthread.h>
 #include "chan.h"
 #include "chanBlb.h"
+
+static void *
+outT(
+ void *v
+){
+  chanBlb_t *m;
+
+  pthread_cleanup_push((void(*)(void*))chanClose, v);
+  while (chanGet(-1, v, (void **)&m) == chanOsGet) {
+    unsigned int l;
+    int i;
+
+    for (l = 0; l < m->l && (i = write(1, m->b + l, m->l - l)) > 0; l += i);
+    free(m);
+  }
+  pthread_cleanup_pop(1); /* chanClose(v) */
+  return 0;
+}
 
 int
 main(
@@ -29,6 +48,8 @@ main(
   chanBlb_t *m;
   chan_t *c[2];
   int p[2];
+  pthread_t t;
+  int i;
 
   if (!(c[0] = chanCreate(0,0, 0,0,0))
    || !(c[1] = chanCreate(0,0, 0,0,0))) {
@@ -39,27 +60,29 @@ main(
     perror("pipe");
     return (1);
   }
-  if (!chanPipe(0,0, c[0], c[1], p[0], p[1], 0)) {
+  if (!chanPipe(0,0, c[0], c[1], p[0], p[1], chanBlbFrmNs, 0)) {
     perror("chanPipe");
     return (1);
   }
+  chanOpen(c[0]);
+  if (pthread_create(&t, 0, outT, c[0])) {
+    chanClose(c[0]);
+    perror("pthread_create");
+    return (1);
+  }
   while ((m = malloc(chanBlb_tSize(BUFSIZ)))
-   && fgets((char *)m->b, BUFSIZ, stdin)) {
+   && (i = read(0, m->b, BUFSIZ)) > 0) {
     void *t;
 
-    m->l = strlen((char *)m->b);
+    m->l = i;
     if ((t = realloc(m, chanBlb_tSize(m->l))))
       m = t;
     if (chanPut(-1, c[1], m) != chanOsPut) {
       perror("chanPut");
       return (1);
     }
-    if (chanGet(-1, c[0], (void **)&m) != chanOsGet) {
-      perror("chanGet");
-      return (1);
-    }
-    printf("%.*s", m->l, m->b);
-    free(m);
   }
+  chanShut(c[1]);
+  pthread_join(t, 0);
   return (0);
 }
