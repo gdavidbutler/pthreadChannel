@@ -95,14 +95,12 @@ Find the API in chanFifo.h:
 To support inter-process exchanges, blobs can be transported through sockets and pipes.
 (Since a pthread can't both wait in a chanPoll() and in a poll()/select()/etc., the classic Unix fork() style (using pthreads) reader / writer technique is used.)
 
-Several framing methods are supported:
+Two framing methods are supported:
 
 * chanBlbNf
   * No framing. Read size is count from read() limited by the specified size. Write size is blob size.
 * chanBlbNs
   * Read and write framed using [Netstring](https://en.wikipedia.org/wiki/Netstring).
-* chanBlbH1
-  * Read framed using [HTTP/1.1](https://en.wikipedia.org/wiki/Hypertext_Transfer_Protocol) on Content-Length: and Transfer-Encoding:chunked headers. Write size is blob size.
 
 Find the API in chanBlb.h:
 

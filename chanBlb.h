@@ -34,7 +34,6 @@ chanBlb_tSize(
 typedef enum {
   chanBlbFrmNf /* no framing, argument is readSize */
  ,chanBlbFrmNs /* NetString read and write framing, argument is read maxSize */
- ,chanBlbFrmH1 /* Http1 read framing, argument is read maxSize, when zero header is limited to 16k and trailer is limited to 8k */
 } chanBlbFrm_t;
 
 /*
