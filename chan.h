@@ -124,7 +124,45 @@ typedef enum chanOs {
  ,chanOsTmo     /* Timeout */
 } chanOs_t;
 
+/*
+ * Channel poll
+ */
+
+/* channel poll operation */
+typedef enum chanPo {
+  chanPoNop = 0 /* no operation, skip */
+ ,chanPoSht     /* check for shut */
+ ,chanPoGet     /* get an item */
+ ,chanPoPut     /* put an item */
+ ,chanPoPutWait /* put an item then block till a Get occurs */
+} chanPo_t;
+
+/* channel poll array element */
+typedef struct chanPoll {
+  chan_t *c;  /* channel to operate on, if 0 then behave as chanPoNop */
+  void **v;   /* where to get/put an item, if 0 then behave as chanPoNop */
+  chanPo_t o;
+  chanOs_t s;
+} chanPoll_t;
+
 /* in each of the below, nsTimeout: -1 block forever, 0 non-blocking else timeout in nanoseconds */
+
+/*
+ * Provide a set of channel operations and return when one of them completes.
+ * Instead of having to change the size of the array, if no operation is desired
+ * on a channel, set the chanPo to chanPoNop. Otherwise:
+ *  When the store is full, Put blocks based on nsTimeout.
+ *  When the store is empty, Get blocks based on nsTimeout.
+ *  a PutWait is the same as a Put, then blocks till a Get occurs
+ * Returns 0 on error (should only occur for memory allocation failures)
+ *  otherwise the offset into the list is one less than the return value.
+ */
+unsigned int
+chanPoll(
+  long nsTimeout
+ ,unsigned int count
+ ,chanPoll_t *chnp
+); /* returns 0 on failure */
 
 /* check for shut */
 chanOs_t
@@ -156,43 +194,5 @@ chanPutWait(
  ,chan_t *chn
  ,void *val
 );
-
-/*
- * Channel poll
- */
-
-/* channel poll operation */
-typedef enum chanPo {
-  chanPoNop = 0 /* no operation, skip */
- ,chanPoSht     /* check for shut */
- ,chanPoGet     /* get an item */
- ,chanPoPut     /* put an item */
- ,chanPoPutWait /* put an item then block till a Get occurs */
-} chanPo_t;
-
-/* channel poll array element */
-typedef struct chanPoll {
-  chan_t *c;  /* channel to operate on, if 0 then behave as chanPoNop */
-  void **v;   /* where to get/put an item, if 0 then behave as chanPoNop */
-  chanPo_t o;
-  chanOs_t s;
-} chanPoll_t;
-
-/*
- * Provide a set of channel operations and return when one of them completes.
- * Instead of having to change the size of the array, if no operation is desired
- * on a channel, set the chanPo to chanPoNop. Otherwise:
- *  When the store is full, Put blocks based on nsTimeout.
- *  When the store is empty, Get blocks based on nsTimeout.
- *  a PutWait is the same as a Put, then blocks till a Get occurs
- * Returns 0 on error (should only occur for memory allocation failures)
- *  otherwise the offset into the list is one less than the return value.
- */
-unsigned int
-chanPoll(
-  long nsTimeout
- ,unsigned int count
- ,chanPoll_t *chnp
-); /* returns 0 on failure */
 
 #endif /* __CHAN_H__ */

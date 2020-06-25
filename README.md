@@ -14,12 +14,32 @@ For a background on Channels see Russ Cox's [Bell Labs and CSP Threads](https://
 * A pthread can Put/Get on any number of Channels.
 * Channel semantics can include ownership transfer (to avoid application level locking complexities).
 NOTE: Items are discarded on last chanClose(). (To avoid leaking memory, chanGet() till chanOsSht).
-  * putting pthread: m = malloc(), init(m), chanPut(chan, m).
-  * getting pthread: chanGet(chan, &m), use(m), free(m).
+  * putting pthread:
+    ````C
+    m = malloc(...);
+    initialize(m);
+    chanPut(chan, m);
+    ````
+  * getting pthread:
+    ````C
+    chanGet(chan, &m);
+    use(m);
+    free(m);
+    ````
 * Channels can be Put/Get on channels!
 NOTE: chanOpen a chan_t before passing it (delegating chanClose) to eliminate chanClose/chanOpen races.
-  * requesting pthread: chanOpen(responseChan), chanPut(theChan, responseChan), response = chanGet(responseChan).
-  * responding pthread: responseChan = chanGet(theChan), chanPut(responseChan, response), chanClose(responseChan).
+  * requesting pthread:
+    ````C
+    chanOpen(responseChan);
+    chanPut(serviceChan, responseChan);
+    response = chanGet(responseChan);
+    ````
+  * responding pthread:
+    ````C
+    responseChan = chanGet(serviceChan);
+    chanPut(responseChan, response);
+    chanClose(responseChan);
+    ````
 
 Channels distribute items fairly under pressure:
 * If there are waiting getters, a new getter goes to the end of the line
@@ -31,22 +51,24 @@ Channels distribute items fairly under pressure:
 
 Find the API in chan.h:
 
-* chanCreate
+* chanCreate(...)
   * Allocate an Open chan_t (initialize reference count to 1, pair with chanClose).
-* chanOpen
+* chanOpen(...)
   * Open a chan_t (increment reference count, pair with chanClose). Should be called on each chan_t before passing to another pthread.
-* chanShut
+* chanShut(...)
   * Shutdown a chan_t (afterwards chanPut returns 0 and chanGet is non-blocking).
-* chanClose
+* chanClose(...)
   * Close a chan_t (decrement reference count, deallocate on 0). Should be called on each open chan_t upon pthread exit.
-* chanGet
-  * Get an item from a Channel (asynchronously).
-* chanPut
-  * Put an item to a Channel (asynchronously).
-* chanPutWait
-  * Put an item to a Channel (synchronously, waiting for another pthread to chanGet).
-* chanPoll
+* chanPoll(...)
   * perform a Channel Operation (chanPo_t) on one of an array of Channels, working to satisfy them in the order provided.
+* chanSht(...)
+  * Shut an a Channel (asynchronously).
+* chanGet(...)
+  * Get an item from a Channel (asynchronously).
+* chanPut(...)
+  * Put an item to a Channel (asynchronously).
+* chanPutWait(...)
+  * Put an item to a Channel (synchronously, waiting for another pthread to chanGet).
 
 ### Store
 
@@ -81,21 +103,21 @@ To balance latency and efficiency size is adjusted by:
 Find the API in chanFifo.h:
 
 * allocate a chanFifoSc (chanFifo Store context)
-  * chanFifoStSa static
-  * chanFifoDySa dynamic
+  * chanFifoStSa(...) static
+  * chanFifoDySa(...) dynamic
 * deallocate a chanFifoSc (chanFifo Store context)
-  * chanFifoStSd static
-  * chanFifoDySd dynamic
-* chanFifo Store implementation
-  * chanFifoStSi static
-  * chanFifoDySi dynamic
+  * chanFifoStSd(...) static
+  * chanFifoDySd(...) dynamic
+* implement a chanFifo
+  * chanFifoStSi(...) static
+  * chanFifoDySi(...) dynamic
 
 ### Blob
 
 To support inter-process exchanges, blobs can be transported through sockets and pipes.
 (Since a pthread can't both wait in a chanPoll() and in a poll()/select()/etc., the classic Unix fork() style (using pthreads) reader / writer technique is used.)
 
-Two framing methods are supported:
+Two "framing" methods are supported:
 
 * chanBlbNf
   * No framing. Read size is count from read() limited by the specified size. Write size is blob size.
@@ -104,9 +126,9 @@ Two framing methods are supported:
 
 Find the API in chanBlb.h:
 
-* chanSock
+* chanSock(...)
   * Blob exchange through a reliable, full duplex, connected socket over read and write Channels.
-* chanPipe
+* chanPipe(...)
   * Blob exchange through reliable, half duplex, read and write pipes over read and write Channels.
 
 ### Serialize
@@ -120,7 +142,7 @@ TODO: create examples
 
 * primes
   * Modeled on primes.c from [libtask](https://swtch.com/libtask/).
-It is a bit more complex because of pthread's API and Channel's features.
+(It is a bit more complex because of pthread's API and Channel's features.)
 * sockproxy
   * Modeled on tcpproxy.c from [libtask](https://swtch.com/libtask/).
 Connects two chanSocks back-to-back, with Channels reversed.
