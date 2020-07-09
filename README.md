@@ -115,21 +115,33 @@ Find the API in chanFifo.h:
 ### Blob
 
 To support inter-process exchanges, blobs can be transported through sockets and pipes.
-(Since a pthread can't both wait in a chanPoll() and in a poll()/select()/etc., the classic Unix fork() style (using pthreads) reader / writer technique is used.)
+Since a pthread can't both wait in a chanPoll() and in a poll()/select()/etc., a pair of blocking reader and writer pthreads are used.
 
-Two "framing" methods are supported:
+Several "framing" methods are supported:
 
 * chanBlbNf
-  * No framing. Read size is count from read() limited by the specified size. Write size is blob size.
+  * No framing.
+This is the only one that supports DATAGRAM.
 * chanBlbNs
   * Read and write framed using [Netstring](https://en.wikipedia.org/wiki/Netstring).
+A NetString header is stripped and inserted.
+* chanBlbH1
+  * Read framed using [HTTP/1.x](https://en.wikipedia.org/wiki/Hypertext_Transfer_Protocol) on headers Transfer-Encoding (chunked) and Content-Length.
+The stream is only segmented, not modified.
+Blob flow (repeats):
+    * Header Blob
+    * If "Transfer-Encoding:chunked" header:
+      * Non-zero chunk Blob (repeats)
+      * Zero chunk Blob (includes trailer)
+    * Else if "Content-Length:" header:
+      * Non-zero content Blob
 
 Find the API in chanBlb.h:
 
 * chanSock(...)
-  * Blob exchange through a reliable, full duplex, connected socket over read and write Channels.
+  * Blob exchange through a full duplex connected socket over ingress and egress Channels.
 * chanPipe(...)
-  * Blob exchange through reliable, half duplex, read and write pipes over read and write Channels.
+  * Blob exchange through half duplex read and write pipes over ingress and egress Channels.
 
 ### Serialize
 

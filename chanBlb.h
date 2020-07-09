@@ -32,35 +32,36 @@ chanBlb_tSize(
 );
 
 typedef enum {
-  chanBlbFrmNf /* no framing, argument is readSize */
- ,chanBlbFrmNs /* NetString read and write framing, argument is read maxSize */
+  chanBlbFrmNf /* no framing, argument is readSize (only one that supports DATAGRAM) */
+ ,chanBlbFrmNs /* NetString read and write framing, argument is read Blob maxSize, otherwise no arbitrary max */
+ ,chanBlbFrmH1 /* HTTP/1.1 read framing, argument is read Blob maxSize, otherwise no arbitrary max */
 } chanBlbFrm_t;
 
 /*
  * Channel Sock
  *
- * Support I/O on a connected full duplex socket via read and write channels.
+ * Support I/O on a connected full duplex socket via ingress and egress channels.
  *
- * A chanPut() of chanBlb_t items on the write channel does write()s on the socket:
- *  A chanGet() or socket write() failure will shutdown(socket, SHUT_WR) the socket and chanShut() the channel.
+ * A chanPut() of chanBlb_t items on the egress channel does write()s on the socketFd:
+ *  A chanGet() or write() failure will shutdown(socketFd, SHUT_WR) and chanShut() the egress channel.
  *
- * A chanGet() on the read channel will return chanBlb_t items from read()s on the socket:
- *  A chanPut() or socket read() failure will shutdown(socket, SHUT_RD) the socket and chanShut() the channel.
+ * A chanGet() on the ingress channel will return chanBlb_t items from read()s on the socketFd:
+ *  A chanPut() or read() failure will shutdown(socketFd, SHUT_RD) and chanShut() the ingress channel.
  *
- * After completion, the socket has been shutdown(), as above, but NOT closed.
+ * After completion, the socketFd has been shutdown(), as above, but NOT closed.
  *
  * Provide:
  *  realloc semantics implementation function (or 0 to use system realloc)
  *  free semantics implementation function (or 0 to use system free)
- * Provide an optional read chan_t: (if not provided, socket will not be shutdown(SHUT_RD))
- *   chanGet data that is read() from socket
- *   chanShut to shutdown(SHUT_RD) on socket
- * Provide an optional write chan_t: (if not provided, socket will not be shutdown(SHUT_WR))
- *   chanPut data that is write() to socket
- *   chanShut to shutdown(SHUT_WR) on socket
- * Provide a socket to be used by the read and write channels:
- *  When read() on the socket fails, the socket is shutdown(SHUT_RD) and the read chan is chanShut()
- *  When write() on the socket fails, the socket is shutdown(SHUT_WR) and the write chan is chanShut()
+ * Provide an optional ingress chan_t: (if not provided, socketFd will not be shutdown(SHUT_RD))
+ *   chanGet data that is read() from socketFd
+ *   chanShut to shutdown(SHUT_RD) on socketFd
+ * Provide an optional egress chan_t: (if not provided, socketFd will not be shutdown(SHUT_WR))
+ *   chanPut data that is write() to socketFd
+ *   chanShut to shutdown(SHUT_WR) on socketFd
+ * Provide a socketFd:
+ *  When read() on the socketFd fails, the socketFd is shutdown(SHUT_RD) and the ingress chan is chanShut()
+ *  When write() on the socketFd fails, the socketFd is shutdown(SHUT_WR) and the egress chan is chanShut()
  *
  * As a convenience, chanSock() chanOpen's the chan_t's (delegating chanClose's)
  */
@@ -68,9 +69,9 @@ int
 chanSock(
   void *(*realloc)(void *, unsigned long)
  ,void (*free)(void *)
- ,chan_t *read
- ,chan_t *write
- ,int socket
+ ,chan_t *ingress
+ ,chan_t *egress
+ ,int socketFd
  ,chanBlbFrm_t framing
  ,int argument
 ); /* returns 0 on failure */
@@ -78,26 +79,26 @@ chanSock(
 /*
  * Channel Pipe
  *
- * Support I/O on a pair of half duplex pipes via read and write channels.
+ * Support I/O on a pair of half duplex pipes via ingress and egress channels.
  *
- * A chanPut() of chanBlb_t items on the write channel does write()s on the writeFd:
- *  A chanGet() or writeFd write() failure will close() the writeFd and chanShut() the channel.
+ * A chanPut() of chanBlb_t items on the egress channel does write()s on the writeFd:
+ *  A chanGet() or write() failure will close() the writeFd and chanShut() the egress channel.
  *
- * A chanGet() on the read channel will return chanBlb_t items from read()s on the readFd:
- *  A chanPut() or readFd read() failure will close() the readFd and chanShut() the channel.
+ * A chanGet() on the ingress channel will return chanBlb_t items from read()s on the readFd:
+ *  A chanPut() or read() failure will close() the readFd and chanShut() the ingress channel.
  *
  * Provide:
  *  realloc semantics implementation function (or 0 to use system realloc)
  *  free semantics implementation function (or 0 to use system free)
- * Provide an optional read chan_t
+ * Provide an optional ingress chan_t
  *   chanGet data that is read() from readFd
  *   chanShut to close() readFd
- * Provide an optional write chan_t
+ * Provide an optional egress chan_t
  *   chanPut data that is write() to writeFd
  *   chanShut to close() writeFd
- * Provide readFd and writeFd to be used by the read and write channels:
- *  When read() on the readFd fails, the read chan is chanShut()
- *  When write() on the writeFd fails, the write chan is chanShut()
+ * Provide readFd and writeFd:
+ *  When read() on the readFd fails, the readFd is close() and the ingress chan is chanShut()
+ *  When write() on the writeFd fails, the writeFd is close() and the egress chan is chanShut()
  *
  * As a convenience, chanPipe() chanOpen's the chan_t's (delegating chanClose's)
  */
@@ -105,8 +106,8 @@ int
 chanPipe(
   void *(*realloc)(void *, unsigned long)
  ,void (*free)(void *)
- ,chan_t *read
- ,chan_t *write
+ ,chan_t *ingress
+ ,chan_t *egress
  ,int readFd
  ,int writeFd
  ,chanBlbFrm_t framing

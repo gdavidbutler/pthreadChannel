@@ -30,13 +30,13 @@
 
 struct addrinfo *Caddr;
 
-/* connect two chanSocks back to back, with read and write channels reversed */
+/* connect two chanSocks back to back, with ingress and egress channels reversed */
 static void *
 servT(
   void *v
 ){
   int s[2];        /* server and client sockets */
-  chanPoll_t p[2]; /* read and write channels */
+  chanPoll_t p[2]; /* ingress and egress channels */
 
   s[0] = (int)(long)v;
   pthread_cleanup_push((void(*)(void*))close, (void *)(long)s[0]);
@@ -93,10 +93,6 @@ listenT(
 
   l = (int)(long)v;
   pthread_cleanup_push((void(*)(void*))close, (void *)(long)l);
-  if (listen(l, 1)) {
-    perror("listen");
-    goto exit0;
-  }
   while ((c = accept(l, &a, &s)) >= 0) {
     pthread_t t;
 
@@ -107,7 +103,6 @@ listenT(
     pthread_detach(t);
   }
   perror("accept");
-exit0:
   pthread_cleanup_pop(1); /* close(l) */
   return (0);
 }
@@ -230,8 +225,9 @@ main(
     return (1);
   }
   if ((saddr->ai_socktype == SOCK_STREAM || saddr->ai_socktype == SOCK_SEQPACKET)) {
-    if (pthread_create(&t, 0, listenT, (void *)(long)fd)) {
-      perror("pthread_create");
+    if (listen(fd, 1)
+     || pthread_create(&t, 0, listenT, (void *)(long)fd)) {
+      perror("listen/pthread_create");
       return (1);
     }
   } else {
