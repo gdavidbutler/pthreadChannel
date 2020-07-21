@@ -155,7 +155,8 @@ chanCreate(
 ){
   chan_t *c;
 
-  if ((a || f) && (!a || !f))
+  if (((a || f) && (!a || !f))
+   || ((q || v || d) && (!q || !v)))
     return (0);
   if (a) {
     /* force exceptions here and now */
@@ -186,10 +187,9 @@ chanCreate(
   c->ss = c->gs = c->ps = 1;
   c->sh = c->st = c->gh = c->gt = c->ph = c->pt = 0;
   c->l = chanSe | chanGe | chanPe;
-  if ((c->q = q)) {
-    c->v = v;
-    c->d = d;
-  }
+  c->q = q;
+  c->v = v;
+  c->d = d;
   c->c = 1;
   c->t = chanSsCanPut;
   return (c);
@@ -278,7 +278,7 @@ chanClose(
   c->f(c->p);
   c->f(c->g);
   c->f(c->s);
-  if (c->q && c->d)
+  if (c->d)
     c->d(c->v);
   pthread_mutex_unlock(&c->m);
   pthread_mutex_destroy(&c->m);
