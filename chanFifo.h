@@ -26,12 +26,8 @@
  * a store of more than one item may be desired.
  */
 
-/* opaque context */
-typedef struct chanFifoStSc
-chanFifoStSc_t;
-
-/* allocate a context of items (void *) */
-chanFifoStSc_t *
+/* allocate a context of items */
+void *
 chanFifoStSa(
   void *(*realloc)(void *, unsigned long)
  ,void (*free)(void *)
@@ -53,12 +49,8 @@ chanFifoStSi(
  ,void **value
 );
 
-/* opaque context */
-typedef struct chanFifoDySc
-chanFifoDySc_t;
-
-/* allocate a context of items (void *) */
-chanFifoDySc_t *
+/* allocate a context of items */
+void *
 chanFifoDySa(
   void *(*realloc)(void *, unsigned long)
  ,void (*free)(void *)

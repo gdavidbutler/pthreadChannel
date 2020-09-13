@@ -29,13 +29,13 @@ struct chanFifoStSc {
   unsigned int t;    /* store tail */
 };
 
-chanFifoStSc_t *
+void *
 chanFifoStSa(
   void *(*a)(void *, unsigned long)
  ,void (*f)(void *)
  ,unsigned int s
 ){
-  chanFifoStSc_t *c;
+  struct chanFifoStSc *c;
 
   if (((a || f) && (!a || !f)) || !s)
     return (0);
@@ -62,7 +62,7 @@ chanFifoStSa(
   return (c);
 }
 
-#define SC ((chanFifoStSc_t*)c)
+#define SC ((struct chanFifoStSc *)c)
 
 void
 chanFifoStSd(
@@ -109,14 +109,14 @@ struct chanFifoDySc {
   unsigned int t;    /* store tail */
 };
 
-chanFifoDySc_t *
+void *
 chanFifoDySa(
   void *(*a)(void *, unsigned long)
  ,void (*f)(void *)
  ,unsigned int m
  ,unsigned int s
 ){
-  chanFifoDySc_t *c;
+  struct chanFifoDySc *c;
 
   if (((a || f) && (!a || !f)) || !m || !s || m < s)
     return (0);
@@ -144,7 +144,7 @@ chanFifoDySa(
   return (c);
 }
 
-#define SC ((chanFifoDySc_t*)c)
+#define SC ((struct chanFifoDySc *)c)
 
 void
 chanFifoDySd(
