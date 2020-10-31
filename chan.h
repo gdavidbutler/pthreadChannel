@@ -75,14 +75,11 @@ typedef struct chan chan_t;
  *  This works best (providing low latency) when threads work more and talk less.
  *
  * When allocating the channel, supply:
- *  the realloc semantics implementation function (or 0 to use system realloc)
- *  the free semantics implementation function (or 0 to use system free)
+ *  the realloc semantics implementation function
+ *  the free semantics implementation function
  *  the store implementation function (or 0 if none)
  *  the store context (or 0 if none)
  *  the store context done function (or 0 if none)
- * For example:
- *  chan_t *c;
- *  c = chanCreate(0,0, chanFifoSi, chanFifoSa(10), chanFifoSd);
  *
  * Returned channel is Open.
  */

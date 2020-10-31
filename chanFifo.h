@@ -26,6 +26,8 @@
  * a store of more than one item may be desired.
  */
 
+/* Static */
+
 /* allocate a context of items */
 void *
 chanFifoStSa(
@@ -48,6 +50,8 @@ chanFifoStSi(
  ,chanSw_t wait
  ,void **value
 );
+
+/* Dynamic */
 
 /* allocate a context of items */
 void *

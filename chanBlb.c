@@ -16,7 +16,6 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include <stdlib.h>     /* to support 0,0 to indicate realloc() and free() */
 #include <unistd.h>     /* for read(), write() and close() */
 #include <sys/socket.h> /* for shutdown() */
 #include <pthread.h>
@@ -630,8 +629,7 @@ chanSock(
 ){
   pthread_t t;
 
-  if (((a || f) && (!a || !f))
-   || (!i && !e)
+  if ((!i && !e)
    || s < 0
    || m < chanBlbFrmNf
    || m > chanBlbFrmH1
@@ -640,10 +638,6 @@ chanSock(
    || (m == chanBlbFrmH1 && (g < 0 || (g > 0 && g < 18))) /* GET / HTTP/x.y\r\n\r\n is as short as it can get */
   )
     goto error;
-  if (!a) {
-    a = realloc;
-    f = free;
-  }
   if (e) {
     struct chanBlbE *x;
 
@@ -721,8 +715,7 @@ chanPipe(
 ){
   pthread_t t;
 
-  if (((a || f) && (!a || !f))
-   || (!i && !e)
+  if ((!i && !e)
    || (i && r < 0)
    || (e && w < 0)
    || m < chanBlbFrmNf
@@ -732,10 +725,6 @@ chanPipe(
    || (m == chanBlbFrmH1 && (g < 0 || (g > 0 && g < 18))) /* GET / HTTP/x.y\r\n\r\n is as short as it can get */
   )
     goto error;
-  if (!a) {
-    a = realloc;
-    f = free;
-  }
   if (e) {
     struct chanBlbE *x;
 

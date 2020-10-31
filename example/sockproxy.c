@@ -49,21 +49,21 @@ servT(
     perror("connect");
     goto exit1;
   }
-  if (!(p[0].c = chanCreate(0,0, 0,0,0))) {
+  if (!(p[0].c = chanCreate(realloc,free, 0,0,0))) {
     perror("chanCreate");
     goto exit1;
   }
   pthread_cleanup_push((void(*)(void*))chanClose, p[0].c);
-  if (!(p[1].c = chanCreate(0,0, 0,0,0))) {
+  if (!(p[1].c = chanCreate(realloc,free, 0,0,0))) {
     perror("chanCreate");
     goto exit2;
   }
   pthread_cleanup_push((void(*)(void*))chanClose, p[1].c);
-  if (!chanSock(0,0, p[0].c, p[1].c, s[0], chanBlbFrmNf, 65535)) {
+  if (!chanSock(realloc,free, p[0].c, p[1].c, s[0], chanBlbFrmNf, 65535)) {
     perror("chanSock");
     goto exit3;
   }
-  if (!chanSock(0,0, p[1].c, p[0].c, s[1], chanBlbFrmNf, 65535)) {
+  if (!chanSock(realloc,free, p[1].c, p[0].c, s[1], chanBlbFrmNf, 65535)) {
     perror("chanSock");
     goto exit3;
   }

@@ -101,11 +101,17 @@ primeT(
 #endif
   printf("%d\n", prime);
 #if STORE
-  if ((i = (Goal - prime) / 500) > 1)
-    c = chanCreate(0,0, chanFifoDySi, chanFifoDySa(0,0, i, i / 2), chanFifoDySd);
-  else
+  if ((i = (Goal - prime) / 500) > 1) {
+    void *tv;
+
+    if (!(tv = chanFifoDySa(realloc,free, i, i / 2))
+     || !(c = chanCreate(realloc,free, chanFifoDySi, tv, chanFifoDySd))) {
+      free(tv);
+      c = 0;
+    }
+  } else
 #endif
-    c = chanCreate(0,0, 0,0,0);
+    c = chanCreate(realloc,free, 0,0,0);
   pthread_cleanup_push((void(*)(void*))chanClose, v);
   pthread_cleanup_push((void(*)(void*))chanClose, c);
   if (!c) {
@@ -177,11 +183,17 @@ main(
     Goal = 100;
   printf("Goal = %d\n", Goal);
 #if STORE
-  if ((i = (Goal - 2) / 500) > 1)
-    c = chanCreate(0,0, chanFifoDySi, chanFifoDySa(0,0, i, i / 2), chanFifoDySd);
-  else
+  if ((i = (Goal - 2) / 500) > 1) {
+    void *tv;
+
+    if (!(tv = chanFifoDySa(realloc,free, i, i / 2))
+     || !(c = chanCreate(realloc,free, chanFifoDySi, tv, chanFifoDySd))) {
+      free(tv);
+      c = 0;
+    }
+  } else
 #endif
-    c = chanCreate(0,0, 0,0,0);
+    c = chanCreate(realloc,free, 0,0,0);
   pthread_cleanup_push((void(*)(void*))chanClose, c);
   if (!c) {
     puts("Can't create channel");

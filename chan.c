@@ -16,7 +16,6 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include <stdlib.h> /* for abort() and to support chanCreate(0,0 ,...) to indicate realloc() and free() */
 #include <pthread.h>
 #include "chan.h"
 
@@ -67,7 +66,7 @@ cCpr(
   void
 ){
   if (pthread_key_create(&Cpr, cdCpr))
-    abort();
+    Cpr = 0;
 }
 
 static cpr_t *
@@ -78,7 +77,7 @@ gCpr(
   static pthread_once_t o = PTHREAD_ONCE_INIT;
   cpr_t *p;
 
-  if (pthread_once(&o, cCpr))
+  if (pthread_once(&o, cCpr) || !Cpr)
     return (0);
   if (!(p = pthread_getspecific(Cpr))) {
     if (!(p = a(0, sizeof (*p)))
@@ -155,35 +154,22 @@ chanCreate(
 ){
   chan_t *c;
 
-  if (((a || f) && (!a || !f))
-   || ((q || v || d) && (!q || !v)))
-    return (0);
-  if (a) {
-    /* force exceptions here and now */
-    if (!(c = a(0, sizeof (*c))))
-      return (0);
-    f(c);
-    if (!(c = a(0, sizeof (*c))))
-      return (0);
-    c->a = a;
-    c->f = f;
-  } else {
-    if (!(c = realloc(0, sizeof (*c))))
-      return (0);
-    c->a = realloc;
-    c->f = free;
-  }
-  c->g = c->p = 0;
-  if (!(c->s = c->a(0, sizeof (*c->s)))
-   || !(c->g = c->a(0, sizeof (*c->g)))
-   || !(c->p = c->a(0, sizeof (*c->p)))
+  if (!(c = a(0, sizeof (*c)))
+   || !(c->s = a(0, sizeof (*c->s)))
+   || !(c->g = a(0, sizeof (*c->g)))
+   || !(c->p = a(0, sizeof (*c->p)))
    || pthread_mutex_init(&c->m, 0)) {
-    c->f(c->p);
-    c->f(c->g);
-    c->f(c->s);
-    c->f(c);
+    if (c->p)
+      f(c->p);
+    if (c->g)
+      f(c->g);
+    if (c->s)
+      f(c->s);
+    f(c);
     return (0);
   }
+  c->a = a;
+  c->f = f;
   c->ss = c->gs = c->ps = 1;
   c->sh = c->st = c->gh = c->gt = c->ph = c->pt = 0;
   c->l = chanSe | chanGe | chanPe;

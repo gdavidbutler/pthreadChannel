@@ -16,9 +16,10 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include <stdlib.h> /* to support chanFifoXxSa(0,0 ,...) to indicate realloc() and free() */
 #include "chan.h"
 #include "chanFifo.h"
+
+/* Static */
 
 /* chan fifo store context */
 struct chanFifoStSc {
@@ -37,26 +38,14 @@ chanFifoStSa(
 ){
   struct chanFifoStSc *c;
 
-  if (((a || f) && (!a || !f)) || !s)
+  if (!s)
     return (0);
-  if (a) {
-    /* force exceptions here and now */
-    if (!(c = a(0, sizeof (*c))))
-      return (0);
-    f(c);
-    if (!(c = a(0, sizeof (*c))))
-      return (0);
-    c->f = f;
-  } else {
-    if (!(c = realloc(0, sizeof (*c))))
-      return (0);
-    a = realloc;
-    c->f = f = free;
-  }
-  if (!(c->q = a(0, s * sizeof (*c->q)))) {
+  if (!(c = a(0, sizeof (*c)))
+   || !(c->q = a(0, s * sizeof (*c->q)))) {
     f(c);
     return (0);
   }
+  c->f = f;
   c->s = s;
   c->h = c->t = 0;
   return (c);
@@ -99,6 +88,8 @@ chanFifoStSi(
 
 #undef SC
 
+/* Dynamic */
+
 /* chan fifo store context */
 struct chanFifoDySc {
   void (*f)(void *);
@@ -118,26 +109,14 @@ chanFifoDySa(
 ){
   struct chanFifoDySc *c;
 
-  if (((a || f) && (!a || !f)) || !m || !s || m < s)
+  if (!m || !s || m < s)
     return (0);
-  if (a) {
-    /* force exceptions here and now */
-    if (!(c = a(0, sizeof (*c))))
-      return (0);
-    f(c);
-    if (!(c = a(0, sizeof (*c))))
-      return (0);
-    c->f = f;
-  } else {
-    if (!(c = realloc(0, sizeof (*c))))
-      return (0);
-    a = realloc;
-    c->f = f = free;
-  }
-  if (!(c->q = a(0, m * sizeof (*c->q)))) {
+  if (!(c = a(0, sizeof (*c)))
+   || !(c->q = a(0, m * sizeof (*c->q)))) {
     f(c);
     return (0);
   }
+  c->f = f;
   c->m = m;
   c->s = s;
   c->h = c->t = 0;

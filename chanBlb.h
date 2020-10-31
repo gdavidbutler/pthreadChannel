@@ -32,7 +32,7 @@ chanBlb_tSize(
 );
 
 typedef enum {
-  chanBlbFrmNf /* no framing, argument is readSize (only one that supports DATAGRAM) */
+  chanBlbFrmNf /* no framing, argument is readSize (supports non-STREAM sockets) */
  ,chanBlbFrmNs /* NetString read and write framing, argument is read Blob maxSize, otherwise no arbitrary max */
  ,chanBlbFrmH1 /* HTTP/1.1 read framing, argument is read Blob maxSize, otherwise no arbitrary max */
 } chanBlbFrm_t;
@@ -51,8 +51,8 @@ typedef enum {
  * After completion, the socketFd has been shutdown(), as above, but NOT closed.
  *
  * Provide:
- *  realloc semantics implementation function (or 0 to use system realloc)
- *  free semantics implementation function (or 0 to use system free)
+ *  realloc semantics implementation function
+ *  free semantics implementation function
  * Provide an optional ingress chan_t: (if not provided, socketFd will not be shutdown(SHUT_RD))
  *   chanGet data that is read() from socketFd
  *   chanShut to shutdown(SHUT_RD) on socketFd
@@ -88,8 +88,8 @@ chanSock(
  *  A chanPut() or read() failure will close() the readFd and chanShut() the ingress channel.
  *
  * Provide:
- *  realloc semantics implementation function (or 0 to use system realloc)
- *  free semantics implementation function (or 0 to use system free)
+ *  realloc semantics implementation function
+ *  free semantics implementation function
  * Provide an optional ingress chan_t
  *   chanGet data that is read() from readFd
  *   chanShut to close() readFd
