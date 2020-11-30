@@ -16,8 +16,6 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include <stdio.h>
-
 #include <pthread.h>
 #include "chan.h"
 
@@ -194,14 +192,19 @@ chanOpen(
 }
 
 /* a "template" to manually "inline" code */
-/* wakeup first waiting thread or prune */
+/* wakeup "other" thread(s) */
 #define WAKE(F,V,WE,IE,B) do {\
+  int f = 0;\
   while (!(c->l & F) WE) {\
     p = *(c->V + c->V##h);\
-    if (pthread_mutex_trylock(&p->m)) {\
+    if (p != m && pthread_mutex_trylock(&p->m)) {\
       pthread_mutex_unlock(&c->m);\
       pthread_mutex_lock(&p->m);\
-      pthread_mutex_lock(&c->m);\
+      if (pthread_mutex_trylock(&c->m)) {\
+        pthread_mutex_unlock(&p->m);\
+        pthread_mutex_lock(&c->m);\
+        continue;\
+      }\
       if (c->l & F IE || p != *(c->V + c->V##h)) {\
         pthread_mutex_unlock(&p->m);\
         continue;\
@@ -212,11 +215,22 @@ chanOpen(
     if (c->V##h == c->V##t)\
       c->l |= F;\
     --p->c;\
+    if (p == m) {\
+      f = 1;\
+      continue;\
+    }\
     if (p->w && !pthread_cond_signal(&p->r)) {\
       pthread_mutex_unlock(&p->m);\
       B\
     } else\
       dCpr(p);\
+  }\
+  if (f) {\
+    ++m->c;\
+    if (!c->V##h)\
+      c->V##h = c->V##s;\
+    *(c->V + --c->V##h) = m;\
+    c->l &= ~F;\
   }\
 } while (0)
 
@@ -225,6 +239,7 @@ chanShut(
   chan_t *c
 ){
   cpr_t *p;
+  cpr_t *m;
 
   if (!c)
     return;
@@ -234,9 +249,10 @@ chanShut(
     return;
   }
   c->l |= chanSu;
-  WAKE(chanEe, e, , ,);
-  WAKE(chanGe, g, , ,);
-  WAKE(chanPe, p, , ,);
+  m = 0;
+  WAKE(chanEe, e, , , );
+  WAKE(chanGe, g, , , );
+  WAKE(chanPe, p, , , );
   pthread_mutex_unlock(&c->m);
 }
 
@@ -339,6 +355,7 @@ chanOne(
 
   if (!t || !a)
     return (0);
+  m = 0;
   j = 0;
   for (i = 0; i < t; ++i) switch ((a + i)->o) {
 
