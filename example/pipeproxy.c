@@ -1,6 +1,6 @@
 /*
- * pthreadChannel - an implementation of CSP/agent channels for pthreads
- * Copyright (C) 2018 G. David Butler <gdb@dbSystems.com>
+ * pthreadChannel - an implementation of channels for pthreads
+ * Copyright (C) 2016-2020 G. David Butler <gdb@dbSystems.com>
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published
@@ -31,7 +31,7 @@ outT(
   chanBlb_t *m;
 
   pthread_cleanup_push((void(*)(void*))chanClose, v);
-  while (chanGet(-1, v, (void **)&m) == chanOsGet) {
+  while (chanOp(0, v, (void **)&m, chanOpGet) == chanOsGet) {
     unsigned int l;
     int i;
 
@@ -77,8 +77,8 @@ main(
     m->l = i;
     if ((t = realloc(m, chanBlb_tSize(m->l))))
       m = t;
-    if (chanPut(-1, c[1], m) != chanOsPut) {
-      perror("chanPut");
+    if (chanOp(0, c[1], (void **)&m, chanOpPut) != chanOsPut) {
+      perror("chanOpPut");
       return (1);
     }
   }

@@ -4,79 +4,76 @@ Yet another implementation of a "Channel" construct for POSIX threads (pthreads)
 
 ### Channel
 
-A Channel is an anonymous, pthread coordinating, Store of pointer (void *) sized items.
+A Channel is an anonymous, pthread coordinating, Store of pointer (void *) sized items in a shared heap.
 
 For a background on Channels see Russ Cox's [Bell Labs and CSP Threads](https://swtch.com/~rsc/thread/).
+For another perspective see [Flow-based programming](https://en.wikipedia.org/wiki/Flow-based_programming).
 
 * Channels, by default, store a single item. (For more, see [Store](#store), below.)
 * Channels only support intra-process exchanges. (For inter-process, see [Blob](#blob), below.)
 * Any number of pthreads can Put/Get on a Channel.
 * A pthread can Put/Get on any number of Channels.
-* Channel semantics can include ownership transfer (to avoid application level locking complexities).
-NOTE: Items are discarded on last chanClose(). (To avoid leaking memory, chanGet() till chanOsSht).
-  * putting pthread:
+* The canonical Channel use is a transfer of a pointer to heap. (Delagating heap locking complexities to a heap management implementation e.g. realloc and free.)
+NOTE: Items are discarded on last chanClose(). (To avoid leaking heap, chanOpGet till chanOsSht).
+  * Putting pthread:
     ````C
     m = malloc(...);
     initialize(m);
-    chanPut(chan, m);
+    chanOp(chan, &m, chanOpPut);
     ````
-  * getting pthread:
+  * Getting pthread:
     ````C
-    chanGet(chan, &m);
+    chanOp(chan, &m, chanOpGet);
     use(m);
     free(m);
     ````
-* Channels can be Put/Get on channels!
-NOTE: chanOpen a chan_t before passing it (delegating chanClose) to eliminate chanClose/chanOpen races.
+* Channels can be Put/Get on Channels!
+NOTE: chanOpen a chan_t before passing it (delegating chanClose) to eliminate a deallocating chanClose/chanOpen race.
   * requesting pthread:
     ````C
     chanOpen(responseChan);
-    chanPut(serviceChan, responseChan);
-    response = chanGet(responseChan);
+    chanOp(serviceChan, responseChan, chanOpPut);
+    response = chanOp(responseChan, chanOpGet);
     ````
   * responding pthread:
     ````C
-    responseChan = chanGet(serviceChan);
-    chanPut(responseChan, response);
+    responseChan = chanOp(serviceChan, chanOpGet);
+    chanOp(responseChan, response, chanOpPut);
     chanClose(responseChan);
     ````
 
 Channels distribute items fairly under pressure:
-* If there are waiting getters, a new getter goes to the end of the line
-  * unless there are also waiting putters (as waiting getters won't wait long)
-    * then an item is opportunistically get instead of waiting.
-* If there are waiting putters, a new putter goes to the end of the line
-  * unless there are also waiting getters (as waiting putters won't wait long)
-    * then an item is opportunistically put instead of waiting.
+* If there are waiting Gets, a new Get goes to the end of the line
+  * unless there are also waiting Puts (as waiting Gets won't wait long)
+    * then an item is opportunistically Get instead of waiting.
+* If there are waiting Puts, a new Put goes to the end of the line
+  * unless there are also waiting Gets (as waiting Puts won't wait long)
+    * then an item is opportunistically Put instead of waiting.
 
 Find the API in chan.h:
 
 * chanCreate(...)
-  * Allocate an Open chan_t (initialize reference count to 1, pair with chanClose).
+  * Allocate an Open chan_t (initialize reference count at 1, pair with chanClose).
 * chanOpen(...)
-  * Open a chan_t (increment reference count, pair with chanClose). Should be called on each chan_t before passing to another pthread.
+  * Open a chan_t (increment reference count, pair with chanClose).
 * chanShut(...)
-  * Shutdown a chan_t (afterwards chanPut returns 0 and chanGet is non-blocking).
+  * Shutdown a chan_t (afterwards chanOpPut fails and chanOpGet is always non-blocking).
 * chanClose(...)
-  * Close a chan_t (decrement reference count, deallocate on 0). Should be called on each open chan_t upon pthread exit.
-* chanPoll(...)
-  * perform a Channel Operation (chanPo_t) on one of an array of Channels, working to satisfy them in the order provided.
-* chanSht(...)
-  * Shut an a Channel (asynchronously).
-* chanGet(...)
-  * Get an item from a Channel (asynchronously).
-* chanPut(...)
-  * Put an item to a Channel (asynchronously).
-* chanPutWait(...)
-  * Put an item to a Channel (synchronously, waiting for another pthread to chanGet).
+  * Close a chan_t (decrement reference count, deallocate at 0).
+* chanOp(...)
+  * perform an operation on a Channel
+* chanOne(...)
+  * Perform one (first capable) operation on an array of Channels.
+* chanAll(...)
+  * Perform all operations on an array of Channels (distributed [Store](#store)).
 
 ### Store
 
-In classic CSPs, a low latency synchronous rendezvous (get and put block till the other arrives to exchange an item)
-works well when coded in machine or assembler language (jump instructions).
+In classic CSPs, a low latency synchronous rendezvous (Get and Put block till the other arrives to exchange an item)
+works well when coded in machine or assembler language (using jump instructions).
 If a Store is needed (queue, stack, etc.), it is implemented as another CSP.
 
-Modern CSPs (e.g. "coroutines", "functions", etc.) with "local" variables and recursion support, have a higher context switch cost.
+Modern CSPs (e.g. "coroutines", "functions", etc.) with "local" variables and recursion support, have a high context switch cost.
 But native support in modern processors (call/return instructions) makes it acceptable.
 A Store is still implemented as another CSP.
 
@@ -95,10 +92,10 @@ When a context is created, a size is allocated.
 A dynamically sized Channel FIFO Store implementation is provided.
 When a context is created, a maximum is allocated and starts at initial.
 To balance latency and efficiency size is adjusted by:
-* Before a Put, if the Store is empty and there are no waiting Getters, the size is decremented.
-* After a Put, if the Store is full and there are waiting Getters, the size is incremented.
-* After a Get, if the Store is empty and there are no waiting Putters, the size is decremented.
-* Before a Get, if the Store is full and there are waiting Putters, the size is incremented.
+* Before a Put, if the Store is empty and there are no waiting Gets, the size is decremented.
+* After a Put, if the Store is full and there are waiting Gets, the size is incremented.
+* After a Get, if the Store is empty and there are no waiting Puts, the size is decremented.
+* Before a Get, if the Store is full and there are waiting Puts, the size is incremented.
 
 Find the API in chanFifo.h:
 
@@ -114,20 +111,20 @@ Find the API in chanFifo.h:
 
 ### Blob
 
+A Blob is a length specified collection of octets used as a discrete unit of communication, i.e. a message.
+
 To support inter-process exchanges, blobs can be transported through sockets and pipes.
-Since a pthread can't both wait in a chanPoll() and in a poll()/select()/etc., a pair of blocking reader and writer pthreads are used.
+[Since a pthread can't both wait in a pthread_cond_wait() and in a poll()/select()/etc., a pair of blocking reader and writer pthreads are used.]
 
 Several "framing" methods are supported:
 
 * chanBlbNf
-  * No framing.
-This is the only one that supports DATAGRAM.
+  * No framing. Writes are Blob size. Reads are, within a specified maximum, sized by the amount read.
 * chanBlbNs
   * Read and write framed using [Netstring](https://en.wikipedia.org/wiki/Netstring).
-A NetString header is stripped and inserted.
+A NetString headers are stripped and inserted.
 * chanBlbH1
   * Read framed using [HTTP/1.x](https://en.wikipedia.org/wiki/Hypertext_Transfer_Protocol) on headers Transfer-Encoding (chunked) and Content-Length.
-The stream is only segmented, not modified.
 Blob flow (repeats):
     * Header Blob
     * If "Transfer-Encoding:chunked" header:
@@ -167,8 +164,8 @@ Connects two chanSocks back-to-back, with Channels reversed.
     1. ssh -p 2222 user@localhost
 * pipeproxy
   * Copy stdin to stdout through chanPipe preserving read boundaries using NetString framing
-* powser
-  * TODO: Implementation of [Squinting at Power Series](https://swtch.com/~rsc/thread/squint.pdf).
+* squint
+  * Implementation of [M. Douglas McIlroy's "Squinting at Power Series"](https://swtch.com/~rsc/thread/squint.pdf).
 
 ### Building
 

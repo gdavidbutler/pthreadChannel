@@ -1,6 +1,6 @@
 /*
- * pthreadChannel - an implementation of CSP channels for pthreads
- * Copyright (C) 2019 G. David Butler <gdb@dbSystems.com>
+ * pthreadChannel - an implementation of channels for pthreads
+ * Copyright (C) 2016-2020 G. David Butler <gdb@dbSystems.com>
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published
@@ -42,11 +42,11 @@ typedef enum {
  *
  * Support I/O on a connected full duplex socket via ingress and egress channels.
  *
- * A chanPut() of chanBlb_t items on the egress channel does write()s on the socketFd:
- *  A chanGet() or write() failure will shutdown(socketFd, SHUT_WR) and chanShut() the egress channel.
+ * A chanOpPut of chanBlb_t items on the egress channel does write()s on the socketFd:
+ *  A chanOpGet or write() failure will shutdown(socketFd, SHUT_WR) and chanShut() the egress channel.
  *
- * A chanGet() on the ingress channel will return chanBlb_t items from read()s on the socketFd:
- *  A chanPut() or read() failure will shutdown(socketFd, SHUT_RD) and chanShut() the ingress channel.
+ * A chanOpGet on the ingress channel will return chanBlb_t items from read()s on the socketFd:
+ *  A chanOpPut or read() failure will shutdown(socketFd, SHUT_RD) and chanShut() the ingress channel.
  *
  * After completion, the socketFd has been shutdown(), as above, but NOT closed.
  *
@@ -54,11 +54,11 @@ typedef enum {
  *  realloc semantics implementation function
  *  free semantics implementation function
  * Provide an optional ingress chan_t: (if not provided, socketFd will not be shutdown(SHUT_RD))
- *   chanGet data that is read() from socketFd
- *   chanShut to shutdown(SHUT_RD) on socketFd
+ *   chanOpGet data that is read() from socketFd
+ *   chanShut() to shutdown(SHUT_RD) on socketFd
  * Provide an optional egress chan_t: (if not provided, socketFd will not be shutdown(SHUT_WR))
- *   chanPut data that is write() to socketFd
- *   chanShut to shutdown(SHUT_WR) on socketFd
+ *   chanOpPut data that is write() to socketFd
+ *   chanShut() to shutdown(SHUT_WR) on socketFd
  * Provide a socketFd:
  *  When read() on the socketFd fails, the socketFd is shutdown(SHUT_RD) and the ingress chan is chanShut()
  *  When write() on the socketFd fails, the socketFd is shutdown(SHUT_WR) and the egress chan is chanShut()
@@ -81,21 +81,21 @@ chanSock(
  *
  * Support I/O on a pair of half duplex pipes via ingress and egress channels.
  *
- * A chanPut() of chanBlb_t items on the egress channel does write()s on the writeFd:
- *  A chanGet() or write() failure will close() the writeFd and chanShut() the egress channel.
+ * A chanOpPut of chanBlb_t items on the egress channel does write()s on the writeFd:
+ *  A chanOpGet or write() failure will close() the writeFd and chanShut() the egress channel.
  *
- * A chanGet() on the ingress channel will return chanBlb_t items from read()s on the readFd:
- *  A chanPut() or read() failure will close() the readFd and chanShut() the ingress channel.
+ * A chanOpGet on the ingress channel will return chanBlb_t items from read()s on the readFd:
+ *  A chanOpPut or read() failure will close() the readFd and chanShut() the ingress channel.
  *
  * Provide:
  *  realloc semantics implementation function
  *  free semantics implementation function
  * Provide an optional ingress chan_t
- *   chanGet data that is read() from readFd
- *   chanShut to close() readFd
+ *   chanOpGet data that is read() from readFd
+ *   chanShut() to close() readFd
  * Provide an optional egress chan_t
- *   chanPut data that is write() to writeFd
- *   chanShut to close() writeFd
+ *   chanOpPut data that is write() to writeFd
+ *   chanShut() to close() writeFd
  * Provide readFd and writeFd:
  *  When read() on the readFd fails, the readFd is close() and the ingress chan is chanShut()
  *  When write() on the writeFd fails, the writeFd is close() and the egress chan is chanShut()

@@ -1,6 +1,6 @@
 /*
- * pthreadChannel - an implementation of CSP channels for pthreads
- * Copyright (C) 2019 G. David Butler <gdb@dbSystems.com>
+ * pthreadChannel - an implementation of channels for pthreads
+ * Copyright (C) 2016-2020 G. David Butler <gdb@dbSystems.com>
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published
@@ -47,7 +47,7 @@ chanNfE(
 ){
 #define V ((struct chanBlbE *)v)
   chanBlb_t *m;
-  chanPoll_t p[1];
+  chanArr_t p[1];
 
   pthread_cleanup_push((void(*)(void*))V->f, v);
   pthread_cleanup_push((void(*)(void*))chanClose, V->c);
@@ -55,8 +55,8 @@ chanNfE(
   pthread_cleanup_push((void(*)(void*))V->d, v);
   p[0].c = V->c;
   p[0].v = (void **)&m;
-  p[0].o = chanPoGet;
-  while (chanPoll(-1, sizeof (p) / sizeof (p[0]), p) == 1 && p[0].s == chanOsGet) {
+  p[0].o = chanOpGet;
+  while (chanOne(0, sizeof (p) / sizeof (p[0]), p) == 1 && p[0].s == chanOsGet) {
     unsigned int l;
     int i;
 
@@ -80,7 +80,7 @@ chanNsE(
 ){
 #define V ((struct chanBlbE *)v)
   chanBlb_t *m;
-  chanPoll_t p[1];
+  chanArr_t p[1];
 
   pthread_cleanup_push((void(*)(void*))V->f, v);
   pthread_cleanup_push((void(*)(void*))chanClose, V->c);
@@ -88,8 +88,8 @@ chanNsE(
   pthread_cleanup_push((void(*)(void*))V->d, v);
   p[0].c = V->c;
   p[0].v = (void **)&m;
-  p[0].o = chanPoGet;
-  while (chanPoll(-1, sizeof (p) / sizeof (p[0]), p) == 1 && p[0].s == chanOsGet) {
+  p[0].o = chanOpGet;
+  while (chanOne(0, sizeof (p) / sizeof (p[0]), p) == 1 && p[0].s == chanOsGet) {
     unsigned int l;
     int i;
     char b[16];
@@ -136,7 +136,7 @@ chanNfI(
 ){
 #define V ((struct chanBlbI *)v)
   chanBlb_t *m;
-  chanPoll_t p[1];
+  chanArr_t p[1];
 
   pthread_cleanup_push((void(*)(void*))V->f, v);
   pthread_cleanup_push((void(*)(void*))chanClose, V->c);
@@ -144,7 +144,7 @@ chanNfI(
   pthread_cleanup_push((void(*)(void*))V->d, v);
   p[0].c = V->c;
   p[0].v = (void **)&m;
-  p[0].o = chanPoPut;
+  p[0].o = chanOpPut;
   while ((m = V->a(0, chanBlb_tSize(V->l)))) {
     void *t;
     int i;
@@ -158,7 +158,7 @@ chanNfI(
     if ((t = V->a(m, chanBlb_tSize(m->l))))
       m = t;
     pthread_cleanup_push((void(*)(void*))V->f, m);
-    i = chanPoll(-1, sizeof (p) / sizeof (p[0]), p) == 1 && p[0].s == chanOsPut;
+    i = chanOne(0, sizeof (p) / sizeof (p[0]), p) == 1 && p[0].s == chanOsPut;
     pthread_cleanup_pop(0); /* V->f(m) */
     if (!i)
       break;
@@ -178,7 +178,7 @@ chanNsI(
 ){
 #define V ((struct chanBlbI *)v)
   chanBlb_t *m;
-  chanPoll_t p[1];
+  chanArr_t p[1];
   int r;
   int f;
   char b[16];
@@ -189,7 +189,7 @@ chanNsI(
   pthread_cleanup_push((void(*)(void*))V->d, v);
   p[0].c = V->c;
   p[0].v = (void **)&m;
-  p[0].o = chanPoPut;
+  p[0].o = chanOpPut;
   r = 0;
   while ((f = read(V->s, b + r, sizeof (b) - r)) > 0) {
     unsigned int l;
@@ -213,7 +213,7 @@ chanNsI(
     if (i > 0) {
       if ((r && b[--r] == ',')
        || (!r && (i = read(V->s, b, 1)) > 0 && b[0] == ','))
-        i = chanPoll(-1, sizeof (p) / sizeof (p[0]), p) == 1 && p[0].s == chanOsPut;
+        i = chanOne(0, sizeof (p) / sizeof (p[0]), p) == 1 && p[0].s == chanOsPut;
       else
         i = 0;
     }
@@ -237,7 +237,7 @@ chanH1I(
 ){
 #define V ((struct chanBlbI *)v)
   chanBlb_t *m;
-  chanPoll_t p[1];
+  chanArr_t p[1];
   unsigned int bs;
   unsigned int i0;
   unsigned int i1;
@@ -255,7 +255,7 @@ chanH1I(
   }
   p[0].c = V->c;
   p[0].v = (void **)&m;
-  p[0].o = chanPoPut;
+  p[0].o = chanOpPut;
   i0 = bs;
   if (!(m = V->a(0, chanBlb_tSize(i0))))
     goto bad;
@@ -428,7 +428,7 @@ endHeaders:
       m = tv;
     pthread_cleanup_push((void(*)(void*))V->f, m);
     pthread_cleanup_push((void(*)(void*))V->f, m1);
-    i = chanPoll(-1, sizeof (p) / sizeof (p[0]), p) == 1 && p[0].s == chanOsPut;
+    i = chanOne(0, sizeof (p) / sizeof (p[0]), p) == 1 && p[0].s == chanOsPut;
     pthread_cleanup_pop(0); /* V->f(m1) */
     pthread_cleanup_pop(0); /* V->f(m) */
     if (!i) {
@@ -502,7 +502,7 @@ sizeHeader:
         i2 -= ch;
         pthread_cleanup_push((void(*)(void*))V->f, m);
         pthread_cleanup_push((void(*)(void*))V->f, m1);
-        i = chanPoll(-1, sizeof (p) / sizeof (p[0]), p) == 1 && p[0].s == chanOsPut;
+        i = chanOne(0, sizeof (p) / sizeof (p[0]), p) == 1 && p[0].s == chanOsPut;
         pthread_cleanup_pop(0); /* V->f(m1) */
         pthread_cleanup_pop(0); /* V->f(m) */
         if (!i) {
@@ -575,7 +575,7 @@ endTrailers:
       i2 -= cl;
       pthread_cleanup_push((void(*)(void*))V->f, m);
       pthread_cleanup_push((void(*)(void*))V->f, m1);
-      i = chanPoll(-1, sizeof (p) / sizeof (p[0]), p) == 1 && p[0].s == chanOsPut;
+      i = chanOne(0, sizeof (p) / sizeof (p[0]), p) == 1 && p[0].s == chanOsPut;
       pthread_cleanup_pop(0); /* V->f(m1) */
       pthread_cleanup_pop(0); /* V->f(m) */
       if (!i) {

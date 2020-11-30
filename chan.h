@@ -1,6 +1,6 @@
 /*
- * pthreadChannel - Implementation of CSP channels for pthreads
- * Copyright (C) 2019 G. David Butler <gdb@dbSystems.com>
+ * pthreadChannel - an implementation of channels for pthreads
+ * Copyright (C) 2016-2020 G. David Butler <gdb@dbSystems.com>
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as published
@@ -35,7 +35,7 @@ typedef enum chanSw {
  ,chanSwNoPut = 2 /* no waiting Puts */
 } chanSw_t;
 
-/* channel store status */
+/* channel store state */
 typedef enum chanSs { /* bit map */
   chanSsCanPut = 1 /* has room */
  ,chanSsCanGet = 2 /* has content */
@@ -90,16 +90,16 @@ chanCreate(
  ,chanSi_t impl
  ,void *cntx
  ,chanSd_t done
-); /* returns 0 on failure */
+);
 
-/* channel open, to keep a channel from being deallocated till chanClose */
+/* channel (re)Open, to keep a channel from being deallocated till chanClose */
 /* return chn as a convience to allow: chanDup = chanOpen(chan) */
 chan_t *
 chanOpen(
   chan_t *chn
 );
 
-/* channel shutdown, afterwards chanPut() always returns 0 and chanGet() is always non-blocking */
+/* channel shutdown, afterwards chanOpPut returns chanOsSht and chanOpGet is non-blocking */
 void
 chanShut(
   chan_t *chn
@@ -111,85 +111,80 @@ chanClose(
   chan_t *chn
 );
 
-/* channel operation status */
+/* channel operation */
+typedef enum chanOp {
+  chanOpNop = 0 /* no operation, skip */
+ ,chanOpSht     /* Shutdown [event only, use chanShut() to shutdown a channel] */
+ ,chanOpGet     /* Get (event: store empty, queued Gets and no queued Puts) */
+ ,chanOpPut     /* Put (event: store full, queued Puts and no queued Gets) */
+} chanOp_t;
+
+/* channel operation state */
 typedef enum chanOs {
-  chanOsErr = 0 /* Error */
+  chanOsNop = 0 /* None of the below */
  ,chanOsSht     /* Shutdown */
- ,chanOsGet     /* Get successful */
- ,chanOsPut     /* Put successful (or timeout on Wait part of PutWait) */
- ,chanOsPutWait /* PutWait successful */
+ ,chanOsGet     /* Get */
+ ,chanOsPut     /* Put */
  ,chanOsTmo     /* Timeout */
 } chanOs_t;
 
 /*
- * Channel poll
+ * Operate on a Channel based on nsTimeout:
+ *  >0 timeout in nanoseconds
+ *   0 block
+ *  -1 non-blocking
+ * val is where to get/put an item or 0 for event
  */
+chanOs_t
+chanOp(
+  long nsTimeout
+ ,chan_t *chan
+ ,void **val
+ ,chanOp_t op
+);
 
-/* channel poll operation */
-typedef enum chanPo {
-  chanPoNop = 0 /* no operation, skip */
- ,chanPoSht     /* check for shut */
- ,chanPoGet     /* get an item */
- ,chanPoPut     /* put an item */
- ,chanPoPutWait /* put an item then block till a Get occurs */
-} chanPo_t;
-
-/* channel poll array element */
-typedef struct chanPoll {
-  chan_t *c;  /* channel to operate on, if 0 then behave as chanPoNop */
-  void **v;   /* where to get/put an item, if 0 then behave as chanPoNop */
-  chanPo_t o;
+/* channel array */
+typedef struct chanArr {
+  chan_t *c;  /* channel to operate on, 0 == chanOpNop */
+  void **v;   /* where to get/put or 0 for event */
+  chanOp_t o;
   chanOs_t s;
-} chanPoll_t;
-
-/* in each of the below, nsTimeout: -1 block forever, 0 non-blocking else timeout in nanoseconds */
+} chanArr_t;
 
 /*
- * Provide a set of channel operations and return when one of them completes.
- * Instead of having to change the size of the array, if no operation is desired
- * on a channel, set the chanPo to chanPoNop. Otherwise:
- *  When the store is full, Put blocks based on nsTimeout.
- *  When the store is empty, Get blocks based on nsTimeout.
- *  a PutWait is the same as a Put, then blocks till a Get occurs
- * Returns 0 on error (should only occur for memory allocation failures)
- *  otherwise the offset into the list is one less than the return value.
+ * Operate on one (first capable) Channal of a Channal array based on nsTimeout:
+ *  >0 timeout in nanoseconds
+ *   0 block
+ *  -1 non-blocking
+ * Returns 0 on error (memory allocation failure).
+ * Otherwise the offset into the list is one less than the return value.
  */
 unsigned int
-chanPoll(
+chanOne(
   long nsTimeout
  ,unsigned int count
- ,chanPoll_t *chnp
-); /* returns 0 on failure */
-
-/* check for shut */
-chanOs_t
-chanSht(
-  long nsTimeout
- ,chan_t *chn
+ ,chanArr_t *array
 );
 
-/* get an item */
-chanOs_t
-chanGet(
-  long nsTimeout
- ,chan_t *chn
- ,void **val
-);
+/* chanAll return */
+typedef enum chanMs {
+  chanMsErr = 0 /* memory allocation failure or deadlock */
+ ,chanMsEvt     /* Event - check chanOs_t */
+ ,chanMsOp      /* Operation - check chanOs_t */
+ ,chanMsTmo     /* timeout */
+} chanMs_t;
 
-/* put an item */
-chanOs_t
-chanPut(
+/*
+ * Operate on all Channals of a Channal array based on nsTimeout:
+ *  >0 timeout in nanoseconds
+ *   0 block
+ *  -1 non-blocking
+ */
+chanMs_t
+chanAll(
   long nsTimeout
- ,chan_t *chn
- ,void *val
-);
-
-/* put an item (as chanPut) then block till a Get occurs */
-chanOs_t
-chanPutWait(
-  long nsTimeout
- ,chan_t *chn
- ,void *val
+ ,unsigned int count
+ ,chanArr_t *array
 );
 
 #endif /* __CHAN_H__ */
