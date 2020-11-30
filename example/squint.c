@@ -407,14 +407,6 @@ void *v
       free(f);
       break;
     }
-#if 0
-    pa[1].v = 0;
-    pa[1].o = chanOpGet;
-    if (chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 2 || pa[1].s != chanOsGet)
-      break;
-    pa[1].v = ga[0].v;
-    pa[1].o = chanOpPut;
-#endif
   }
   chanShut(V->p), chanClose(V->p);
   chanShut(V->f);
@@ -503,14 +495,6 @@ void *v
       free(f);
       break;
     }
-#if 0
-    pa[2].v = 0;
-    pa[2].o = chanOpGet;
-    if (chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 3 || pa[2].s != chanOsGet)
-      break;
-    pa[2].v = ga[0].v;
-    pa[2].o = chanOpPut;
-#endif
   }
   chanShut(V->s), chanClose(V->s);
   chanShut(V->f);
@@ -604,14 +588,6 @@ void *v
       free(f);
       break;
     }
-#if 0
-    pa[1].v = 0;
-    pa[1].o = chanOpGet;
-    if (chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 2 || pa[1].s != chanOsGet)
-      break;
-    pa[1].v = ga[0].v;
-    pa[1].o = chanOpPut;
-#endif
   }
 exit:
   chanShut(V->p), chanClose(V->p);
@@ -817,14 +793,6 @@ void *v
       free(f);
       break;
     }
-#if 0
-    pa[3].v = 0;
-    pa[3].o = chanOpGet;
-    if (chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 4 || pa[3].s != chanOsGet)
-      goto exit;
-    pa[3].v = ga[0].v;
-    pa[3].o = chanOpPut;
-#endif
   }
 exit:
   chanShut(V->p), chanClose(V->p);
@@ -936,14 +904,6 @@ void *v
       free(f);
       break;
     }
-#if 0
-    pa[1].v = 0;
-    pa[1].o = chanOpGet;
-    if (chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 2 && pa[1].s != chanOsGet)
-      break;
-    pa[1].v = ga[0].v;
-    pa[1].o = chanOpPut;
-#endif
   }
 exit:
   chanShut(V->p), chanClose(V->p);
@@ -1034,14 +994,6 @@ void *v
       free(f);
       break;
     }
-#if 0
-    pa[1].v = 0;
-    pa[1].o = chanOpGet;
-    if (chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 2 && pa[1].s != chanOsGet)
-      break;
-    pa[1].v = ga[0].v;
-    pa[1].o = chanOpPut;
-#endif
   }
 exit:
   chanShut(V->p), chanClose(V->p);
@@ -1202,14 +1154,6 @@ void *v
       free(f);
       break;
     }
-#if 0
-    pa[1].v = 0;
-    pa[1].o = chanOpGet;
-    if (chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 2 || pa[1].s != chanOsGet)
-      goto exit;
-    pa[1].v = ga[0].v;
-    pa[1].o = chanOpPut;
-#endif
   }
 exit:
   chanShut(V->s), chanClose(V->s);
@@ -1328,14 +1272,6 @@ void *v
       free(x);
       break;
     }
-#if 0
-    pa[1].v = 0;
-    pa[1].o = chanOpGet;
-    if (chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 2 || pa[1].s != chanOsGet)
-      break;
-    pa[1].v = ga[0].v;
-    pa[1].o = chanOpPut;
-#endif
   }
 exit:
   chanShut(V->e), chanClose(V->e);
@@ -1473,14 +1409,6 @@ void *v
       free(f);
       break;
     }
-#if 0
-    pa[1].v = 0;
-    pa[1].o = chanOpGet;
-    if (chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 2 || pa[1].s != chanOsGet)
-      break;
-    pa[1].v = ga[0].v;
-    pa[1].o = chanOpPut;
-#endif
   }
 exit:
   chanShut(V->r), chanClose(V->r);
@@ -1689,14 +1617,6 @@ void *v
       free(f);
       break;
     }
-#if 0
-    pa[1].v = 0;
-    pa[1].o = chanOpGet;
-    if (chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 2 || pa[1].s != chanOsGet)
-      break;
-    pa[1].v = ga[0].v;
-    pa[1].o = chanOpPut;
-#endif
   }
 exit:
   chanShut(V->r), chanClose(V->r);
@@ -1795,14 +1715,6 @@ void *v
         free(f);
         goto exit;
       }
-#if 0
-    pa[1].v = 0;
-    pa[1].o = chanOpGet;
-    if (chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 2 || pa[1].s != chanOsGet)
-      break;
-    pa[1].v = ga[0].v;
-    pa[1].o = chanOpPut;
-#endif
   }
 exit:
   chanShut(V->p), chanClose(V->p);
