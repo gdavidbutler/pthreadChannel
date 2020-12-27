@@ -100,12 +100,12 @@ primeT(
   if ((i = (Goal - prime) / 500) > 1) {
     void *tv;
 
-    if (!(tv = chanFifoDySa(realloc,free, i, i / 2))
-     || !(c = chanCreate(realloc,free, chanFifoDySi, tv, chanFifoDySd)))
+    if (!(tv = chanFifoDySa(i, i / 2))
+     || !(c = chanCreate(chanFifoDySi, tv, chanFifoDySd)))
       free(tv);
   } else
 #endif
-    c = chanCreate(realloc,free, 0,0,0);
+    c = chanCreate(0,0,0);
   if (!c) {
     puts("out of memory");
     goto exit;
@@ -162,6 +162,7 @@ main(
 #endif
   unsigned int i;
 
+  chanInit(realloc, free);
   if (argc < 2
    || (Goal = atoi(*(argv + 1))) < 2)
     Goal = 100;
@@ -171,14 +172,14 @@ main(
   if ((i = (Goal - 2) / 500) > 1) {
     void *tv;
 
-    if (!(tv = chanFifoDySa(realloc,free, i, i / 2))
-     || !(c = chanCreate(realloc,free, chanFifoDySi, tv, chanFifoDySd))) {
+    if (!(tv = chanFifoDySa(i, i / 2))
+     || !(c = chanCreate(chanFifoDySi, tv, chanFifoDySd))) {
       free(tv);
       c = 0;
     }
   } else
 #endif
-  if (!(c = chanCreate(realloc,free, 0,0,0))) {
+  if (!(c = chanCreate(0,0,0))) {
     puts("Can't create channel");
     goto exit;
   }

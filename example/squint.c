@@ -18,6 +18,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <pthread.h>
 #include "chan.h"
 #include "chanFifo.h"
@@ -26,8 +27,6 @@
 **     C / pthread / Channel implementation of      **
 ** M. Douglas McIlroy's "Squinting at Power Series" **
 *****************************************************/
-
-#define SZ 10 /* channel store size */
 
 /*************************************************************************/
 
@@ -53,7 +52,7 @@ gcdI(
   return (a);
 }
 
-/* new rational from integer numerator and integer denominator */
+/* new rational from numerator and denominator */
 static rational *
 newR(
   long n
@@ -71,7 +70,7 @@ newR(
   return (r);
 }
 
-/* new rational from a rational */
+/* new rational from rational */
 static rational *
 dupR(
   const rational *a
@@ -223,102 +222,6 @@ rcpOfR(
   a->d = t;
 }
 
-/*************************************************************************/
-
-/* split input stream to output streams */
-struct splST {
-  chanArr_t *a;
-  unsigned int n;
-};
-
-static void *
-splST(
-void *v
-#define V ((struct splST *)v)
-){
-  unsigned int n;
-  void *t;
-
-  n = 0;
-  while (chanOne(0, V->n, V->a) == 1 && V->a->s == chanOsGet) {
-    for (n = 1; n < V->n; ++n) {
-      if (!(*((V->a + n)->v) = dupR(*V->a->v)))
-        goto exit;
-      (V->a + n)->o = chanOpPut;
-    }
-    V->a->o = chanOpSht;
-    if (chanAll(0, V->n, V->a) != chanMsOp)
-      break;
-    free(*V->a->v);
-    while (n)
-      (V->a + --n)->o = chanOpSht;
-    V->a->o = chanOpGet;
-  }
-exit:
-  while (n)
-    free(*((V->a + --n)->v));
-  for (; n < V->n; ++n)
-    free((V->a + n)->v);
-  for (--n; n; --n)
-    chanShut((V->a + n)->c), chanClose((V->a + n)->c);
-  chanShut(V->a->c);
-  while (chanOp(0, V->a->c, &t, chanOpGet) == chanOsGet)
-    free(t);
-  chanClose(V->a->c);
-  free(V->a);
-  free(v);
-  return (0);
-}
-#undef V
-
-static int
-splS(
-  chan_t *i
- ,chanArr_t *o
- ,unsigned int n
-){
-  struct splST *x;
-  pthread_t pt;
-
-  if (!(x = malloc(sizeof (*x)))
-   || !(x->a = malloc((n + 1)  * sizeof (*x->a))))
-    goto oom1;
-  x->n = n + 1;
-  for (n = 0; n < x->n; ++n)
-    if (!((x->a + n)->v = malloc(sizeof (*x->a->v))))
-      goto oom2;
-  x->a->c = chanOpen(i);
-  x->a->o = chanOpGet;
-  for (n = 1; n < x->n; ++n) {
-    (x->a + n)->c = chanOpen((o + n - 1)->c);
-    (x->a + n)->o = chanOpSht;
-  }
-  if (pthread_create(&pt, 0, splST, x)) {
-    void *v;
-
-    for (n = 0; n < x->n; ++n)
-      chanClose((x->a + n)->c);
-oom2:
-    while (n)
-      free((x->a + --n)->v);
-    free(x->a);
-    n = x->n - 1;
-oom1:
-    free(x);
-    fprintf(stderr, "splS OoR\n");
-    while (n)
-      chanShut((o + --n)->c);
-    chanShut(i);
-    while (chanOp(0, i, &v, chanOpGet) == chanOsGet)
-      free(v);
-    return (1);
-  }
-  pthread_detach(pt);
-  return (0);
-}
-
-/*************************************************************************/
-
 /* constant stream */
 struct conST {
   chan_t *o;
@@ -337,8 +240,6 @@ void *v
       free(o);
       break;
     }
-    if (chanOp(0, V->o, 0, chanOpGet) != chanOsGet)
-      break;
   }
   chanShut(V->o), chanClose(V->o);
   free(v);
@@ -389,21 +290,23 @@ void *v
   chanArr_t ga[2];
   chanArr_t pa[2];
 
-  ga[0].c = V->f;
-  ga[0].v = (void **)&f;
-  ga[0].o = chanOpGet;
-  ga[1].c = V->p;
-  ga[1].v = 0;
-  ga[1].o = chanOpSht;
-  pa[0].c = ga[0].c;
-  pa[0].v = 0;
-  pa[0].o = chanOpSht;
-  pa[1].c = ga[1].c;
-  pa[1].v = ga[0].v;
-  pa[1].o = chanOpPut;
-  while (chanOne(0, sizeof (ga) / sizeof (ga[0]), ga) == 1 && ga[0].s == chanOsGet) {
+  ga[0].c = V->p;
+  ga[0].v = 0;
+  ga[0].o = chanOpSht;
+  ga[1].c = V->f;
+  ga[1].v = (void **)&f;
+  ga[1].o = chanOpGet;
+
+  pa[0].c = V->p;
+  pa[0].v = (void **)&f;
+  pa[0].o = chanOpPut;
+  pa[1].c = V->f;
+  pa[1].v = 0;
+  pa[1].o = chanOpSht;
+
+  while (chanOne(0, sizeof (ga) / sizeof (ga[0]), ga) == 2 && ga[1].s == chanOsGet) {
     mulByR(f, &V->t);
-    if (chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 2 || pa[1].s != chanOsPut) {
+    if (chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 1 || pa[0].s != chanOsPut) {
       free(f);
       break;
     }
@@ -470,28 +373,30 @@ void *v
   chanArr_t ga[3];
   chanArr_t pa[3];
 
-  ga[0].c = V->f;
-  ga[0].v = (void **)&f;
-  ga[0].o = chanOpGet;
-  ga[1].c = V->g;
-  ga[1].v = (void **)&g;
+  ga[0].c = V->s;
+  ga[0].v = 0;
+  ga[0].o = chanOpSht;
+  ga[1].c = V->f;
+  ga[1].v = (void **)&f;
   ga[1].o = chanOpGet;
-  ga[2].c = V->s;
-  ga[2].v = 0;
-  ga[2].o = chanOpSht;
-  pa[0].c = ga[0].c;
-  pa[0].v = 0;
-  pa[0].o = chanOpSht;
-  pa[1].c = ga[1].c;
+  ga[2].c = V->g;
+  ga[2].v = (void **)&g;
+  ga[2].o = chanOpGet;
+
+  pa[0].c = V->s;
+  pa[0].v = (void **)&f;
+  pa[0].o = chanOpPut;
+  pa[1].c = V->f;
   pa[1].v = 0;
   pa[1].o = chanOpSht;
-  pa[2].c = ga[2].c;
-  pa[2].v = ga[0].v;
-  pa[2].o = chanOpPut;
-  while (chanAll(0, sizeof (ga) / sizeof (ga[0]), ga) == chanMsOp) {
+  pa[2].c = V->g;
+  pa[2].v = 0;
+  pa[2].o = chanOpSht;
+
+  while (chanAll(0, sizeof (ga) / sizeof (ga[0]), ga) == chanAlOp) {
     addToR(f, g);
     free(g);
-    if (chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 3 || pa[2].s != chanOsPut) {
+    if (chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 1 || pa[0].s != chanOsPut) {
       free(f);
       break;
     }
@@ -564,27 +469,29 @@ void *v
   chanArr_t ga[2];
   chanArr_t pa[2];
 
-  ga[0].c = V->f;
-  ga[0].v = (void **)&f;
-  ga[0].o = chanOpGet;
-  ga[1].c = V->p;
-  ga[1].v = 0;
-  ga[1].o = chanOpSht;
-  pa[0].c = ga[0].c;
-  pa[0].v = 0;
-  pa[0].o = chanOpSht;
-  pa[1].c = ga[1].c;
-  pa[1].v = ga[0].v;
-  pa[1].o = chanOpPut;
+  ga[0].c = V->p;
+  ga[0].v = 0;
+  ga[0].o = chanOpSht;
+  ga[1].c = V->f;
+  ga[1].v = (void **)&f;
+  ga[1].o = chanOpGet;
+
+  pa[0].c = V->p;
+  pa[0].v = (void **)&f;
+  pa[0].o = chanOpPut;
+  pa[1].c = V->f;
+  pa[1].v = 0;
+  pa[1].o = chanOpSht;
+
   for (; V->n; --V->n) {
     if (!(f = newR(0, 1))
-     || chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 2 || pa[1].s != chanOsPut) {
+     || chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 1 || pa[0].s != chanOsPut) {
       free(f);
       goto exit;
     }
   }
-  while (chanOne(0, sizeof (ga) / sizeof (ga[0]), ga) == 1 && ga[0].s == chanOsGet) {
-    if (chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 2 || pa[1].s != chanOsPut) {
+  while (chanOne(0, sizeof (ga) / sizeof (ga[0]), ga) == 2 && ga[1].s == chanOsGet) {
+    if (chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 1 || pa[0].s != chanOsPut) {
       free(f);
       break;
     }
@@ -641,6 +548,7 @@ struct mulST {
   chan_t *g;
 };
 
+/* recursive forward declaration */
 static int
 mulS(
   chan_t *p
@@ -653,171 +561,115 @@ mulST(
 void *v
 #define V ((struct mulST *)v)
 ){
-  rational *f;
-  rational *g;
-  rational *x;
-  chan_t *fG;
-  chan_t *gF;
-  chan_t *FG;
-  chan_t *xFG;
-  void *tv;
-  chanArr_t ff[2];
-  chanArr_t gg[2];
-  chanArr_t ga[4];
-  chanArr_t pa[4];
-  rational cf;
-  rational cg;
+  enum ch {
+   P = 0, F, G, F0, F1, G0, G1, Fg, Gf, FG, xFG, chCnt
+  };
+  rational *r[chCnt];
+  chanArr_t ga1[chCnt]; /* get F, G */
+  chanArr_t pa1[chCnt]; /* put P */
+  chanArr_t pa2[chCnt]; /* put F0, F1, G0, G1 */
+  chanArr_t ga2[chCnt]; /* get Fg, Gf, xFG */
+  rational f;
+  rational g;
+  unsigned int i;
 
-  ga[0].c = V->f;
-  ga[0].v = (void **)&f;
-  ga[0].o = chanOpGet;
-  ga[1].c = V->g;
-  ga[1].v = (void **)&g;
-  ga[1].o = chanOpGet;
-  ga[2].c = 0;
-  ga[2].v = (void **)&x;
-  ga[2].o = chanOpGet;
-  ga[3].c = V->p;
-  ga[3].v = 0;
-  ga[3].o = chanOpSht;
-  pa[0].c = ga[0].c;
-  pa[0].v = 0;
-  pa[0].o = chanOpSht;
-  pa[1].c = ga[1].c;
-  pa[1].v = 0;
-  pa[1].o = chanOpSht;
-  pa[2].c = ga[2].c;
-  pa[2].v = 0;
-  pa[2].o = chanOpSht;
-  pa[3].c = ga[3].c;
-  pa[3].v = ga[0].v;
-  pa[3].o = chanOpPut;
-  fG = gF = FG = xFG = 0;
-  ff[0].c = ff[1].c = 0;
-  gg[0].c = gg[1].c = 0;
-  if (chanAll(0, sizeof (ga) / sizeof (ga[0]), ga) != chanMsOp)
+  memset(ga1, 0, sizeof (ga1));
+  memset(pa1, 0, sizeof (pa1));
+  memset(pa2, 0, sizeof (pa2));
+  memset(ga2, 0, sizeof (ga2));
+  ga1[P].c = V->p;
+  ga1[F].c = V->f;
+  ga1[G].c = V->g;
+  for (i = 0; i < chCnt; ++i) {
+    void *tv;
+
+    if (!ga1[i].c && !(ga1[i].c = chanCreate(0, 0, 0)))
+      goto exit;
+    ga1[i].v = (void **)&r[i];
+    ga1[i].o = chanOpSht;
+  }
+  memcpy(pa1, ga1, sizeof (pa1));
+  memcpy(pa2, ga1, sizeof (pa2));
+  memcpy(ga2, ga1, sizeof (ga2));
+
+  ga1[F].o = ga1[G].o = chanOpGet;
+  pa1[P].o = chanOpPut;
+  if (chanAll(0, sizeof (ga1) / sizeof (ga1[0]), ga1) != chanAlOp)
     goto exit;
-  cf.n = f->n;
-  cf.d = f->d;
-  cg.n = g->n;
-  cg.d = g->d;
-  mulByR(f, g);
-  free(g);
-  if (chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 4 || pa[3].s != chanOsPut) {
-    free(f);
+  f.n = r[F]->n;
+  f.d = r[F]->d;
+  g.n = r[G]->n;
+  g.d = r[G]->d;
+  r[P] = r[F];
+  mulByR(r[P], r[G]);
+  free(r[G]);
+  if (chanOne(0, sizeof (pa1) / sizeof (pa1[0]), pa1) != P + 1 || pa1[P].s != chanOsPut) {
+    free(r[P]);
     goto exit;
   }
-  /* demand channel begin */
-  pa[3].v = 0;
-  pa[3].o = chanOpGet;
-  if (chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 4 || pa[3].s != chanOsGet)
+  /* "demand" channel begin (check for a get before recursing) */
+  pa1[P].v = 0;
+  if (chanOne(0, sizeof (pa1) / sizeof (pa1[0]), pa1) != P + 1 || pa1[P].s != chanOsPut)
     goto exit;
-  pa[3].v = ga[0].v;
-  pa[3].o = chanOpPut;
-  /* demand channel end */
-  if (!(tv = chanFifoStSa(realloc, free, SZ))
-   || !(ff[0].c = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
-   || !(tv = chanFifoStSa(realloc, free, SZ))
-   || !(ff[1].c = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
-   || splS(V->f, ff, sizeof (ff) / sizeof (ff[0])))
+  pa1[P].v = (void **)&r[P];
+  /* "demand" channel end */
+  if (mulT(ga2[Fg].c, pa2[F0].c, &g)
+   || mulT(ga2[Gf].c, pa2[G0].c, &f)
+   || mulS(ga2[FG].c, pa2[F1].c, pa2[G1].c)
+   || xnS(ga2[xFG].c, pa2[FG].c, 1))
     goto exit;
-  if (!(tv = chanFifoStSa(realloc, free, SZ))
-   || !(gg[0].c = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
-   || !(tv = chanFifoStSa(realloc, free, SZ))
-   || !(gg[1].c = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
-   || splS(V->g, gg, sizeof (gg) / sizeof (gg[0]))) {
-    chanShut(ff[0].c);
-    chanShut(ff[1].c);
-    while (chanOp(0, ff[0].c, (void **)&f, chanOpGet) == chanOsGet)
-      free(f);
-    while (chanOp(0, ff[1].c, (void **)&f, chanOpGet) == chanOsGet)
-      free(f);
-    goto exit;
-  }
-  if (!(tv = chanFifoStSa(realloc, free, SZ))
-   || !(fG = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
-   || mulT(fG, gg[0].c, &cf)) {
-    chanShut(ff[0].c);
-    chanShut(ff[1].c);
-    chanShut(gg[0].c);
-    chanShut(gg[1].c);
-    while (chanOp(0, ff[0].c, (void **)&f, chanOpGet) == chanOsGet)
-      free(f);
-    while (chanOp(0, ff[1].c, (void **)&f, chanOpGet) == chanOsGet)
-      free(f);
-    while (chanOp(0, gg[0].c, (void **)&f, chanOpGet) == chanOsGet)
-      free(f);
-    while (chanOp(0, gg[1].c, (void **)&f, chanOpGet) == chanOsGet)
-      free(f);
-    goto exit;
-  }
-  pa[0].c = ga[0].c = fG;
-  if (!(tv = chanFifoStSa(realloc, free, SZ))
-   || !(gF = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
-   || mulT(gF, ff[0].c, &cg)) {
-    chanShut(ff[0].c);
-    chanShut(ff[1].c);
-    chanShut(gg[1].c);
-    while (chanOp(0, ff[0].c, (void **)&f, chanOpGet) == chanOsGet)
-      free(f);
-    while (chanOp(0, ff[1].c, (void **)&f, chanOpGet) == chanOsGet)
-      free(f);
-    while (chanOp(0, gg[1].c, (void **)&f, chanOpGet) == chanOsGet)
-      free(f);
-    goto exit;
-  }
-  pa[1].c = ga[1].c = gF;
-  if (!(tv = chanFifoStSa(realloc, free, SZ))
-   || !(FG = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
-   || mulS(FG, ff[1].c, gg[1].c)) {
-    chanShut(ff[1].c);
-    chanShut(gg[1].c);
-    while (chanOp(0, ff[1].c, (void **)&f, chanOpGet) == chanOsGet)
-      free(f);
-    while (chanOp(0, gg[1].c, (void **)&f, chanOpGet) == chanOsGet)
-      free(f);
-    goto exit;
-  }
-  pa[2].c = ga[2].c = FG;
-  if (!(tv = chanFifoStSa(realloc, free, SZ))
-   || !(xFG = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
-   || xnS(xFG, FG, 1))
-    goto exit;
-  pa[2].c = ga[2].c = xFG;
-  while (chanAll(0, sizeof (ga) / sizeof (ga[0]), ga) == chanMsOp) {
-    addToR(f, g);
-    free(g);
-    addToR(f, x);
-    free(x);
-    if (chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 4 || pa[3].s != chanOsPut) {
-      free(f);
+  pa2[F0].o = pa2[F1].o = pa2[G0].o = pa2[G1].o = chanOpPut;
+  ga2[Fg].o = ga2[Gf].o = ga2[xFG].o = chanOpGet;
+  while (chanAll(0, sizeof (ga1) / sizeof (ga1[0]), ga1) == chanAlOp) {
+    r[F0] = r[F];
+    r[G0] = r[G];
+    r[G1] = 0;
+    if (!(r[F1] = dupR(r[F]))
+     || !(r[G1] = dupR(r[G]))
+     || chanAll(0, sizeof (pa2) / sizeof (pa2[0]), pa2) != chanAlOp) {
+      free(r[F0]);
+      free(r[F1]);
+      free(r[G0]);
+      free(r[G1]);
+      break;
+    }
+    if (chanAll(0, sizeof (ga2) / sizeof (ga2[0]), ga2) != chanAlOp)
+      break;
+    r[P] = r[Fg];
+    addToR(r[P], r[Gf]);
+    free(r[Gf]);
+    addToR(r[P], r[xFG]);
+    free(r[xFG]);
+    if (chanOne(0, sizeof (pa1) / sizeof (pa1[0]), pa1) != P + 1 || pa1[P].s != chanOsPut) {
+      free(r[P]);
       break;
     }
   }
 exit:
-  chanShut(V->p), chanClose(V->p);
-  chanShut(ff[0].c), chanClose(ff[0].c);
-  chanShut(ff[1].c), chanClose(ff[1].c);
-  chanShut(gg[0].c), chanClose(gg[0].c);
-  chanShut(gg[1].c), chanClose(gg[1].c);
-  chanShut(V->f);
-  chanShut(V->g);
-  chanShut(fG);
-  chanShut(gF);
-  chanShut(FG);
-  chanShut(xFG);
-  while (chanOp(0, ga[0].c, (void **)&f, chanOpGet) == chanOsGet)
-    free(f);
-  while (chanOp(0, ga[1].c, (void **)&g, chanOpGet) == chanOsGet)
-    free(g);
-  while (chanOp(0, ga[2].c, (void **)&x, chanOpGet) == chanOsGet)
-    free(x);
-  chanClose(V->f);
-  chanClose(V->g);
-  chanClose(fG);
-  chanClose(gF);
-  chanClose(FG);
-  chanClose(xFG);
+  for (i = 0; i < chCnt; ++i)
+    if (pa1[i].o == chanOpPut)
+      chanShut(pa1[i].c), chanClose(pa1[i].c);;
+  for (i = 0; i < chCnt; ++i)
+    if (pa2[i].o == chanOpPut)
+      chanShut(pa2[i].c), chanClose(pa2[i].c);;
+  for (i = 0; i < chCnt; ++i)
+    if (ga1[i].o == chanOpGet)
+      chanShut(ga1[i].c);
+  for (i = 0; i < chCnt; ++i)
+    if (ga2[i].o != chanOpGet)
+      chanShut(ga2[i].c);
+  for (i = 0; i < chCnt; ++i)
+    if (ga1[i].o == chanOpGet) {
+      while (chanOp(0, ga1[i].c, (void **)&r[0], chanOpGet) == chanOsGet)
+        free(r[0]);
+      chanClose(ga1[i].c);
+    }
+  for (i = 0; i < chCnt; ++i)
+    if (ga2[i].o == chanOpGet) {
+      while (chanOp(0, ga2[i].c, (void **)&r[0], chanOpGet) == chanOsGet)
+        free(r[0]);
+      chanClose(ga2[i].c);
+    }
   free(v);
   return (0);
 }
@@ -877,30 +729,32 @@ void *v
   chanArr_t pa[2];
   rational n;
 
-  ga[0].c = V->f;
-  ga[0].v = (void **)&f;
-  ga[0].o = chanOpGet;
-  ga[1].c = V->p;
-  ga[1].v = 0;
-  ga[1].o = chanOpSht;
-  pa[0].c = ga[0].c;
-  pa[0].v = 0;
-  pa[0].o = chanOpSht;
-  pa[1].c = ga[1].c;
-  pa[1].v = ga[0].v;
-  pa[1].o = chanOpPut;
-  if (chanOne(0, sizeof (ga) / sizeof (ga[0]), ga) != 1 || ga[0].s != chanOsGet)
+  ga[0].c = V->p;
+  ga[0].v = 0;
+  ga[0].o = chanOpSht;
+  ga[1].c = V->f;
+  ga[1].v = (void **)&f;
+  ga[1].o = chanOpGet;
+
+  pa[0].c = V->p;
+  pa[0].v = (void **)&f;
+  pa[0].o = chanOpPut;
+  pa[1].c = V->f;
+  pa[1].v = 0;
+  pa[1].o = chanOpSht;
+
+  if (chanOne(0, sizeof (ga) / sizeof (ga[0]), ga) != 2 || ga[1].s != chanOsGet)
     goto exit;
   free(f);
   n.n = 0;
   n.d = 1;
-  while (chanOne(0, sizeof (ga) / sizeof (ga[0]), ga) == 1 && ga[0].s == chanOsGet) {
+  while (chanOne(0, sizeof (ga) / sizeof (ga[0]), ga) == 2 && ga[1].s == chanOsGet) {
     if (!++n.n) {
       free(f);
       break;
     }
     mulByR(f, &n);
-    if (chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 2 && pa[1].s != chanOsPut) {
+    if (chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 1 && pa[0].s != chanOsPut) {
       free(f);
       break;
     }
@@ -965,32 +819,34 @@ void *v
   chanArr_t pa[2];
   rational n;
 
-  ga[0].c = V->f;
-  ga[0].v = (void **)&f;
-  ga[0].o = chanOpGet;
-  ga[1].c = V->p;
-  ga[1].v = 0;
-  ga[1].o = chanOpSht;
-  pa[0].c = ga[0].c;
-  pa[0].v = 0;
-  pa[0].o = chanOpSht;
-  pa[1].c = ga[1].c;
-  pa[1].v = (void **)&V->c;
-  pa[1].o = chanOpPut;
-  if (chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 2 && pa[1].s != chanOsPut) {
-    free(V->c);
+  ga[0].c = V->p;
+  ga[0].v = 0;
+  ga[0].o = chanOpSht;
+  ga[1].c = V->f;
+  ga[1].v = (void **)&f;
+  ga[1].o = chanOpGet;
+
+  pa[0].c = V->p;
+  pa[0].v = (void **)&f;
+  pa[0].o = chanOpPut;
+  pa[1].c = V->f;
+  pa[1].v = 0;
+  pa[1].o = chanOpSht;
+
+  f = V->c;
+  if (chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 1 || pa[0].s != chanOsPut) {
+    free(f);
     goto exit;
   }
-  pa[1].v = ga[0].v;
   n.n = 1;
   n.d = 0;
-  while (chanOne(0, sizeof (ga) / sizeof (ga[0]), ga) == 1 && ga[0].s == chanOsGet) {
+  while (chanOne(0, sizeof (ga) / sizeof (ga[0]), ga) == 2 && ga[1].s == chanOsGet) {
     if (!++n.d) {
       free(f);
       break;
     }
     mulByR(f, &n);
-    if (chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 2 && pa[1].s != chanOsPut) {
+    if (chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 1 && pa[0].s != chanOsPut) {
       free(f);
       break;
     }
@@ -1048,6 +904,7 @@ struct sbtST {
   chan_t *g;
 };
 
+/* recursive forward declaration */
 static int
 sbtS(
   chan_t *s
@@ -1060,113 +917,79 @@ sbtST(
 void *v
 #define V ((struct sbtST *)v)
 ){
-  rational *f;
-  chan_t *FG;
-  chan_t *GF;
-  void *tv;
-  chanArr_t gg[2];
-  chanArr_t ga[2];
-  chanArr_t pa[2];
+  enum ch {
+   S = 0, F, G, G0, G1, FG, chCnt
+  };
+  rational *r[chCnt];
+  chanArr_t ga1[chCnt]; /* get F then G */
+  chanArr_t pa1[chCnt]; /* put S then G0, G1 */
+  unsigned int i;
 
-  ga[0].c = V->f;
-  ga[0].v = (void **)&f;
-  ga[0].o = chanOpGet;
-  ga[1].c = V->s;
-  ga[1].v = 0;
-  ga[1].o = chanOpSht;
-  pa[0].c = ga[0].c;
-  pa[0].v = 0;
-  pa[0].o = chanOpSht;
-  pa[1].c = ga[1].c;
-  pa[1].v = ga[0].v;
-  pa[1].o = chanOpPut;
-  FG = GF = 0;
-  gg[0].c = gg[1].c = 0;
-  if (chanOne(0, sizeof (ga) / sizeof (ga[0]), ga) != 1 || ga[0].s != chanOsGet) {
-    chanShut(V->g);
-    while (chanOp(0, V->g, (void **)&f, chanOpGet) == chanOsGet)
-      free(f);
+  memset(ga1, 0, sizeof (ga1));
+  memset(pa1, 0, sizeof (pa1));
+  ga1[S].c = V->s;
+  ga1[F].c = V->f;
+  ga1[G].c = V->g;
+  for (i = 0; i < chCnt; ++i) {
+    void *tv;
+
+    if (!ga1[i].c && !(ga1[i].c = chanCreate(0, 0, 0)))
+      goto exit;
+    ga1[i].v = (void **)&r[i];
+    ga1[i].o = chanOpSht;
+  }
+  memcpy(pa1, ga1, sizeof (pa1));
+
+  ga1[F].o = chanOpGet;
+  pa1[S].o = chanOpPut;
+  if (chanOne(0, sizeof (ga1) / sizeof (ga1[0]), ga1) != F + 1 || ga1[F].s != chanOsGet) {
+    ga1[G].o = chanOpGet;
     goto exit;
   }
-  if (chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 2 || pa[1].s != chanOsPut) {
-    free(f);
-    chanShut(V->g);
-    while (chanOp(0, V->g, (void **)&f, chanOpGet) == chanOsGet)
-      free(f);
+  ga1[G].o = chanOpGet;
+  r[S] = r[F];
+  if (chanOne(0, sizeof (pa1) / sizeof (pa1[0]), pa1) != S + 1 || pa1[S].s != chanOsPut) {
+    free(r[S]);
     goto exit;
   }
-  if (!(tv = chanFifoStSa(realloc, free, SZ))
-   || !(gg[0].c = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
-   || !(tv = chanFifoStSa(realloc, free, SZ))
-   || !(gg[1].c = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
-   || splS(V->g, gg, sizeof (gg) / sizeof (gg[0]))) {
-    chanShut(V->g);
-    while (chanOp(0, V->g, (void **)&f, chanOpGet) == chanOsGet)
-      free(f);
+  /* "demand" channel begin (check for a get before recursing) */
+  pa1[S].v = 0;
+  if (chanOne(0, sizeof (pa1) / sizeof (pa1[0]), pa1) != S + 1 || pa1[S].s != chanOsPut)
     goto exit;
-  }
-  /* demand channel begin */
-  pa[1].v = 0;
-  pa[1].o = chanOpGet;
-  if (chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 2 || pa[1].s != chanOsGet) {
-    chanShut(gg[0].c);
-    chanShut(gg[1].c);
-    while (chanOp(0, gg[0].c, (void **)&f, chanOpGet) == chanOsGet)
-      free(f);
-    while (chanOp(0, gg[1].c, (void **)&f, chanOpGet) == chanOsGet)
-      free(f);
+  pa1[S].v = (void **)&r[S];
+  /* "demand" channel end */
+  if (sbtS(ga1[FG].c, pa1[F].c, pa1[G0].c)
+   || mulS(ga1[S].c, pa1[G1].c, pa1[FG].c))
     goto exit;
-  }
-  pa[1].v = ga[0].v;
-  pa[1].o = chanOpPut;
-  /* demand channel end */
-  if (!(tv = chanFifoStSa(realloc, free, SZ))
-   || !(FG = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
-   || sbtS(FG, V->f, gg[0].c)) {
-    chanShut(gg[0].c);
-    chanShut(gg[1].c);
-    while (chanOp(0, gg[0].c, (void **)&f, chanOpGet) == chanOsGet)
-      free(f);
-    while (chanOp(0, gg[1].c, (void **)&f, chanOpGet) == chanOsGet)
-      free(f);
+  ga1[F].o = chanOpSht;
+  pa1[S].o = chanOpSht;
+  if (chanOne(0, sizeof (ga1) / sizeof (ga1[0]), ga1) != G + 1 || ga1[G].s != chanOsGet)
     goto exit;
-  }
-  ga[0].c = gg[1].c;
-  if (chanOne(0, sizeof (ga) / sizeof (ga[0]), ga) != 1 || ga[0].s != chanOsGet) {
-    chanShut(FG);
-    while (chanOp(0, FG, (void **)&f, chanOpGet) == chanOsGet)
-      free(f);
-    goto exit;
-  }
-  free(f);
-  ga[0].c = FG;
-  if (!(tv = chanFifoStSa(realloc, free, SZ))
-   || !(GF = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
-   || mulS(GF, gg[1].c, FG)) {
-    chanShut(gg[1].c);
-    while (chanOp(0, gg[1].c, (void **)&f, chanOpGet) == chanOsGet)
-      free(f);
-    goto exit;
-  }
-  pa[0].c = ga[0].c = GF;
-  while (chanOne(0, sizeof (ga) / sizeof (ga[0]), ga) == 1 && ga[0].s == chanOsGet) {
-    if (chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 2 || pa[1].s != chanOsPut) {
-      free(f);
+  r[G0] = r[G];
+  pa1[G0].o = pa1[G1].o = chanOpPut;
+  while (chanOne(0, sizeof (ga1) / sizeof (ga1[0]), ga1) == G + 1 && ga1[G].s == chanOsGet) {
+    if (!(r[G1] = dupR(r[G]))
+     || chanAll(0, sizeof (pa1) / sizeof (pa1[0]), pa1) != chanAlOp) {
+      free(r[G1]);
+      free(r[G]);
       break;
     }
+    r[G0] = r[G];
   }
+  free(r[G0]);
 exit:
-  chanShut(V->s), chanClose(V->s);
-  chanShut(V->g), chanClose(V->g);
-  chanShut(gg[0].c), chanClose(gg[0].c);
-  chanShut(gg[1].c), chanClose(gg[1].c);
-  chanShut(V->f);
-  chanShut(FG);
-  chanShut(GF); while (chanOp(0, ga[0].c, (void **)&f, chanOpGet) == chanOsGet)
-    free(f);
-  chanClose(V->f);
-  chanClose(FG);
-  chanClose(GF);
+  for (i = 0; i < chCnt; ++i)
+    if (pa1[i].o == chanOpPut)
+      chanShut(pa1[i].c), chanClose(pa1[i].c);;
+  for (i = 0; i < chCnt; ++i)
+    if (ga1[i].o == chanOpGet)
+      chanShut(ga1[i].c);
+  for (i = 0; i < chCnt; ++i)
+    if (ga1[i].o == chanOpGet) {
+      while (chanOp(0, ga1[i].c, (void **)&r[0], chanOpGet) == chanOsGet)
+        free(r[0]);
+      chanClose(ga1[i].c);
+    }
   free(v);
   return (0);
 }
@@ -1221,72 +1044,62 @@ expST(
 void *v
 #define V ((struct expST *)v)
 ){
-  rational *x;
-  chan_t *D;
-  chan_t *X;
-  chan_t *P;
-  void *tv;
-  chanArr_t xx[2];
-  chanArr_t ga[2];
-  chanArr_t pa[2];
+  enum ch {
+   X0 = 0, F, D, P, X, X1, chCnt
+  };
+  rational *r[chCnt];
+  chanArr_t ga1[chCnt]; /* get X */
+  chanArr_t pa1[chCnt]; /* put X0, X1 */
+  unsigned int i;
   rational c;
 
-  ga[0].c = V->f;
-  ga[0].v = (void **)&x;
-  ga[0].o = chanOpGet;
-  ga[1].c = V->e;
-  ga[1].v = 0;
-  ga[1].o = chanOpSht;
-  D = X = P = 0;
-  xx[0].c = xx[1].c = 0;
-  if (!(tv = chanFifoStSa(realloc, free, SZ))
-   || !(D = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
-   || dffS(D, V->f))
-    goto exit;
-  ga[0].c = D;
-  if (!(tv = chanFifoStSa(realloc, free, SZ))
-   || !(X = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
-   || !(tv = chanFifoStSa(realloc, free, SZ))
-   || !(xx[0].c = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
-   || !(tv = chanFifoStSa(realloc, free, SZ))
-   || !(xx[1].c = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
-   || splS(X, xx, sizeof (xx) / sizeof (xx[0]))
-   || !(tv = chanFifoStSa(realloc, free, SZ))
-   || !(P = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
-   || mulS(P, xx[0].c, D))
-    goto exit;
-  ga[0].c = P;
+  memset(ga1, 0, sizeof (ga1));
+  memset(pa1, 0, sizeof (pa1));
+  ga1[F].c = V->f;
+  ga1[X0].c = V->e;
+  for (i = 0; i < chCnt; ++i) {
+    void *tv;
+
+    if (!ga1[i].c && !(ga1[i].c = chanCreate(0, 0, 0)))
+      goto exit;
+    ga1[i].v = (void **)&r[i];
+    ga1[i].o = chanOpSht;
+  }
+  memcpy(pa1, ga1, sizeof (pa1));
+
   c.n = 1;
   c.d = 1;
-  if (ntgS(X, P, &c))
+  ga1[F].o = chanOpGet;
+  pa1[X0].o = chanOpPut;
+  if (dffS(ga1[D].c, pa1[F].c)
+   || mulS(ga1[P].c, pa1[X1].c, pa1[D].c)
+   || ntgS(ga1[X].c, pa1[P].c, &c))
     goto exit;
-  ga[0].c = xx[1].c;
-  pa[0].c = ga[0].c;
-  pa[0].v = 0;
-  pa[0].o = chanOpSht;
-  pa[1].c = ga[1].c;
-  pa[1].v = ga[0].v;
-  pa[1].o = chanOpPut;
-  while (chanOne(0, sizeof (ga) / sizeof (ga[0]), ga) == 1 && ga[0].s == chanOsGet) {
-    if (chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 2 || pa[1].s != chanOsPut) {
-      free(x);
+  ga1[F].o = chanOpSht;
+  ga1[X].o = chanOpGet;
+  pa1[X1].o = chanOpPut;
+  while ((i = chanOne(0, sizeof (ga1) / sizeof (ga1[0]), ga1)) == X + 1 && ga1[X].s == chanOsGet) {
+    r[X0] = r[X];
+    if (!(r[X1] = dupR(r[X]))
+     || chanAll(0, sizeof (pa1) / sizeof (pa1[0]), pa1) != chanAlOp) {
+      free(r[X0]);
+      free(r[X1]);
       break;
     }
   }
 exit:
-  chanShut(V->e), chanClose(V->e);
-  chanShut(X), chanClose(X);
-  chanShut(xx[0].c), chanClose(xx[0].c);
-  chanShut(V->f);
-  chanShut(D);
-  chanShut(P);
-  chanShut(xx[1].c);
-  while (chanOp(0, ga[0].c, (void **)&x, chanOpGet) == chanOsGet)
-    free(x);
-  chanClose(V->f);
-  chanClose(D);
-  chanClose(P);
-  chanClose(xx[1].c);
+  for (i = 0; i < chCnt; ++i)
+    if (pa1[i].o == chanOpPut)
+      chanShut(pa1[i].c), chanClose(pa1[i].c);;
+  for (i = 0; i < chCnt; ++i)
+    if (ga1[i].o == chanOpGet)
+      chanShut(ga1[i].c);
+  for (i = 0; i < chCnt; ++i)
+    if (ga1[i].o == chanOpGet) {
+      while (chanOp(0, ga1[i].c, (void **)&r[0], chanOpGet) == chanOsGet)
+        free(r[0]);
+      chanClose(ga1[i].c);
+    }
   free(v);
   return (0);
 }
@@ -1335,93 +1148,85 @@ rcpST(
 void *v
 #define V ((struct rcpST *)v)
 ){
-  rational *f;
-  chan_t *R;
-  chan_t *M;
-  void *tv;
-  chanArr_t rr[2];
-  chanArr_t ga[2];
-  chanArr_t pa[2];
+  enum ch {
+   R = 0, F, M, RM, RT, chCnt
+  };
+  rational *r[chCnt];
+  chanArr_t ga1[chCnt]; /* get F then RT */
+  chanArr_t pa1[chCnt]; /* put R */
+  chanArr_t pa2[chCnt]; /* put RM */
+  unsigned int i;
   rational n;
 
-  ga[0].c = V->f;
-  ga[0].v = (void **)&f;
-  ga[0].o = chanOpGet;
-  ga[1].c = V->r;
-  ga[1].v = 0;
-  ga[1].o = chanOpSht;
-  R = M = 0;
-  rr[0].c = rr[1].c = 0;
-  if (!(tv = chanFifoStSa(realloc, free, SZ))
-   || !(R = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
-   || !(tv = chanFifoStSa(realloc, free, SZ))
-   || !(rr[0].c = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
-   || !(tv = chanFifoStSa(realloc, free, SZ))
-   || !(rr[1].c = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
-   || splS(R, rr, sizeof (rr) / sizeof (rr[0]))
-   || chanOne(0, sizeof (ga) / sizeof (ga[0]), ga) != 1 || ga[0].s != chanOsGet)
-    goto exit;
-  rcpOfR(f);
-  n.n = -f->n;
-  n.d = f->d;
-  if (!(tv = chanFifoStSa(realloc, free, SZ))
-   || !(M = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
-   || mulS(M, V->f, rr[0].c)) {
-    free(f);
-    goto exit;
-  }
-  ga[0].c = M;
-  {
-    chanArr_t ta[3];
+  memset(ga1, 0, sizeof (ga1));
+  memset(pa1, 0, sizeof (pa1));
+  memset(pa2, 0, sizeof (pa2));
+  ga1[R].c = V->r;
+  ga1[F].c = V->f;
+  for (i = 0; i < chCnt; ++i) {
+    void *tv;
 
-    ta[0].c = R;
-    ta[0].v = (void **)&f;
-    ta[0].o = chanOpPut;
-    ta[1].c = M;
-    ta[1].v = 0;
-    ta[1].o = chanOpSht;
-    ta[1].c = V->r;
-    ta[1].v = 0;
-    ta[1].o = chanOpSht;
-    if (chanOne(0, sizeof (ta) / sizeof (ta[0]), ta) != 1 || ta[0].s != chanOsPut) {
-      free(f);
-      chanShut(rr[1].c);
-      while (chanOp(0, rr[1].c, (void **)&f, chanOpGet) == chanOsGet)
-        free(f);
+    if (!ga1[i].c && !(ga1[i].c = chanCreate(0, 0, 0)))
       goto exit;
-    }
+    ga1[i].v = (void **)&r[i];
+    ga1[i].o = chanOpSht;
   }
-  if (mulT(R, M, &n)) {
-    chanShut(rr[1].c);
-    while (chanOp(0, rr[1].c, (void **)&f, chanOpGet) == chanOsGet)
-      free(f);
+  memcpy(pa1, ga1, sizeof (pa1));
+  memcpy(pa2, ga1, sizeof (pa2));
+
+  ga1[F].o = chanOpGet;
+  pa1[R].o = chanOpPut;
+  if (chanOne(0, sizeof (ga1) / sizeof (ga1[0]), ga1) != F + 1 || ga1[F].s != chanOsGet)
+    goto exit;
+  ga1[F].o = chanOpSht;
+  rcpOfR(r[F]);
+  n.n = -r[F]->n;
+  n.d = r[F]->d;
+  if (!(r[R] = dupR(r[F]))
+   || chanOne(0, sizeof (pa1) / sizeof (pa1[0]), pa1) != R + 1 || pa1[R].s != chanOsPut) {
+    free(r[R]);
+    free(r[F]);
     goto exit;
   }
-  ga[0].c = rr[1].c;
-  pa[0].c = ga[0].c;
-  pa[0].v = 0;
-  pa[0].o = chanOpSht;
-  pa[1].c = ga[1].c;
-  pa[1].v = ga[0].v;
-  pa[1].o = chanOpPut;
-  while (chanOne(0, sizeof (ga) / sizeof (ga[0]), ga) == 1 && ga[0].s == chanOsGet) {
-    if (chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 2 || pa[1].s != chanOsPut) {
-      free(f);
+  r[RM] = r[F];
+  pa2[RM].o = chanOpPut;
+  if (chanOne(0, sizeof (pa2) / sizeof (pa2[0]), pa2) != RM + 1 || pa2[RM].s != chanOsPut) {
+    free(r[RM]);
+    goto exit;
+  }
+  if (mulS(ga1[M].c, pa1[F].c, pa1[RM].c)
+   || mulT(ga1[RT].c, pa1[M].c, &n))
+    goto exit;
+  ga1[RT].o = chanOpGet;
+  while (chanOne(0, sizeof (ga1) / sizeof (ga1[0]), ga1) == RT + 1 && ga1[RT].s == chanOsGet) {
+    if (!(r[R] = dupR(r[RT]))
+     || chanOne(0, sizeof (pa1) / sizeof (pa1[0]), pa1) != R + 1 || pa1[R].s != chanOsPut) {
+      free(r[R]);
+      free(r[RT]);
+      break;
+    }
+    r[RM] = r[RT];
+    if (chanOne(0, sizeof (pa2) / sizeof (pa2[0]), pa2) != RM + 1 || pa2[RM].s != chanOsPut) {
+      free(r[RM]);
       break;
     }
   }
 exit:
-  chanShut(V->r), chanClose(V->r);
-  chanShut(rr[0].c), chanClose(rr[0].c);
-  chanShut(R), chanClose(R);
-  chanShut(V->f);
-  chanShut(M);
-  chanShut(rr[1].c);
-  while (chanOp(0, ga[0].c, (void **)&f, chanOpGet) == chanOsGet)
-    free(f);
-  chanClose(V->f);
-  chanClose(M);
-  chanClose(rr[1].c);
+  for (i = 0; i < chCnt; ++i)
+    if (pa1[i].o == chanOpPut)
+      chanShut(pa1[i].c), chanClose(pa1[i].c);;
+  for (i = 0; i < chCnt; ++i)
+    if (pa2[i].o == chanOpPut)
+      chanShut(pa2[i].c), chanClose(pa2[i].c);;
+  for (i = 0; i < chCnt; ++i)
+    if (ga1[i].o == chanOpGet)
+      chanShut(ga1[i].c);
+  for (i = 0; i < chCnt; ++i)
+    if (ga1[i].o == chanOpGet) {
+      while (chanOp(0, ga1[i].c, (void **)&r[0], chanOpGet) == chanOsGet)
+        free(r[0]);
+      chanClose(ga1[i].c);
+    }
   free(v);
   return (0);
 }
@@ -1470,172 +1275,98 @@ revST(
 void *v
 #define V ((struct revST *)v)
 ){
-  rational *f;
-  rational *t;
-  chan_t *R;
-  chan_t *FR;
-  chan_t *RR;
-  chan_t *RRFR;
-  void *tv;
-  chanArr_t rr[3];
-  chanArr_t rrr[2];
-  chanArr_t ga[2];
-  chanArr_t pa[2];
+  enum ch {
+   R0 = 0, F, R1, FR1, RB2, RB0, RB1, RB2FR1, R, chCnt
+  };
+  rational *r[chCnt];
+  chanArr_t ga1[chCnt]; /* get F then R */
+  chanArr_t pa1[chCnt]; /* put R0 R1 */
+  chanArr_t pa2[chCnt]; /* put RB0 RB1 */
+  unsigned int i;
   rational n;
 
-  ga[0].c = V->f;
-  ga[0].v = (void **)&f;
-  ga[0].o = chanOpGet;
-  ga[1].c = V->r;
-  ga[1].v = 0;
-  ga[1].o = chanOpSht;
-  R = FR = RR = RRFR = 0;
-  rr[0].c = rr[1].c = 0;
-  rrr[0].c = rrr[1].c = 0;
-  if (chanOne(0, sizeof (ga) / sizeof (ga[0]), ga) != 1 || ga[0].s != chanOsGet)
-    goto exit;
-  t = f;
-  if (chanOne(0, sizeof (ga) / sizeof (ga[0]), ga) != 1 || ga[0].s != chanOsGet) {
-    free(t);
-    goto exit;
-  }
-  rcpOfR(f);
-  n.n = -f->n;
-  n.d = f->d;
-  if (!(tv = chanFifoStSa(realloc, free, SZ))
-   || !(R = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
-   || !(tv = chanFifoStSa(realloc, free, SZ))
-   || !(rr[0].c = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
-   || !(tv = chanFifoStSa(realloc, free, SZ))
-   || !(rr[1].c = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
-   || !(tv = chanFifoStSa(realloc, free, SZ))
-   || !(rr[2].c = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
-   || splS(R, rr, sizeof (rr) / sizeof (rr[0]))
-   || !(tv = chanFifoStSa(realloc, free, SZ))
-   || !(FR = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
-   || sbtS(FR, V->f, rr[0].c)) {
-    free(f);
-    free(t);
-    goto exit;
-  }
-  ga[0].c = FR;
-  {
-    chanArr_t ta[3];
+  memset(ga1, 0, sizeof (ga1));
+  memset(pa1, 0, sizeof (pa1));
+  memset(pa2, 0, sizeof (pa2));
+  ga1[R0].c = V->r;
+  ga1[F].c = V->f;
+  for (i = 0; i < chCnt; ++i) {
+    void *tv;
 
-    ta[0].c = R;
-    ta[0].v = (void **)&t;
-    ta[0].o = chanOpPut;
-    ta[1].c = ga[0].c;
-    ta[1].v = 0;
-    ta[1].o = chanOpSht;
-    ta[2].c = ga[1].c;
-    ta[2].v = 0;
-    ta[2].o = chanOpSht;
-    if (chanOne(0, sizeof (ta) / sizeof (ta[0]), ta) != 1 || ta[0].s != chanOsPut) {
-      free(f);
-      free(t);
+    if (!ga1[i].c && !(ga1[i].c = chanCreate(0, 0, 0)))
       goto exit;
-    }
-    ta[0].v = (void **)&f;
-    if (chanOne(0, sizeof (ta) / sizeof (ta[0]), ta) != 1 || ta[0].s != chanOsPut) {
-      free(f);
-      chanShut(rr[1].c);
-      chanShut(rr[2].c);
-      while (chanOp(0, rr[1].c, (void **)&f, chanOpGet) == chanOsGet)
-        free(f);
-      while (chanOp(0, rr[2].c, (void **)&f, chanOpGet) == chanOsGet)
-        free(f);
-      goto exit;
-    }
-    ta[0].c = rr[1].c;
-    ta[0].o = chanOpGet;
-    if (chanOne(0, sizeof (ta) / sizeof (ta[0]), ta) != 1 || ta[0].s != chanOsGet) {
-      chanShut(rr[1].c);
-      chanShut(rr[2].c);
-      while (chanOp(0, rr[1].c, (void **)&f, chanOpGet) == chanOsGet)
-        free(f);
-      while (chanOp(0, rr[2].c, (void **)&f, chanOpGet) == chanOsGet)
-        free(f);
-      goto exit;
-    }
-    free(f);
+    ga1[i].v = (void **)&r[i];
+    ga1[i].o = chanOpSht;
   }
-  if (!(tv = chanFifoStSa(realloc, free, SZ))
-   || !(rrr[0].c = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
-   || !(tv = chanFifoStSa(realloc, free, SZ))
-   || !(rrr[1].c = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
-   || splS(rr[1].c, rrr, sizeof (rrr) / sizeof (rrr[0]))) {
-    chanShut(rr[1].c);
-    chanShut(rr[2].c);
-    while (chanOp(0, rr[1].c, (void **)&f, chanOpGet) == chanOsGet)
-      free(f);
-    while (chanOp(0, rr[2].c, (void **)&f, chanOpGet) == chanOsGet)
-      free(f);
+  memcpy(pa1, ga1, sizeof (pa1));
+  memcpy(pa2, ga1, sizeof (pa2));
+
+  ga1[F].o = chanOpGet;
+  pa1[R0].o = chanOpPut;
+  if (chanOne(0, sizeof (ga1) / sizeof (ga1[0]), ga1) != F + 1 || ga1[F].s != chanOsGet)
+    goto exit;
+  r[R0] = r[F];
+  if (chanOne(0, sizeof (ga1) / sizeof (ga1[0]), ga1) != F + 1 || ga1[F].s != chanOsGet) {
+    free(r[R0]);
     goto exit;
   }
-  if (!(tv = chanFifoStSa(realloc, free, SZ))
-   || !(RR = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
-   || mulS(RR, rrr[0].c, rrr[1].c)) {
-    chanShut(rrr[0].c);
-    chanShut(rrr[1].c);
-    chanShut(rr[2].c);
-    while (chanOp(0, rrr[0].c, (void **)&f, chanOpGet) == chanOsGet)
-      free(f);
-    while (chanOp(0, rrr[1].c, (void **)&f, chanOpGet) == chanOsGet)
-      free(f);
-    while (chanOp(0, rr[2].c, (void **)&f, chanOpGet) == chanOsGet)
-      free(f);
+  rcpOfR(r[F]);
+  n.n = -r[F]->n;
+  n.d = r[F]->d;
+  if (sbtS(ga1[FR1].c, pa1[F].c, pa1[R1].c)
+   || mulS(ga1[RB2].c, pa2[RB0].c, pa2[RB1].c)
+   || mulS(ga1[RB2FR1].c, pa2[RB2].c, pa1[FR1].c)
+   || mulT(ga1[R].c, pa1[RB2FR1].c, &n)) {
+    free(r[R0]);
+    free(r[F]);
     goto exit;
   }
-  if (!(tv = chanFifoStSa(realloc, free, SZ))
-   || !(RRFR = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
-   || mulS(RRFR, RR, FR)) {
-    chanShut(RR);
-    chanShut(rr[2].c);
-    while (chanOp(0, RR, (void **)&f, chanOpGet) == chanOsGet)
-      free(f);
-    while (chanOp(0, rr[2].c, (void **)&f, chanOpGet) == chanOsGet)
-      free(f);
+  ga1[F].o = chanOpSht;
+  ga1[R].o = chanOpGet;
+  pa1[R1].o = chanOpPut;
+  if (!(r[R1] = dupR(r[R0]))
+   || chanAll(0, sizeof (pa1) / sizeof (pa1[0]), pa1) != chanAlOp) {
+    free(r[R1]);
+    free(r[R0]);
+    free(r[F]);
     goto exit;
   }
-  ga[0].c = RRFR;
-  if (mulT(R, RRFR, &n)) {
-    chanShut(rr[2].c);
-    while (chanOp(0, rr[2].c, (void **)&f, chanOpGet) == chanOsGet)
-      free(f);
-    goto exit;
-  }
-  ga[0].c = rr[2].c;
-  pa[0].c = ga[0].c;
-  pa[0].v = 0;
-  pa[0].o = chanOpSht;
-  pa[1].c = ga[1].c;
-  pa[1].v = ga[0].v;
-  pa[1].o = chanOpPut;
-  while (chanOne(0, sizeof (ga) / sizeof (ga[0]), ga) == 1 && ga[0].s == chanOsGet) {
-    if (chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 2 || pa[1].s != chanOsPut) {
-      free(f);
+  pa2[RB0].o = pa2[RB1].o = chanOpPut;
+  r[R] = r[F];
+  do {
+    r[RB1] = 0;
+    if (!(r[RB0] = dupR(r[R]))
+     || !(r[RB1] = dupR(r[R]))
+     || chanAll(0, sizeof (pa2) / sizeof (pa2[0]), pa2) != chanAlOp) {
+      free(r[RB1]);
+      free(r[RB0]);
+      free(r[R]);
       break;
     }
-  }
+    r[R0] = r[R];
+    if (!(r[R1] = dupR(r[R]))
+     || chanAll(0, sizeof (pa1) / sizeof (pa1[0]), pa1) != chanAlOp) {
+      free(r[R1]);
+      free(r[R0]);
+      break;
+    }
+  } while (chanOne(0, sizeof (ga1) / sizeof (ga1[0]), ga1) == R + 1 && ga1[R].s == chanOsGet);
 exit:
-  chanShut(V->r), chanClose(V->r);
-  chanShut(R), chanClose(R);
-  chanShut(rr[0].c), chanClose(rr[0].c);
-  chanShut(rr[1].c), chanClose(rr[1].c);
-  chanShut(rrr[0].c), chanClose(rrr[0].c);
-  chanShut(rrr[1].c), chanClose(rrr[1].c);
-  chanShut(RR), chanClose(RR);
-  chanShut(V->f);
-  chanShut(FR);
-  chanShut(RRFR);
-  chanShut(rr[2].c);
-  while (chanOp(0, ga[0].c, (void **)&t, chanOpGet) == chanOsGet)
-    free(t);
-  chanClose(V->f);
-  chanClose(FR);
-  chanClose(RRFR);
-  chanClose(rr[2].c);
+  for (i = 0; i < chCnt; ++i)
+    if (pa1[i].o == chanOpPut)
+      chanShut(pa1[i].c), chanClose(pa1[i].c);;
+  for (i = 0; i < chCnt; ++i)
+    if (pa2[i].o == chanOpPut)
+      chanShut(pa2[i].c), chanClose(pa2[i].c);;
+  for (i = 0; i < chCnt; ++i)
+    if (ga1[i].o == chanOpGet)
+      chanShut(ga1[i].c);
+  for (i = 0; i < chCnt; ++i)
+    if (ga1[i].o == chanOpGet) {
+      while (chanOp(0, ga1[i].c, (void **)&r[0], chanOpGet) == chanOsGet)
+        free(r[0]);
+      chanClose(ga1[i].c);
+    }
   free(v);
   return (0);
 }
@@ -1691,27 +1422,29 @@ void *v
   chanArr_t pa[2];
   unsigned long i;
 
-  ga[0].c = V->f;
-  ga[0].v = (void **)&f;
-  ga[0].o = chanOpGet;
-  ga[1].c = V->p;
-  ga[1].v = 0;
-  ga[1].o = chanOpSht;
-  pa[0].c = ga[0].c;
-  pa[0].v = 0;
-  pa[0].o = chanOpSht;
-  pa[1].c = ga[1].c;
-  pa[1].v = ga[0].v;
-  pa[1].o = chanOpPut;
-  while (chanOne(0, sizeof (ga) / sizeof (ga[0]), ga) == 1 && ga[0].s == chanOsGet) {
+  ga[0].c = V->p;
+  ga[0].v = 0;
+  ga[0].o = chanOpSht;
+  ga[1].c = V->f;
+  ga[1].v = (void **)&f;
+  ga[1].o = chanOpGet;
+
+  pa[0].c = V->p;
+  pa[0].v = (void **)&f;
+  pa[0].o = chanOpPut;
+  pa[1].c = V->f;
+  pa[1].v = 0;
+  pa[1].o = chanOpSht;
+
+  while (chanOne(0, sizeof (ga) / sizeof (ga[0]), ga) == 2 && ga[1].s == chanOsGet) {
     mulByR(f, &V->c);
-    if (chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 2 || pa[1].s != chanOsPut) {
+    if (chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 1 || pa[0].s != chanOsPut) {
       free(f);
       break;
     }
     for (i = 0; i < V->n; ++i)
       if (!(f = newR(0, 1))
-       || chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 2 || pa[1].s != chanOsPut) {
+       || chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 1 || pa[0].s != chanOsPut) {
         free(f);
         goto exit;
       }
@@ -1796,9 +1529,10 @@ main(
   rational r2;
   rational r3;
 
+  chanInit(realloc, free);
+
   r1.n = 1, r1.d = 1;
-  if (!(tv = chanFifoStSa(realloc, free, SZ))
-   || !(c1 = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
+  if (!(c1 = chanCreate(0, 0, 0))
    || conS(c1, &r1))
     goto exit;
   printf("conS:"),fflush(stdout);
@@ -1806,61 +1540,49 @@ main(
 
   r1.n = 1, r1.d = 1;
   r2.n = -1, r2.d = 1;
-  if (!(tv = chanFifoStSa(realloc, free, SZ))
-   || !(c1 = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
+  if (!(c1 = chanCreate(0, 0, 0))
    || conS(c1, &r1)
-   || !(tv = chanFifoStSa(realloc, free, SZ))
-   || !(c2 = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
+   || !(c2 = chanCreate(0, 0, 0))
    || mulT(c2, c1, &r2))
     goto exit;
   printf("mulT:"),fflush(stdout);
   printS(c2, 10);
 
   r1.n = 1, r1.d = 1;
-  if (!(tv = chanFifoStSa(realloc, free, SZ))
-   || !(c1 = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
+  if (!(c1 = chanCreate(0, 0, 0))
    || conS(c1, &r1)
-   || !(tv = chanFifoStSa(realloc, free, SZ))
-   || !(c2 = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
+   || !(c2 = chanCreate(0, 0, 0))
    || conS(c2, &r1)
-   || !(tv = chanFifoStSa(realloc, free, SZ))
-   || !(c3 = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
+   || !(c3 = chanCreate(0, 0, 0))
    || addS(c3, c1, c2))
     goto exit;
   printf("addS:"),fflush(stdout);
   printS(c3, 10);
 
   r1.n = 1, r1.d = 1;
-  if (!(tv = chanFifoStSa(realloc, free, SZ))
-   || !(c1 = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
+  if (!(c1 = chanCreate(0, 0, 0))
    || conS(c1, &r1)
-   || !(tv = chanFifoStSa(realloc, free, SZ))
-   || !(c2 = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
+   || !(c2 = chanCreate(0, 0, 0))
    || xnS(c2, c1, 1))
     goto exit;
   printf("xnS:"),fflush(stdout);
   printS(c2, 10);
 
   r1.n = 1, r1.d = 1;
-  if (!(tv = chanFifoStSa(realloc, free, SZ))
-   || !(c1 = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
+  if (!(c1 = chanCreate(0, 0, 0))
    || conS(c1, &r1)
-   || !(tv = chanFifoStSa(realloc, free, SZ))
-   || !(c2 = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
+   || !(c2 = chanCreate(0, 0, 0))
    || conS(c2, &r1)
-   || !(tv = chanFifoStSa(realloc, free, SZ))
-   || !(c3 = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
+   || !(c3 = chanCreate(0, 0, 0))
    || mulS(c3, c1, c2))
     goto exit;
   printf("mulS:"),fflush(stdout);
   printS(c3, 10);
 
   r1.n = 1, r1.d = 1;
-  if (!(tv = chanFifoStSa(realloc, free, SZ))
-   || !(c1 = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
+  if (!(c1 = chanCreate(0, 0, 0))
    || conS(c1, &r1)
-   || !(tv = chanFifoStSa(realloc, free, SZ))
-   || !(c2 = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
+   || !(c2 = chanCreate(0, 0, 0))
    || dffS(c2, c1))
     goto exit;
   printf("dffS:"),fflush(stdout);
@@ -1868,58 +1590,47 @@ main(
 
   r1.n = 1, r1.d = 1;
   r2.n = 0, r2.d = 1;
-  if (!(tv = chanFifoStSa(realloc, free, SZ))
-   || !(c1 = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
+  if (!(c1 = chanCreate(0, 0, 0))
    || conS(c1, &r1)
-   || !(tv = chanFifoStSa(realloc, free, SZ))
-   || !(c2 = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
+   || !(c2 = chanCreate(0, 0, 0))
    || ntgS(c2, c1, &r2))
     goto exit;
   printf("ntgS:"),fflush(stdout);
   printS(c2, 10);
 
   r1.n = 1, r1.d = 1;
-  if (!(tv = chanFifoStSa(realloc, free, SZ))
-   || !(c1 = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
+  if (!(c1 = chanCreate(0, 0, 0))
    || conS(c1, &r1)
-   || !(tv = chanFifoStSa(realloc, free, SZ))
-   || !(c2 = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
+   || !(c2 = chanCreate(0, 0, 0))
    || conS(c2, &r1)
-   || !(tv = chanFifoStSa(realloc, free, SZ))
-   || !(c3 = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
+   || !(c3 = chanCreate(0, 0, 0))
    || sbtS(c3, c1, c2))
     goto exit;
   printf("sbtS:"),fflush(stdout);
   printS(c3, 10);
 
   r1.n = 1, r1.d = 1;
-  if (!(tv = chanFifoStSa(realloc, free, SZ))
-   || !(c1 = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
+  if (!(c1 = chanCreate(0, 0, 0))
    || conS(c1, &r1)
-   || !(tv = chanFifoStSa(realloc, free, SZ))
-   || !(c2 = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
+   || !(c2 = chanCreate(0, 0, 0))
    || expS(c2, c1))
     goto exit;
   printf("expS:"),fflush(stdout);
   printS(c2, 10);
 
   r1.n = 1, r1.d = 1;
-  if (!(tv = chanFifoStSa(realloc, free, SZ))
-   || !(c1 = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
+  if (!(c1 = chanCreate(0, 0, 0))
    || conS(c1, &r1)
-   || !(tv = chanFifoStSa(realloc, free, SZ))
-   || !(c2 = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
+   || !(c2 = chanCreate(0, 0, 0))
    || rcpS(c2, c1))
     goto exit;
   printf("rcpS:"),fflush(stdout);
   printS(c2, 10);
 
   r1.n = 1, r1.d = 1;
-  if (!(tv = chanFifoStSa(realloc, free, SZ))
-   || !(c1 = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
+  if (!(c1 = chanCreate(0, 0, 0))
    || conS(c1, &r1)
-   || !(tv = chanFifoStSa(realloc, free, SZ))
-   || !(c2 = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
+   || !(c2 = chanCreate(0, 0, 0))
    || revS(c2, c1))
     goto exit;
   printf("revS:"),fflush(stdout);
@@ -1927,11 +1638,9 @@ main(
 
   r1.n = 1, r1.d = 1;
   r2.n = -1, r2.d = 1;
-  if (!(tv = chanFifoStSa(realloc, free, SZ))
-   || !(c1 = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
+  if (!(c1 = chanCreate(0, 0, 0))
    || conS(c1, &r1)
-   || !(tv = chanFifoStSa(realloc, free, SZ))
-   || !(c2 = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
+   || !(c2 = chanCreate(0, 0, 0))
    || msbtS(c2, c1, &r2, 2))
     goto exit;
   printf("msbtS:"),fflush(stdout);
@@ -1940,14 +1649,11 @@ main(
   r1.n = 1, r1.d = 1;
   r2.n = -1, r2.d = 1;
   r3.n = 0, r3.d = 1;
-  if (!(tv = chanFifoStSa(realloc, free, SZ))
-   || !(c1 = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
+  if (!(c1 = chanCreate(0, 0, 0))
    || conS(c1, &r1)
-   || !(tv = chanFifoStSa(realloc, free, SZ))
-   || !(c2 = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
+   || !(c2 = chanCreate(0, 0, 0))
    || msbtS(c2, c1, &r2, 2)
-   || !(tv = chanFifoStSa(realloc, free, SZ))
-   || !(c3 = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
+   || !(c3 = chanCreate(0, 0, 0))
    || ntgS(c3, c2, &r3))
     goto exit;
   printf("ntg-msbt:"),fflush(stdout);
@@ -1956,17 +1662,13 @@ main(
   r1.n = 1, r1.d = 1;
   r2.n = -1, r2.d = 1;
   r3.n = 0, r3.d = 1;
-  if (!(tv = chanFifoStSa(realloc, free, SZ))
-   || !(c1 = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
+  if (!(c1 = chanCreate(0, 0, 0))
    || conS(c1, &r1)
-   || !(tv = chanFifoStSa(realloc, free, SZ))
-   || !(c2 = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
+   || !(c2 = chanCreate(0, 0, 0))
    || msbtS(c2, c1, &r2, 2)
-   || !(tv = chanFifoStSa(realloc, free, SZ))
-   || !(c3 = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
+   || !(c3 = chanCreate(0, 0, 0))
    || ntgS(c3, c2, &r3)
-   || !(tv = chanFifoStSa(realloc, free, SZ))
-   || !(c4 = chanCreate(realloc, free, chanFifoStSi, tv, chanFifoStSd))
+   || !(c4 = chanCreate(0, 0, 0))
    || revS(c4, c3))
     goto exit;
   printf("tanS:"),fflush(stdout);

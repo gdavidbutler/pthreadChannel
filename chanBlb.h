@@ -50,9 +50,6 @@ typedef enum {
  *
  * After completion, the socketFd has been shutdown(), as above, but NOT closed.
  *
- * Provide:
- *  realloc semantics implementation function
- *  free semantics implementation function
  * Provide an optional ingress chan_t: (if not provided, socketFd will not be shutdown(SHUT_RD))
  *   chanOpGet data that is read() from socketFd
  *   chanShut() to shutdown(SHUT_RD) on socketFd
@@ -67,9 +64,7 @@ typedef enum {
  */
 int
 chanSock(
-  void *(*realloc)(void *, unsigned long)
- ,void (*free)(void *)
- ,chan_t *ingress
+  chan_t *ingress
  ,chan_t *egress
  ,int socketFd
  ,chanBlbFrm_t framing
@@ -87,9 +82,6 @@ chanSock(
  * A chanOpGet on the ingress channel will return chanBlb_t items from read()s on the readFd:
  *  A chanOpPut or read() failure will close() the readFd and chanShut() the ingress channel.
  *
- * Provide:
- *  realloc semantics implementation function
- *  free semantics implementation function
  * Provide an optional ingress chan_t
  *   chanOpGet data that is read() from readFd
  *   chanShut() to close() readFd
@@ -104,9 +96,7 @@ chanSock(
  */
 int
 chanPipe(
-  void *(*realloc)(void *, unsigned long)
- ,void (*free)(void *)
- ,chan_t *ingress
+  chan_t *ingress
  ,chan_t *egress
  ,int readFd
  ,int writeFd

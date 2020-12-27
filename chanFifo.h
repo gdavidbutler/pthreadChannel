@@ -31,9 +31,7 @@
 /* allocate a context of items */
 void *
 chanFifoStSa(
-  void *(*realloc)(void *, unsigned long)
- ,void (*free)(void *)
- ,unsigned int size
+  unsigned int size
 ); /* returns 0 on failure */
 
 /* deallocate context */
@@ -56,9 +54,7 @@ chanFifoStSi(
 /* allocate a context of items */
 void *
 chanFifoDySa(
-  void *(*realloc)(void *, unsigned long)
- ,void (*free)(void *)
- ,unsigned int max
+  unsigned int max
  ,unsigned int initial
 ); /* returns 0 on failure */
 

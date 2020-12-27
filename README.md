@@ -41,17 +41,20 @@ NOTE: chanOpen a chan_t before passing it (delegating chanClose) to eliminate a 
     chanOp(responseChan, response, chanOpPut);
     chanClose(responseChan);
     ````
-
-Channels distribute items fairly under pressure:
-* If there are waiting Gets, a new Get goes to the end of the line
-  * unless there are also waiting Puts (as waiting Gets won't wait long)
-    * then an item is opportunistically Get instead of waiting.
-* If there are waiting Puts, a new Put goes to the end of the line
-  * unless there are also waiting Gets (as waiting Puts won't wait long)
-    * then an item is opportunistically Put instead of waiting.
+* Channels distribute items fairly under pressure:
+  * If there are waiting Gets, a new Get goes to the end of the line
+    * unless there are also waiting Puts (as waiting Gets won't wait long)
+      * then an item is opportunistically Get instead of waiting.
+  * If there are waiting Puts, a new Put goes to the end of the line
+    * unless there are also waiting Gets (as waiting Puts won't wait long)
+      * then an item is opportunistically Put instead of waiting.
+* Channels provide an [atomic-broadcast](https://en.wikipedia.org/wiki/Atomic_broadcast) primitive. (See [Example](#example) squint.)
+* Channels provide a form of [lazy-evaluation](https://en.wikipedia.org/wiki/Lazy_evaluation), a demand monitor. (See [Example](#example) squint.)
 
 Find the API in chan.h:
 
+* chanInit(...)
+  * Each process must call this before using Channels.
 * chanCreate(...)
   * Allocate an Open chan_t (initialize reference count at 1, pair with chanClose).
 * chanOpen(...)

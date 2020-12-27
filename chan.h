@@ -47,7 +47,7 @@ typedef enum chanSs { /* bit map */
  *  the operation the channel wants to perform on the store
  *  indication of waiting Gets and Puts
  *  and a value pointer
- * It returns the state of the store as it relates to Get and Put.
+ * Return the state of the store as it relates to Get and Put.
  * The store is called under protection of a channel operation mutex.
  */
 typedef chanSs_t
@@ -65,6 +65,17 @@ typedef void
 );
 
 /*
+ * Channel Init
+ *
+ * Must be called to provide thread safe realloc and free implementations
+ */
+void
+chanInit(
+  void *(*realloc)(void *, unsigned long)
+ ,void (*free)(void *)
+);
+
+/*
  * Channel
  */
 typedef struct chan chan_t;
@@ -75,37 +86,38 @@ typedef struct chan chan_t;
  *  This works best (providing low latency) when threads work more and talk less.
  *
  * When allocating the channel, supply:
- *  the realloc semantics implementation function
- *  the free semantics implementation function
  *  the store implementation function (or 0 if none)
  *  the store context (or 0 if none)
  *  the store context done function (or 0 if none)
  *
+ * Return 0 on error (memory allocation)
  * Returned channel is Open.
  */
 chan_t *
 chanCreate(
-  void *(*realloc)(void *, unsigned long)
- ,void (*free)(void *)
- ,chanSi_t impl
+  chanSi_t impl
  ,void *cntx
  ,chanSd_t done
 );
 
-/* channel (re)Open, to keep a channel from being deallocated till chanClose */
-/* return chn as a convience to allow: chanDup = chanOpen(chan) */
+/* Channel (re)Open, to keep a channel from being deallocated till chanClose */
+/* Calling with 0 is a harmless no-op */
+/* Return chn as a convience to allow: chanDup = chanOpen(chan) */
 chan_t *
 chanOpen(
   chan_t *chn
 );
 
-/* channel shutdown, afterwards chanOpPut returns chanOsSht and chanOpGet is non-blocking */
+/* Channel shutdown */
+/* then chanOpPut returns chanOsSht and chanOpGet is non-blocking */
+/* Calling with 0 is a harmless no-op */
 void
 chanShut(
   chan_t *chn
 );
 
 /* channel close, on last close, deallocate */
+/* calling with 0 is a harmless no-op */
 void
 chanClose(
   chan_t *chn
@@ -114,12 +126,12 @@ chanClose(
 /* channel operation */
 typedef enum chanOp {
   chanOpNop = 0 /* no operation, skip */
- ,chanOpSht     /* Shutdown [event only, use chanShut() to shutdown a channel] */
- ,chanOpGet     /* Get (event: store empty, queued Gets and no queued Puts) */
- ,chanOpPut     /* Put (event: store full, queued Puts and no queued Gets) */
+ ,chanOpSht     /* monitor for Shutdown */
+ ,chanOpGet     /* Get or monitor for demand (queued Puts on full store) */
+ ,chanOpPut     /* Put or monitor for demand (queued Gets on empty store) */
 } chanOp_t;
 
-/* channel operation state */
+/* channel operation status */
 typedef enum chanOs {
   chanOsNop = 0 /* None of the below */
  ,chanOsSht     /* Shutdown */
@@ -133,7 +145,7 @@ typedef enum chanOs {
  *  >0 timeout in nanoseconds
  *   0 block
  *  -1 non-blocking
- * val is where to get/put an item or 0 for event
+ * val is where to get/put an item or 0 for monitor
  */
 chanOs_t
 chanOp(
@@ -144,9 +156,10 @@ chanOp(
 );
 
 /* channel array */
+/* must be private to a thread */
 typedef struct chanArr {
   chan_t *c;  /* channel to operate on, 0 == chanOpNop */
-  void **v;   /* where to get/put or 0 for event */
+  void **v;   /* where to get/put or 0 for monitor */
   chanOp_t o;
   chanOs_t s;
 } chanArr_t;
@@ -156,7 +169,7 @@ typedef struct chanArr {
  *  >0 timeout in nanoseconds
  *   0 block
  *  -1 non-blocking
- * Returns 0 on error (memory allocation failure).
+ * Return 0 on error (memory allocation failure).
  * Otherwise the offset into the list is one less than the return value.
  */
 unsigned int
@@ -166,13 +179,13 @@ chanOne(
  ,chanArr_t *array
 );
 
-/* chanAll return */
-typedef enum chanMs {
-  chanMsErr = 0 /* memory allocation failure or deadlock */
- ,chanMsEvt     /* Event - check chanOs_t */
- ,chanMsOp      /* Operation - check chanOs_t */
- ,chanMsTmo     /* timeout */
-} chanMs_t;
+/* chanAll status */
+typedef enum chanAl {
+  chanAlErr = 0 /* memory allocation failure */
+ ,chanAlEvt     /* Event - check chanOs_t */
+ ,chanAlOp      /* Operation - check chanOs_t */
+ ,chanAlTmo     /* timeout */
+} chanAl_t;
 
 /*
  * Operate on all Channals of a Channal array based on nsTimeout:
@@ -180,7 +193,7 @@ typedef enum chanMs {
  *   0 block
  *  -1 non-blocking
  */
-chanMs_t
+chanAl_t
 chanAll(
   long nsTimeout
  ,unsigned int count

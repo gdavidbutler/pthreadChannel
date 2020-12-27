@@ -17,8 +17,10 @@ pipeproxy: example/pipeproxy.c chan.h chanBlb.h chan.o chanBlb.o
 squint: example/squint.c chan.h chanFifo.h chan.o chanFifo.o
 	$(CC) $(CFLAGS) -o squint example/squint.c chan.o chanFifo.o -lpthread
 
+# for MacOS change to
+#	$(CC) $(CFLAGS) -D_GNU_SOURCE -Dpthread_yield=pthread_yield_np -c chan.c
 chan.o: chan.c chan.h
-	$(CC) $(CFLAGS) -DHAVE_CONDATTR_SETCLOCK -c chan.c
+	$(CC) $(CFLAGS) -D_GNU_SOURCE -DHAVE_CONDATTR_SETCLOCK -c chan.c
 
 chanFifo.o: chanFifo.c chanFifo.h chan.h
 	$(CC) $(CFLAGS) -c chanFifo.c

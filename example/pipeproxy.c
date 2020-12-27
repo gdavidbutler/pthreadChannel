@@ -38,8 +38,9 @@ outT(
     for (l = 0; l < m->l && (i = write(1, m->b + l, m->l - l)) > 0; l += i);
     free(m);
   }
+exit:
   pthread_cleanup_pop(1); /* chanClose(v) */
-  return 0;
+  return (0);
 }
 
 int
@@ -51,8 +52,9 @@ main(
   pthread_t t;
   int i;
 
-  if (!(c[0] = chanCreate(realloc,free, 0,0,0))
-   || !(c[1] = chanCreate(realloc,free, 0,0,0))) {
+  chanInit(realloc, free);
+  if (!(c[0] = chanCreate(0,0,0))
+   || !(c[1] = chanCreate(0,0,0))) {
     perror("chanCreate");
     return (1);
   }
@@ -60,7 +62,7 @@ main(
     perror("pipe");
     return (1);
   }
-  if (!chanPipe(realloc,free, c[0], c[1], p[0], p[1], chanBlbFrmNs, 0)) {
+  if (!chanPipe(c[0], c[1], p[0], p[1], chanBlbFrmNs, 0)) {
     perror("chanPipe");
     return (1);
   }

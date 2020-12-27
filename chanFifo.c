@@ -19,11 +19,13 @@
 #include "chan.h"
 #include "chanFifo.h"
 
+extern void *(*ChanA)(void *, unsigned long);
+extern void (*ChanF)(void *);
+
 /* Static */
 
 /* chan fifo store context */
 struct chanFifoStSc {
-  void (*f)(void *);
   void **q;          /* circular store */
   unsigned int s;    /* store size */
   unsigned int h;    /* store head */
@@ -32,20 +34,17 @@ struct chanFifoStSc {
 
 void *
 chanFifoStSa(
-  void *(*a)(void *, unsigned long)
- ,void (*f)(void *)
- ,unsigned int s
+  unsigned int s
 ){
   struct chanFifoStSc *c;
 
   if (!s)
     return (0);
-  if (!(c = a(0, sizeof (*c)))
-   || !(c->q = a(0, s * sizeof (*c->q)))) {
-    f(c);
+  if (!(c = ChanA(0, sizeof (*c)))
+   || !(c->q = ChanA(0, s * sizeof (*c->q)))) {
+    ChanF(c);
     return (0);
   }
-  c->f = f;
   c->s = s;
   c->h = c->t = 0;
   return (c);
@@ -57,8 +56,8 @@ void
 chanFifoStSd(
   void *c
 ){
-  SC->f(SC->q);
-  SC->f(c);
+  ChanF(SC->q);
+  ChanF(c);
 }
 
 /* a store is started in chanSsCanPut status */
@@ -92,7 +91,6 @@ chanFifoStSi(
 
 /* chan fifo store context */
 struct chanFifoDySc {
-  void (*f)(void *);
   void **q;          /* circular store */
   unsigned int m;    /* store max */
   unsigned int s;    /* store size */
@@ -102,21 +100,18 @@ struct chanFifoDySc {
 
 void *
 chanFifoDySa(
-  void *(*a)(void *, unsigned long)
- ,void (*f)(void *)
- ,unsigned int m
+  unsigned int m
  ,unsigned int s
 ){
   struct chanFifoDySc *c;
 
   if (!m || !s || m < s)
     return (0);
-  if (!(c = a(0, sizeof (*c)))
-   || !(c->q = a(0, m * sizeof (*c->q)))) {
-    f(c);
+  if (!(c = ChanA(0, sizeof (*c)))
+   || !(c->q = ChanA(0, m * sizeof (*c->q)))) {
+    ChanF(c);
     return (0);
   }
-  c->f = f;
   c->m = m;
   c->s = s;
   c->h = c->t = 0;
@@ -129,8 +124,8 @@ void
 chanFifoDySd(
   void *c
 ){
-  SC->f(SC->q);
-  SC->f(c);
+  ChanF(SC->q);
+  ChanF(c);
 }
 
 /* a store is started in chanSsCanPut status */
