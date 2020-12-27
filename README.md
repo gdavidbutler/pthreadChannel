@@ -12,8 +12,10 @@ For another perspective see [Flow-based programming](https://en.wikipedia.org/wi
 * Channels, by default, store a single item. (For more, see [Store](#store), below.)
 * Channels only support intra-process exchanges. (For inter-process, see [Blob](#blob), below.)
 * Any number of pthreads can Put/Get on a Channel.
+  * Monitoring of Channel demand is supported. (See [Example](#example) squint, below.)
 * A pthread can Put/Get on any number of Channels.
-* The canonical Channel use is a transfer of a pointer to heap. (Delagating heap locking complexities to a heap management implementation e.g. realloc and free.)
+  * Ordered unicast (One) and atomic multicast (All) operations are supported. (See [Example](#example) squint, below.)
+* The canonical Channel use is a transfer of a pointer to heap. (Delegating heap locking complexities to a heap management implementation e.g. realloc and free.)
 NOTE: Items are discarded on last chanClose(). (To avoid leaking heap, chanOpGet till chanOsSht).
   * Putting pthread:
     ````C
@@ -48,8 +50,6 @@ NOTE: chanOpen a chan_t before passing it (delegating chanClose) to eliminate a 
   * If there are waiting Puts, a new Put goes to the end of the line
     * unless there are also waiting Gets (as waiting Puts won't wait long)
       * then an item is opportunistically Put instead of waiting.
-* Channels provide an [atomic-broadcast](https://en.wikipedia.org/wiki/Atomic_broadcast) primitive. (See [Example](#example) squint.)
-* Channels provide a form of [lazy-evaluation](https://en.wikipedia.org/wiki/Lazy_evaluation), a demand monitor. (See [Example](#example) squint.)
 
 Find the API in chan.h:
 
@@ -66,7 +66,7 @@ Find the API in chan.h:
 * chanOp(...)
   * perform an operation on a Channel
 * chanOne(...)
-  * Perform one (first capable) operation on an array of Channels.
+  * Perform one operation on an array of Channels (in the order provided).
 * chanAll(...)
   * Perform all operations on an array of Channels (distributed [Store](#store)).
 
@@ -83,7 +83,7 @@ A Store is still implemented as another CSP.
 However pthreads require operating system support and context switches are prohibitively expensive for simple Stores.
 Therefore Stores are implemented as function callbacks executed within pthreads' contexts.
 
-A Store can be provided on a chanCreate call.
+A Store can be provided on a chanCreate() call.
 If none is provided, a Channel contains a single item.
 This is best (lowest latency) when the cost of processing an item dominates the cost of a context switch.
 But as the processing cost decreases toward the context switch cost, Stores can drastically decrease context switching.
@@ -166,7 +166,7 @@ Connects two chanSocks back-to-back, with Channels reversed.
     1. ./sockproxy -T 1 -F 2 -S 2222 -t 1 -f 2 -h localhost -s ssh &
     1. ssh -p 2222 user@localhost
 * pipeproxy
-  * Copy stdin to stdout through chanPipe preserving read boundaries using NetString framing
+  * Copy stdin to stdout through chanPipe() preserving read boundaries using NetString framing
 * squint
   * Implementation of [M. Douglas McIlroy's "Squinting at Power Series"](https://swtch.com/~rsc/thread/squint.pdf).
 

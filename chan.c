@@ -1049,7 +1049,7 @@ unlock1:
     case chanOpSht:
       if (!(c = (a + i)->c))
         break;
-      if ((c->l & chanSu))
+      if (c->l & chanSu)
         (a + i)->s = chanOsSht;
       else
         (a + i)->s = chanOsNop;
@@ -1059,7 +1059,7 @@ unlock1:
     case chanOpGet:
       if (!(c = (a + i)->c))
         break;
-      if ((c->l & chanSu))
+      if (c->l & chanSu)
         (a + i)->s = chanOsSht;
       else if (!(a + i)->v) {
         if (!(c->t & chanSsCanPut) && !(c->l & chanPe))
@@ -1074,7 +1074,7 @@ unlock1:
     case chanOpPut:
       if (!(c = (a + i)->c))
         break;
-      if ((c->l & chanSu))
+      if (c->l & chanSu)
         (a + i)->s = chanOsSht;
       else if (!(a + i)->v) {
         if (!(c->t & chanSsCanGet) && !(c->l & chanGe))
@@ -1343,7 +1343,7 @@ unlock2:
       case chanOpSht:
         if (!(c = (a + i)->c))
           break;
-        if ((c->l & chanSu))
+        if (c->l & chanSu)
           (a + i)->s = chanOsSht;
         else
           (a + i)->s = chanOsNop;
@@ -1360,7 +1360,7 @@ unlock2:
           else
             WAKE(chanGe, g, && c->t & chanSsCanGet, || !(c->t & chanSsCanGet), break;);
         }
-        if ((c->l & chanSu))
+        if (c->l & chanSu)
           (a + i)->s = chanOsSht;
         else if (!(a + i)->v) {
           if (!(c->t & chanSsCanPut) && !(c->l & chanPe))
@@ -1382,7 +1382,7 @@ unlock2:
           else
             WAKE(chanPe, p, && c->t & chanSsCanPut, || !(c->t & chanSsCanPut), break;);
         }
-        if ((c->l & chanSu))
+        if (c->l & chanSu)
           (a + i)->s = chanOsSht;
         else if (!(a + i)->v) {
           if (!(c->t & chanSsCanGet) && !(c->l & chanGe))

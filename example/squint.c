@@ -594,7 +594,7 @@ void *v
 
   ga1[F].o = ga1[G].o = chanOpGet;
   pa1[P].o = chanOpPut;
-  if (chanAll(0, sizeof (ga1) / sizeof (ga1[0]), ga1) != chanAlOp)
+  if ((i = chanAll(0, sizeof (ga1) / sizeof (ga1[0]), ga1)) != chanAlOp)
     goto exit;
   f.n = r[F]->n;
   f.d = r[F]->d;
@@ -1514,7 +1514,6 @@ printS(
   chanShut(c);
   while (chanOp(0, c, (void **)&o, chanOpGet) == chanOsGet)
     free(o);
-  chanClose(c);
 }
 
 int
@@ -1537,6 +1536,7 @@ main(
     goto exit;
   printf("conS:"),fflush(stdout);
   printS(c1, 10);
+  chanClose(c1);
 
   r1.n = 1, r1.d = 1;
   r2.n = -1, r2.d = 1;
@@ -1547,6 +1547,8 @@ main(
     goto exit;
   printf("mulT:"),fflush(stdout);
   printS(c2, 10);
+  chanClose(c1);
+  chanClose(c2);
 
   r1.n = 1, r1.d = 1;
   if (!(c1 = chanCreate(0, 0, 0))
@@ -1558,6 +1560,9 @@ main(
     goto exit;
   printf("addS:"),fflush(stdout);
   printS(c3, 10);
+  chanClose(c1);
+  chanClose(c2);
+  chanClose(c3);
 
   r1.n = 1, r1.d = 1;
   if (!(c1 = chanCreate(0, 0, 0))
@@ -1567,6 +1572,8 @@ main(
     goto exit;
   printf("xnS:"),fflush(stdout);
   printS(c2, 10);
+  chanClose(c1);
+  chanClose(c2);
 
   r1.n = 1, r1.d = 1;
   if (!(c1 = chanCreate(0, 0, 0))
@@ -1578,6 +1585,9 @@ main(
     goto exit;
   printf("mulS:"),fflush(stdout);
   printS(c3, 10);
+  chanClose(c1);
+  chanClose(c2);
+  chanClose(c3);
 
   r1.n = 1, r1.d = 1;
   if (!(c1 = chanCreate(0, 0, 0))
@@ -1587,6 +1597,8 @@ main(
     goto exit;
   printf("dffS:"),fflush(stdout);
   printS(c2, 10);
+  chanClose(c1);
+  chanClose(c2);
 
   r1.n = 1, r1.d = 1;
   r2.n = 0, r2.d = 1;
@@ -1597,6 +1609,8 @@ main(
     goto exit;
   printf("ntgS:"),fflush(stdout);
   printS(c2, 10);
+  chanClose(c1);
+  chanClose(c2);
 
   r1.n = 1, r1.d = 1;
   if (!(c1 = chanCreate(0, 0, 0))
@@ -1608,6 +1622,9 @@ main(
     goto exit;
   printf("sbtS:"),fflush(stdout);
   printS(c3, 10);
+  chanClose(c1);
+  chanClose(c2);
+  chanClose(c3);
 
   r1.n = 1, r1.d = 1;
   if (!(c1 = chanCreate(0, 0, 0))
@@ -1617,6 +1634,8 @@ main(
     goto exit;
   printf("expS:"),fflush(stdout);
   printS(c2, 10);
+  chanClose(c1);
+  chanClose(c2);
 
   r1.n = 1, r1.d = 1;
   if (!(c1 = chanCreate(0, 0, 0))
@@ -1626,6 +1645,8 @@ main(
     goto exit;
   printf("rcpS:"),fflush(stdout);
   printS(c2, 10);
+  chanClose(c1);
+  chanClose(c2);
 
   r1.n = 1, r1.d = 1;
   if (!(c1 = chanCreate(0, 0, 0))
@@ -1635,6 +1656,8 @@ main(
     goto exit;
   printf("revS:"),fflush(stdout);
   printS(c2, 10);
+  chanClose(c1);
+  chanClose(c2);
 
   r1.n = 1, r1.d = 1;
   r2.n = -1, r2.d = 1;
@@ -1645,6 +1668,8 @@ main(
     goto exit;
   printf("msbtS:"),fflush(stdout);
   printS(c2, 10);
+  chanClose(c1);
+  chanClose(c2);
 
   r1.n = 1, r1.d = 1;
   r2.n = -1, r2.d = 1;
@@ -1658,6 +1683,9 @@ main(
     goto exit;
   printf("ntg-msbt:"),fflush(stdout);
   printS(c3, 10);
+  chanClose(c1);
+  chanClose(c2);
+  chanClose(c3);
 
   r1.n = 1, r1.d = 1;
   r2.n = -1, r2.d = 1;
@@ -1673,6 +1701,10 @@ main(
     goto exit;
   printf("tanS:"),fflush(stdout);
   printS(c4, 10);
+  chanClose(c1);
+  chanClose(c2);
+  chanClose(c3);
+  chanClose(c4);
 
 exit:
   return (0);
