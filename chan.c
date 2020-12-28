@@ -106,9 +106,11 @@ gCpr(
       ChanF(p);
       return (0);
     }
+    p->s = 0;
+    p->ss = p->st = 0;
+    p->c = 0;
     p->e = 1;
     p->w = 0;
-    p->c = 0;
     if (pthread_setspecific(Cpr, p)) {
       pthread_cond_destroy(&p->r);
       pthread_condattr_destroy(&p->a);
@@ -116,8 +118,6 @@ gCpr(
       ChanF(p);
       return (0);
     }
-    p->s = 0;
-    p->ss = 0;
   }
   return (p);
 }
@@ -219,7 +219,9 @@ static const unsigned int chanPe = 0x20; /* is empty to differentiate h==t */
       --p->c;\
     }\
     if (p->w && !pthread_cond_signal(&p->r)) {\
-      *(p->s + p->st++) = c;\
+      for (l = 0; l < p->st && *(p->s + l) != c; ++l);\
+      if (l == p->st && l < p->ss)\
+        *(p->s + p->st++) = c;\
       pthread_mutex_unlock(&p->m);\
       B\
     } else\
@@ -287,6 +289,7 @@ chanShut(
 ){
   cpr_t *m;
   cpr_t *p;
+  unsigned int l;
 
   if (!c)
     return;
@@ -360,6 +363,7 @@ chanOne(
   unsigned int i;
   unsigned int j;
   unsigned int k;
+  unsigned int l;
   struct timespec s;
 
   if (!t || !a)
@@ -951,6 +955,7 @@ chanAll(
   unsigned int i;
   unsigned int j;
   unsigned int k;
+  unsigned int l;
   struct timespec s;
 
   if (!t || !a)

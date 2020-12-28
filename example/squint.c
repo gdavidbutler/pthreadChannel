@@ -647,29 +647,17 @@ void *v
   }
 exit:
   for (i = 0; i < chCnt; ++i)
-    if (pa1[i].o == chanOpPut)
-      chanShut(pa1[i].c), chanClose(pa1[i].c);;
-  for (i = 0; i < chCnt; ++i)
-    if (pa2[i].o == chanOpPut)
-      chanShut(pa2[i].c), chanClose(pa2[i].c);;
+    chanShut(ga1[i].c);
   for (i = 0; i < chCnt; ++i)
     if (ga1[i].o == chanOpGet)
-      chanShut(ga1[i].c);
-  for (i = 0; i < chCnt; ++i)
-    if (ga2[i].o != chanOpGet)
-      chanShut(ga2[i].c);
-  for (i = 0; i < chCnt; ++i)
-    if (ga1[i].o == chanOpGet) {
       while (chanOp(0, ga1[i].c, (void **)&r[0], chanOpGet) == chanOsGet)
         free(r[0]);
-      chanClose(ga1[i].c);
-    }
   for (i = 0; i < chCnt; ++i)
-    if (ga2[i].o == chanOpGet) {
+    if (ga2[i].o == chanOpGet)
       while (chanOp(0, ga2[i].c, (void **)&r[0], chanOpGet) == chanOsGet)
         free(r[0]);
-      chanClose(ga2[i].c);
-    }
+  for (i = 0; i < chCnt; ++i)
+    chanClose(ga1[i].c);
   free(v);
   return (0);
 }
@@ -979,17 +967,13 @@ void *v
   free(r[G0]);
 exit:
   for (i = 0; i < chCnt; ++i)
-    if (pa1[i].o == chanOpPut)
-      chanShut(pa1[i].c), chanClose(pa1[i].c);;
+    chanShut(ga1[i].c);
   for (i = 0; i < chCnt; ++i)
     if (ga1[i].o == chanOpGet)
-      chanShut(ga1[i].c);
-  for (i = 0; i < chCnt; ++i)
-    if (ga1[i].o == chanOpGet) {
       while (chanOp(0, ga1[i].c, (void **)&r[0], chanOpGet) == chanOsGet)
         free(r[0]);
-      chanClose(ga1[i].c);
-    }
+  for (i = 0; i < chCnt; ++i)
+    chanClose(ga1[i].c);
   free(v);
   return (0);
 }
@@ -1089,17 +1073,13 @@ void *v
   }
 exit:
   for (i = 0; i < chCnt; ++i)
-    if (pa1[i].o == chanOpPut)
-      chanShut(pa1[i].c), chanClose(pa1[i].c);;
+    chanShut(ga1[i].c);
   for (i = 0; i < chCnt; ++i)
     if (ga1[i].o == chanOpGet)
-      chanShut(ga1[i].c);
-  for (i = 0; i < chCnt; ++i)
-    if (ga1[i].o == chanOpGet) {
       while (chanOp(0, ga1[i].c, (void **)&r[0], chanOpGet) == chanOsGet)
         free(r[0]);
-      chanClose(ga1[i].c);
-    }
+  for (i = 0; i < chCnt; ++i)
+    chanClose(ga1[i].c);
   free(v);
   return (0);
 }
@@ -1213,20 +1193,13 @@ void *v
   }
 exit:
   for (i = 0; i < chCnt; ++i)
-    if (pa1[i].o == chanOpPut)
-      chanShut(pa1[i].c), chanClose(pa1[i].c);;
-  for (i = 0; i < chCnt; ++i)
-    if (pa2[i].o == chanOpPut)
-      chanShut(pa2[i].c), chanClose(pa2[i].c);;
+    chanShut(ga1[i].c);
   for (i = 0; i < chCnt; ++i)
     if (ga1[i].o == chanOpGet)
-      chanShut(ga1[i].c);
-  for (i = 0; i < chCnt; ++i)
-    if (ga1[i].o == chanOpGet) {
       while (chanOp(0, ga1[i].c, (void **)&r[0], chanOpGet) == chanOsGet)
         free(r[0]);
-      chanClose(ga1[i].c);
-    }
+  for (i = 0; i < chCnt; ++i)
+    chanClose(ga1[i].c);
   free(v);
   return (0);
 }
@@ -1353,20 +1326,13 @@ void *v
   } while (chanOne(0, sizeof (ga1) / sizeof (ga1[0]), ga1) == R + 1 && ga1[R].s == chanOsGet);
 exit:
   for (i = 0; i < chCnt; ++i)
-    if (pa1[i].o == chanOpPut)
-      chanShut(pa1[i].c), chanClose(pa1[i].c);;
-  for (i = 0; i < chCnt; ++i)
-    if (pa2[i].o == chanOpPut)
-      chanShut(pa2[i].c), chanClose(pa2[i].c);;
+    chanShut(ga1[i].c);
   for (i = 0; i < chCnt; ++i)
     if (ga1[i].o == chanOpGet)
-      chanShut(ga1[i].c);
-  for (i = 0; i < chCnt; ++i)
-    if (ga1[i].o == chanOpGet) {
       while (chanOp(0, ga1[i].c, (void **)&r[0], chanOpGet) == chanOsGet)
         free(r[0]);
-      chanClose(ga1[i].c);
-    }
+  for (i = 0; i < chCnt; ++i)
+    chanClose(ga1[i].c);
   free(v);
   return (0);
 }
