@@ -143,12 +143,53 @@ Find the API in chanBlb.h:
 * chanPipe(...)
   * Blob exchange through half duplex read and write pipes over ingress and egress Channels.
 
+### Dependencies:
+
+* chan.c:
+  * chan.h
+  * pthread.h
+    * pthread_once()
+    * pthread_key_create()
+    * pthread_setspecific()
+    * pthread_getspecific()
+    * pthread_mutex_init()
+    * pthread_mutex_lock()
+    * pthread_mutex_trylock()
+    * pthread_mutex_unlock()
+    * pthread_mutex_destroy()
+    * pthread_cond_init()
+    * pthread_cond_wait()
+    * pthread_cond_timedwait()
+    * pthread_cond_signal()
+    * pthread_cond_destroy()
+    * pthread_condattr_init()
+    * pthread_condattr_setclock()
+    * pthread_condattr_destroy()
+    * pthread_yield() - MacOS pthread_yield_np()
+* chanFifo.c:
+  * chan.h
+  * chanFifo.h
+* chanBlb.c:
+  * chan.h
+  * chanBlb.h
+  * pthread.h
+    * pthread_create()
+    * pthread_detach()
+    * pthread_cleanup_push()
+    * pthread_cleanup_pop()
+  * unistd.h
+    * read()
+    * write()
+    * close()
+  * sys/socket.h
+    * shutdown()
+
 ### Serialize
 
 TODO: create examples
 
-* [JSON parser](https://github.com/gdavidbutler/jsonTrivialCallbackParser) and [JSON dom](https://github.com/gdavidbutler/jsonTrivialDom)
 * [XML parser](https://github.com/gdavidbutler/xmlTrivialCallbackParser) and [XML dom](https://github.com/gdavidbutler/xmlTrivialDom)
+* [JSON parser](https://github.com/gdavidbutler/jsonTrivialCallbackParser) and [JSON dom](https://github.com/gdavidbutler/jsonTrivialDom)
 
 ### Example
 

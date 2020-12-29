@@ -21,7 +21,6 @@
 #include <string.h>
 #include <pthread.h>
 #include "chan.h"
-#include "chanFifo.h"
 
 /*****************************************************
 **     C / pthread / Channel implementation of      **
