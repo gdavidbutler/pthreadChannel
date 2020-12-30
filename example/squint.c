@@ -580,8 +580,6 @@ void *v
   ga1[F].c = V->f;
   ga1[G].c = V->g;
   for (i = 0; i < chCnt; ++i) {
-    void *tv;
-
     if (!ga1[i].c && !(ga1[i].c = chanCreate(0, 0, 0)))
       goto exit;
     ga1[i].v = (void **)&r[i];
@@ -918,8 +916,6 @@ void *v
   ga1[F].c = V->f;
   ga1[G].c = V->g;
   for (i = 0; i < chCnt; ++i) {
-    void *tv;
-
     if (!ga1[i].c && !(ga1[i].c = chanCreate(0, 0, 0)))
       goto exit;
     ga1[i].v = (void **)&r[i];
@@ -1041,8 +1037,6 @@ void *v
   ga1[F].c = V->f;
   ga1[X0].c = V->e;
   for (i = 0; i < chCnt; ++i) {
-    void *tv;
-
     if (!ga1[i].c && !(ga1[i].c = chanCreate(0, 0, 0)))
       goto exit;
     ga1[i].v = (void **)&r[i];
@@ -1143,8 +1137,6 @@ void *v
   ga1[R].c = V->r;
   ga1[F].c = V->f;
   for (i = 0; i < chCnt; ++i) {
-    void *tv;
-
     if (!ga1[i].c && !(ga1[i].c = chanCreate(0, 0, 0)))
       goto exit;
     ga1[i].v = (void **)&r[i];
@@ -1263,8 +1255,6 @@ void *v
   ga1[R0].c = V->r;
   ga1[F].c = V->f;
   for (i = 0; i < chCnt; ++i) {
-    void *tv;
-
     if (!ga1[i].c && !(ga1[i].c = chanCreate(0, 0, 0)))
       goto exit;
     ga1[i].v = (void **)&r[i];
@@ -1488,7 +1478,6 @@ main(
   chan_t *c2;
   chan_t *c3;
   chan_t *c4;
-  void *tv;
   rational r1;
   rational r2;
   rational r3;

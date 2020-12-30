@@ -38,7 +38,6 @@ outT(
     for (l = 0; l < m->l && (i = write(1, m->b + l, m->l - l)) > 0; l += i);
     free(m);
   }
-exit:
   pthread_cleanup_pop(1); /* chanClose(v) */
   return (0);
 }

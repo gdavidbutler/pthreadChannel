@@ -204,8 +204,8 @@ static const unsigned int chanPe = 0x20; /* is empty to differentiate h==t */
 } while (0)
 
 /* dequeue and wakeup "other" thread(s) */
-#define WAKE(F,V,WE,IE,B) do {\
-  while (!(c->l & F) WE) {\
+#define WAKE(F,V,W,B) do {\
+  while (!(c->l & F) && W) {\
     p = *(c->V + c->V##h);\
     if (++c->V##h == c->V##s)\
       c->V##h = 0;\
@@ -300,11 +300,11 @@ chanShut(
   }
   c->l |= chanSu;
   m = 0;
-  WAKE(chanGe, g, , , );
-  WAKE(chanPe, p, , , );
-  WAKE(chanEe, e, , , );
-  WAKE(chanUe, u, , , );
-  WAKE(chanHe, h, , , );
+  WAKE(chanGe, g, 1, ;);
+  WAKE(chanPe, p, 1, ;);
+  WAKE(chanEe, e, 1, ;);
+  WAKE(chanUe, u, 1, ;);
+  WAKE(chanHe, h, 1, ;);
   pthread_mutex_unlock(&c->m);
 }
 
@@ -411,9 +411,9 @@ get1:
           c->t = chanSsCanPut;
         }
         k = 0;
-        WAKE(chanPe, p, && c->t & chanSsCanPut, || !(c->t & chanSsCanPut), k=1;break;);
+        WAKE(chanPe, p, c->t & chanSsCanPut, k=1;break;);
         if (!k && !(c->t & chanSsCanGet) && !(c->l & chanGe))
-          WAKE(chanUe, u, , , break;);
+          WAKE(chanUe, u, 1, break;);
 get2:
         pthread_mutex_unlock(&c->m);
         (a + i)->s = chanOsGet;
@@ -445,9 +445,9 @@ put1:
           c->t = chanSsCanGet;
         }
         k = 0;
-        WAKE(chanGe, g, && c->t & chanSsCanGet, || !(c->t & chanSsCanGet), k=1;break;);
+        WAKE(chanGe, g, c->t & chanSsCanGet, k=1;break;);
         if (!k && !(c->t & chanSsCanPut) && !(c->l & chanPe))
-          WAKE(chanEe, e, , , break;);
+          WAKE(chanEe, e, 1, break;);
 put2:
         pthread_mutex_unlock(&c->m);
         (a + i)->s = chanOsPut;
@@ -601,12 +601,12 @@ fnd1:
 
   case chanOpGet:
     if ((c = (a + i)->c) && (a + i)->v && !(c->t & chanSsCanGet) && c->l & chanGe)
-      WAKE(chanUe, u, , , break;);
+      WAKE(chanUe, u, 1, break;);
     break;
 
   case chanOpPut:
     if ((c = (a + i)->c) && (a + i)->v && !(c->t & chanSsCanPut) && c->l & chanPe)
-      WAKE(chanEe, e, , , break;);
+      WAKE(chanEe, e, 1, break;);
     break;
   }
   if (!(m = gCpr()))
@@ -797,9 +797,9 @@ fnd2:
           if (i > j)
             pthread_mutex_lock(&c->m);
           if (!(a + i)->v)
-            WAKE(chanEe, e, , , break;);
+            WAKE(chanEe, e, 1, break;);
           else
-            WAKE(chanGe, g, && c->t & chanSsCanGet, || !(c->t & chanSsCanGet), break;);
+            WAKE(chanGe, g, c->t & chanSsCanGet, break;);
           pthread_mutex_unlock(&c->m);
         } else if (i < j)
           pthread_mutex_unlock(&c->m);
@@ -813,9 +813,9 @@ fnd2:
           if (i > j)
             pthread_mutex_lock(&c->m);
           if (!(a + i)->v)
-            WAKE(chanUe, u, , , break;);
+            WAKE(chanUe, u, 1, break;);
           else
-            WAKE(chanPe, p, && c->t & chanSsCanPut, || !(c->t & chanSsCanPut), break;);
+            WAKE(chanPe, p, c->t & chanSsCanPut, break;);
           pthread_mutex_unlock(&c->m);
         } else if (i < j)
           pthread_mutex_unlock(&c->m);
@@ -870,12 +870,12 @@ fnd2:
 
     case chanOpGet:
       if ((c = (a + i)->c) && (a + i)->v && !(c->t & chanSsCanGet) && c->l & chanGe)
-        WAKE(chanUe, u, , , break;);
+        WAKE(chanUe, u, 1, break;);
       break;
 
     case chanOpPut:
       if ((c = (a + i)->c) && (a + i)->v && !(c->t & chanSsCanPut) && c->l & chanPe)
-        WAKE(chanEe, e, , , break;);
+        WAKE(chanEe, e, 1, break;);
       break;
     }
     pthread_mutex_lock(&m->m);
@@ -1119,9 +1119,9 @@ unlock1:
           c->t = chanSsCanPut;
         }
         k = 0;
-        WAKE(chanPe, p, && c->t & chanSsCanPut, || !(c->t & chanSsCanPut), k=1;break;);
+        WAKE(chanPe, p, c->t & chanSsCanPut, k=1;break;);
         if (!k && !(c->t & chanSsCanGet) && !(c->l & chanGe))
-          WAKE(chanUe, u, , , break;);
+          WAKE(chanUe, u, 1, break;);
         (a + i)->s = chanOsGet;
       } else
 get1:
@@ -1142,9 +1142,9 @@ get1:
           c->t = chanSsCanGet;
         }
         k = 0;
-        WAKE(chanGe, g, && c->t & chanSsCanGet, || !(c->t & chanSsCanGet), k=1;break;);
+        WAKE(chanGe, g, c->t & chanSsCanGet, k=1;break;);
         if (!k && !(c->t & chanSsCanPut) && !(c->l & chanPe))
-          WAKE(chanEe, e, , , break;);
+          WAKE(chanEe, e, 1, break;);
         (a + i)->s = chanOsPut;
       } else
 put1:
@@ -1162,12 +1162,12 @@ put1:
 
   case chanOpGet:
     if ((c = (a + i)->c) && (a + i)->v && !(c->t & chanSsCanGet) && c->l & chanGe)
-      WAKE(chanUe, u, , , break;);
+      WAKE(chanUe, u, 1, break;);
     break;
 
   case chanOpPut:
     if ((c = (a + i)->c) && (a + i)->v && !(c->t & chanSsCanPut) && c->l & chanPe)
-      WAKE(chanEe, e, , , break;);
+      WAKE(chanEe, e, 1, break;);
     break;
   }
   if (!(m = gCpr()))
@@ -1361,9 +1361,9 @@ unlock2:
         for (k = 0; k < m->st && *(m->s + k) != c; ++k);
         if (k < m->st) {
           if (!(a + i)->v)
-            WAKE(chanEe, e, , , break;);
+            WAKE(chanEe, e, 1, break;);
           else
-            WAKE(chanGe, g, && c->t & chanSsCanGet, || !(c->t & chanSsCanGet), break;);
+            WAKE(chanGe, g, c->t & chanSsCanGet, break;);
         }
         if (c->l & chanSu)
           (a + i)->s = chanOsSht;
@@ -1383,9 +1383,9 @@ unlock2:
         for (k = 0; k < m->st && *(m->s + k) != c; ++k);
         if (k < m->st) {
           if (!(a + i)->v)
-            WAKE(chanUe, u, , , break;);
+            WAKE(chanUe, u, 1, break;);
           else
-            WAKE(chanPe, p, && c->t & chanSsCanPut, || !(c->t & chanSsCanPut), break;);
+            WAKE(chanPe, p, c->t & chanSsCanPut, break;);
         }
         if (c->l & chanSu)
           (a + i)->s = chanOsSht;
@@ -1425,17 +1425,17 @@ unlock2:
             c->t = chanSsCanPut;
           }
           k = 0;
-          WAKE(chanPe, p, && c->t & chanSsCanPut, || !(c->t & chanSsCanPut), k=1;break;);
+          WAKE(chanPe, p, c->t & chanSsCanPut, k=1;break;);
           if (!k && !(c->t & chanSsCanGet) && !(c->l & chanGe))
-            WAKE(chanUe, u, , , break;);
+            WAKE(chanUe, u, 1, break;);
           (a + i)->s = chanOsGet;
         } else {
           for (k = 0; k < m->st && *(m->s + k) != c; ++k);
           if (k < m->st) {
             if (!(a + i)->v)
-              WAKE(chanEe, e, , , break;);
+              WAKE(chanEe, e, 1, break;);
             else
-              WAKE(chanGe, g, && c->t & chanSsCanGet, || !(c->t & chanSsCanGet), break;);
+              WAKE(chanGe, g, c->t & chanSsCanGet, break;);
           }
           (a + i)->s = chanOsNop;
         }
@@ -1453,17 +1453,17 @@ unlock2:
             c->t = chanSsCanGet;
           }
           k = 0;
-          WAKE(chanGe, g, && c->t & chanSsCanGet, || !(c->t & chanSsCanGet), k=1;break;);
+          WAKE(chanGe, g, c->t & chanSsCanGet, k=1;break;);
           if (!k && !(c->t & chanSsCanPut) && !(c->l & chanPe))
-            WAKE(chanEe, e, , , break;);
+            WAKE(chanEe, e, 1, break;);
           (a + i)->s = chanOsPut;
         } else {
           for (k = 0; k < m->st && *(m->s + k) != c; ++k);
           if (k < m->st) {
             if (!(a + i)->v)
-              WAKE(chanUe, u, , , break;);
+              WAKE(chanUe, u, 1, break;);
             else
-              WAKE(chanPe, p, && c->t & chanSsCanPut, || !(c->t & chanSsCanPut), break;);
+              WAKE(chanPe, p, c->t & chanSsCanPut, break;);
           }
           (a + i)->s = chanOsNop;
         }
@@ -1480,12 +1480,12 @@ unlock2:
 
     case chanOpGet:
       if ((c = (a + i)->c) && (a + i)->v && !(c->t & chanSsCanGet) && c->l & chanGe)
-        WAKE(chanUe, u, , , break;);
+        WAKE(chanUe, u, 1, break;);
       break;
 
     case chanOpPut:
       if ((c = (a + i)->c) && (a + i)->v && !(c->t & chanSsCanPut) && c->l & chanPe)
-        WAKE(chanEe, e, , , break;);
+        WAKE(chanEe, e, 1, break;);
       break;
     }
     pthread_mutex_lock(&m->m);
