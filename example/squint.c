@@ -25,11 +25,11 @@
 /*****************************************************
 **     C / pthread / Channel implementation of      **
 ** M. Douglas McIlroy's "Squinting at Power Series" **
-** [See https://cs.dartmouth.edu/~doug/powser.html] **
+**   [https://cs.dartmouth.edu/~doug/powser.html]   **
 **                                                  **
 **                       NOTE                       **
 **       This was developed to test chanAll()       **
-**           with a default store of one.           **
+**          using a default store of one.           **
 **      Performance will increase dramatically      **
 **               using larger stores                **
 **   (since the threads talk much more than work)   **
@@ -42,15 +42,15 @@
 typedef struct {
   long n; /* numerator */
   long d; /* denominator */
-} rational;
+} rat_t;
 
-/* new rational from numerator and denominator */
-static rational *
+/* rational from numerator and denominator */
+static rat_t *
 newR(
   long n
  ,long d
 ){
-  rational *r;
+  rat_t *r;
 
   if ((r = malloc(sizeof (*r)))) {
     r->n = n;
@@ -59,9 +59,10 @@ newR(
     fprintf(stderr, "newR OoR\n");
   return (r);
 }
+
 static void
 setR(
-  rational *r
+  rat_t *r
  ,long n
  ,long d
 ){
@@ -69,12 +70,12 @@ setR(
   r->d = d;
 }
 
-/* new rational from rational */
-static rational *
+/* rational from rational */
+static rat_t *
 dupR(
-  const rational *a
+  const rat_t *a
 ){
-  rational *r;
+  rat_t *r;
 
   if ((r = malloc(sizeof (*r)))) {
     r->n = a->n;
@@ -83,10 +84,11 @@ dupR(
     fprintf(stderr, "dupR OoR\n");
   return (r);
 }
+
 static void
 cpyR(
-  rational *a
- ,const rational *b
+  rat_t *a
+ ,const rat_t *b
 ){
   a->n = b->n;
   a->d = b->d;
@@ -98,9 +100,9 @@ gcdI(
   long a
  ,long b
 ){
-  long t;
-
   while (b) {
+    long t;
+
     t = b;
     b = a % b;
     a = t;
@@ -110,10 +112,10 @@ gcdI(
 
 /* a/b + c/d = (ad + cb) / bd */
 #if 0
-static rational *
+static rat_t *
 addR(
-  const rational *a
- ,const rational *b
+  const rat_t *a
+ ,const rat_t *b
 ){
   long g;
 
@@ -124,10 +126,11 @@ addR(
   ));
 }
 #endif
+
 static void
 addToR(
-  rational *a
- ,const rational *b
+  rat_t *a
+ ,const rat_t *b
 ){
   long g;
 
@@ -138,10 +141,10 @@ addToR(
 
 /* a/b - c/d = (ad - cb) / bd */
 #if 0
-static rational *
+static rat_t *
 subR(
-  const rational *a
- ,const rational *b
+  const rat_t *a
+ ,const rat_t *b
 ){
   long g;
 
@@ -152,11 +155,12 @@ subR(
   ));
 }
 #endif
+
 #if 0
 static void
 subFromR(
-  rational *a
- ,const rational *b
+  rat_t *a
+ ,const rat_t *b
 ){
   long g;
 
@@ -168,10 +172,10 @@ subFromR(
 
 /* a/b . c/d = ac / bd */
 #if 0
-static rational *
+static rat_t *
 mulR(
-  const rational *a
- ,const rational *b
+  const rat_t *a
+ ,const rat_t *b
 ){
   long g1;
   long g2;
@@ -189,10 +193,11 @@ mulR(
   ));
 }
 #endif
+
 static void
 mulByR(
-  rational *a
- ,const rational *b
+  rat_t *a
+ ,const rat_t *b
 ){
   long g1;
   long g2;
@@ -210,9 +215,9 @@ mulByR(
 
 /* neg a/b = -1/b */
 #if 0
-static rational *
+static rat_t *
 negR(
-  const rational *a
+  const rat_t *a
 ){
   if (a->d < 0)
     return (newR(
@@ -226,9 +231,10 @@ negR(
     ));
 }
 #endif
+
 static void
 negOfR(
-  rational *a
+  rat_t *a
 ){
   if (a->d < 0)
     a->d = -a->d;
@@ -238,9 +244,9 @@ negOfR(
 
 /* reciprocal a/b = b/a */
 #if 0
-static rational *
+static rat_t *
 rcpR(
-  const rational *a
+  const rat_t *a
 ){
   return (newR(
    a->d
@@ -251,7 +257,7 @@ rcpR(
 
 static void
 rcpOfR(
-  rational *a
+  rat_t *a
 ){
   long t;
 
@@ -263,17 +269,17 @@ rcpOfR(
 /*************************************************************************/
 
 /* constant stream */
-struct conST {
+struct conS_ {
   chan_t *o;
-  rational c;
+  rat_t c;
 };
 
 static void *
-conST(
+conS_(
 void *v
-#define V ((struct conST *)v)
+#define V ((struct conS_ *)v)
 ){
-  rational *o;
+  rat_t *o;
 
   while ((o = dupR(&V->c))) {
     if (chanOp(0, V->o, (void **)&o, chanOpPut) != chanOsPut) {
@@ -290,18 +296,18 @@ void *v
 static int
 conS(
   chan_t *o
- ,const rational *c
+ ,const rat_t *c
 ){
-  struct conST *x;
+  struct conS_ *x;
   pthread_t pt;
 
   if (!(x = malloc(sizeof (*x))))
-    goto oom;
+    goto oor;
   x->o = chanOpen(o);
   cpyR(&x->c, c);
-  if (pthread_create(&pt, 0, conST, x)) {
+  if (pthread_create(&pt, 0, conS_, x)) {
     chanClose(x->o);
-oom:
+oor:
     free(x);
     fprintf(stderr, "conS OoR\n");
     chanShut(o);
@@ -314,18 +320,18 @@ oom:
 /*************************************************************************/
 
 /* stream P = Ft */
-struct mulTT {
+struct multS_ {
   chan_t *p;
   chan_t *f;
-  rational t;
+  rat_t t;
 };
 
 static void *
-mulTT(
+multS_(
 void *v
-#define V ((struct mulTT *)v)
+#define V ((struct multS_ *)v)
 ){
-  rational *f;
+  rat_t *f;
   chanArr_t ga[2];
   chanArr_t pa[2];
 
@@ -361,27 +367,27 @@ void *v
 #undef V
 
 static int
-mulT(
+multS(
   chan_t *p
  ,chan_t *f
- ,rational *t
+ ,rat_t *t
 ){
-  struct mulTT *x;
+  struct multS_ *x;
   pthread_t pt;
 
   if (!(x = malloc(sizeof (*x))))
-    goto oom;
+    goto oor;
   x->p = chanOpen(p);
   x->f = chanOpen(f);
   cpyR(&x->t, t);
-  if (pthread_create(&pt, 0, mulTT, x)) {
+  if (pthread_create(&pt, 0, multS_, x)) {
     void *v;
 
     chanClose(x->f);
     chanClose(x->p);
-oom:
+oor:
     free(x);
-    fprintf(stderr, "mulT OoR\n");
+    fprintf(stderr, "multS OoR\n");
     chanShut(p);
     chanShut(f);
     while (chanOp(0, f, &v, chanOpGet) == chanOsGet)
@@ -395,19 +401,19 @@ oom:
 /*************************************************************************/
 
 /* stream S = F + G */
-struct addST {
+struct addS_ {
   chan_t *s;
   chan_t *f;
   chan_t *g;
 };
 
 static void *
-addST(
+addS_(
 void *v
-#define V ((struct addST *)v)
+#define V ((struct addS_ *)v)
 ){
-  rational *f;
-  rational *g;
+  rat_t *f;
+  rat_t *g;
   chanArr_t ga[3];
   chanArr_t pa[3];
 
@@ -459,22 +465,22 @@ addS(
  ,chan_t *f
  ,chan_t *g
 ){
-  struct addST *x;
+  struct addS_ *x;
   pthread_t pt;
 
   if (!(x = malloc(sizeof (*x))))
-    goto oom;
+    goto oor;
   x->s = chanOpen(s);
   x->f = chanOpen(f);
   x->g = chanOpen(g);
-  if (pthread_create(&pt, 0, addST, x)) {
+  if (pthread_create(&pt, 0, addS_, x)) {
     void *v;
 
     chanClose(x->g);
     chanClose(x->f);
     chanClose(x->s);
     free(x);
-oom:
+oor:
     fprintf(stderr, "addS OoR\n");
     chanShut(s);
     chanShut(f);
@@ -492,18 +498,18 @@ oom:
 /*************************************************************************/
 
 /* stream P = x^n F */
-struct xnST {
+struct xnS_ {
   chan_t *p;
   chan_t *f;
   unsigned long n;
 };
 
 static void *
-xnST(
+xnS_(
 void *v
-#define V ((struct xnST *)v)
+#define V ((struct xnS_ *)v)
 ){
-  rational *f;
+  rat_t *f;
   chanArr_t ga[2];
   chanArr_t pa[2];
 
@@ -551,21 +557,21 @@ xnS(
  ,chan_t *f
  ,unsigned long n
 ){
-  struct xnST *x;
+  struct xnS_ *x;
   pthread_t pt;
 
   if (!(x = malloc(sizeof (*x))))
-    goto oom;
+    goto oor;
   x->p = chanOpen(p);
   x->f = chanOpen(f);
   x->n = n;
-  if (pthread_create(&pt, 0, xnST, x)) {
+  if (pthread_create(&pt, 0, xnS_, x)) {
     void *v;
 
     chanClose(x->f);
     chanClose(x->p);
     free(x);
-oom:
+oor:
     fprintf(stderr, "xnS OoR\n");
     chanShut(p);
     chanShut(f);
@@ -580,7 +586,7 @@ oom:
 /*************************************************************************/
 
 /* stream P = FG */
-struct mulST {
+struct mulS_ {
   chan_t *p;
   chan_t *f;
   chan_t *g;
@@ -595,20 +601,20 @@ mulS(
 );
 
 static void *
-mulST(
+mulS_(
 void *v
-#define V ((struct mulST *)v)
+#define V ((struct mulS_ *)v)
 ){
   enum ch {
    P = 0, F, G, F0, F1, G0, G1, Fg, Gf, FG, xFG, chCnt
   };
-  rational *r[chCnt];
+  rat_t *r[chCnt];
   chanArr_t ga1[chCnt]; /* get F, G */
   chanArr_t pa1[chCnt]; /* put P */
   chanArr_t pa2[chCnt]; /* put F0, F1, G0, G1 */
   chanArr_t ga2[chCnt]; /* get Fg, Gf, xFG */
-  rational f;
-  rational g;
+  rat_t f;
+  rat_t g;
   unsigned int i;
 
   memset(ga1, 0, sizeof (ga1));
@@ -619,8 +625,10 @@ void *v
   ga1[F].c = V->f;
   ga1[G].c = V->g;
   for (i = 0; i < chCnt; ++i) {
-    if (!ga1[i].c && !(ga1[i].c = chanCreate(0, 0, 0)))
+    if (!ga1[i].c && !(ga1[i].c = chanCreate(0, 0, 0))) {
+      fprintf(stderr, "mulS_ OoR\n");
       goto exit;
+    }
     ga1[i].v = (void **)&r[i];
     ga1[i].o = chanOpSht;
   }
@@ -647,8 +655,8 @@ void *v
     goto exit;
   pa1[P].v = (void **)&r[P];
   /* "demand" channel end */
-  if (mulT(ga2[Fg].c, pa2[F0].c, &g)
-   || mulT(ga2[Gf].c, pa2[G0].c, &f)
+  if (multS(ga2[Fg].c, pa2[F0].c, &g)
+   || multS(ga2[Gf].c, pa2[G0].c, &f)
    || mulS(ga2[FG].c, pa2[F1].c, pa2[G1].c)
    || xnS(ga2[xFG].c, pa2[FG].c, 1))
     goto exit;
@@ -703,22 +711,22 @@ mulS(
  ,chan_t *f
  ,chan_t *g
 ){
-  struct mulST *x;
+  struct mulS_ *x;
   pthread_t pt;
 
   if (!(x = malloc(sizeof (*x))))
-    goto oom;
+    goto oor;
   x->p = chanOpen(p);
   x->f = chanOpen(f);
   x->g = chanOpen(g);
-  if (pthread_create(&pt, 0, mulST, x)) {
+  if (pthread_create(&pt, 0, mulS_, x)) {
     void *v;
 
     chanClose(x->g);
     chanClose(x->f);
     chanClose(x->p);
     free(x);
-oom:
+oor:
     chanShut(p);
     chanShut(f);
     chanShut(g);
@@ -736,20 +744,20 @@ oom:
 /*************************************************************************/
 
 /* stream P = dF/dx */
-struct dffST {
+struct dffS_ {
   chan_t *p;
   chan_t *f;
 };
 
 static void *
-dffST(
+dffS_(
 void *v
-#define V ((struct dffST *)v)
+#define V ((struct dffS_ *)v)
 ){
-  rational *f;
+  rat_t *f;
   chanArr_t ga[2];
   chanArr_t pa[2];
-  rational n;
+  rat_t n;
 
   ga[0].c = V->p;
   ga[0].v = 0;
@@ -796,20 +804,20 @@ dffS(
   chan_t *p
  ,chan_t *f
 ){
-  struct dffST *x;
+  struct dffS_ *x;
   pthread_t pt;
 
   if (!(x = malloc(sizeof (*x))))
-    goto oom;
+    goto oor;
   x->p = chanOpen(p);
   x->f = chanOpen(f);
-  if (pthread_create(&pt, 0, dffST, x)) {
+  if (pthread_create(&pt, 0, dffS_, x)) {
     void *v;
 
     chanClose(x->f);
     chanClose(x->p);
     free(x);
-oom:
+oor:
     fprintf(stderr, "dffS OoR\n");
     chanShut(p);
     chanShut(f);
@@ -824,21 +832,21 @@ oom:
 /*************************************************************************/
 
 /* stream P = integrate(0,inf)F(x) + c */
-struct ntgST {
+struct ntgS_ {
   chan_t *p;
   chan_t *f;
-  rational *c;
+  rat_t *c;
 };
 
 static void *
-ntgST(
+ntgS_(
 void *v
-#define V ((struct ntgST *)v)
+#define V ((struct ntgS_ *)v)
 ){
-  rational *f;
+  rat_t *f;
   chanArr_t ga[2];
   chanArr_t pa[2];
-  rational n;
+  rat_t n;
 
   ga[0].c = V->p;
   ga[0].v = 0;
@@ -886,23 +894,23 @@ static int
 ntgS(
   chan_t *p
  ,chan_t *f
- ,rational *c
+ ,rat_t *c
 ){
-  struct ntgST *x;
+  struct ntgS_ *x;
   pthread_t pt;
 
   if (!(x = malloc(sizeof (*x)))
    || !(x->c = dupR(c)))
-    goto oom;
+    goto oor;
   x->p = chanOpen(p);
   x->f = chanOpen(f);
-  if (pthread_create(&pt, 0, ntgST, x)) {
+  if (pthread_create(&pt, 0, ntgS_, x)) {
     void *v;
 
     chanClose(x->f);
     chanClose(x->p);
     free(x->c);
-oom:
+oor:
     free(x);
     fprintf(stderr, "ntgS OoR\n");
     chanShut(p);
@@ -918,7 +926,7 @@ oom:
 /*************************************************************************/
 
 /* stream S = F(G) */
-struct sbtST {
+struct sbtS_ {
   chan_t *s;
   chan_t *f;
   chan_t *g;
@@ -933,14 +941,14 @@ sbtS(
 );
 
 static void *
-sbtST(
+sbtS_(
 void *v
-#define V ((struct sbtST *)v)
+#define V ((struct sbtS_ *)v)
 ){
   enum ch {
    S = 0, F, G, G0, G1, FG, chCnt
   };
-  rational *r[chCnt];
+  rat_t *r[chCnt];
   chanArr_t ga1[chCnt]; /* get F then G */
   chanArr_t pa1[chCnt]; /* put S then G0, G1 */
   unsigned int i;
@@ -951,8 +959,10 @@ void *v
   ga1[F].c = V->f;
   ga1[G].c = V->g;
   for (i = 0; i < chCnt; ++i) {
-    if (!ga1[i].c && !(ga1[i].c = chanCreate(0, 0, 0)))
+    if (!ga1[i].c && !(ga1[i].c = chanCreate(0, 0, 0))) {
+      fprintf(stderr, "sbtS_ OoR\n");
       goto exit;
+    }
     ga1[i].v = (void **)&r[i];
     ga1[i].o = chanOpSht;
   }
@@ -1014,22 +1024,22 @@ sbtS(
  ,chan_t *f
  ,chan_t *g
 ){
-  struct sbtST *x;
+  struct sbtS_ *x;
   pthread_t pt;
 
   if (!(x = malloc(sizeof (*x))))
-    goto oom;
+    goto oor;
   x->s = chanOpen(s);
   x->f = chanOpen(f);
   x->g = chanOpen(g);
-  if (pthread_create(&pt, 0, sbtST, x)) {
+  if (pthread_create(&pt, 0, sbtS_, x)) {
     void *v;
 
     chanClose(x->g);
     chanClose(x->f);
     chanClose(x->s);
     free(x);
-oom:
+oor:
     fprintf(stderr, "sbtS OoR\n");
     chanShut(s);
     chanShut(f);
@@ -1047,32 +1057,34 @@ oom:
 /*************************************************************************/
 
 /* stream E = exp(F) */
-struct expST {
+struct expS_ {
   chan_t *e;
   chan_t *f;
 };
 
 static void *
-expST(
+expS_(
 void *v
-#define V ((struct expST *)v)
+#define V ((struct expS_ *)v)
 ){
   enum ch {
    X0 = 0, F, D, P, X, X1, chCnt
   };
-  rational *r[chCnt];
+  rat_t *r[chCnt];
   chanArr_t ga1[chCnt]; /* get X */
   chanArr_t pa1[chCnt]; /* put X0, X1 */
   unsigned int i;
-  rational c;
+  rat_t c;
 
   memset(ga1, 0, sizeof (ga1));
   memset(pa1, 0, sizeof (pa1));
   ga1[F].c = V->f;
   ga1[X0].c = V->e;
   for (i = 0; i < chCnt; ++i) {
-    if (!ga1[i].c && !(ga1[i].c = chanCreate(0, 0, 0)))
+    if (!ga1[i].c && !(ga1[i].c = chanCreate(0, 0, 0))) {
+      fprintf(stderr, "expS_ OoR\n");
       goto exit;
+    }
     ga1[i].v = (void **)&r[i];
     ga1[i].o = chanOpSht;
   }
@@ -1116,20 +1128,20 @@ expS(
   chan_t *e
  ,chan_t *f
 ){
-  struct expST *x;
+  struct expS_ *x;
   pthread_t pt;
 
   if (!(x = malloc(sizeof (*x))))
-    goto oom;
+    goto oor;
   x->e = chanOpen(e);
   x->f = chanOpen(f);
-  if (pthread_create(&pt, 0, expST, x)) {
+  if (pthread_create(&pt, 0, expS_, x)) {
     void *v;
 
     chanClose(x->f);
     chanClose(x->e);
     free(x);
-oom:
+oor:
     fprintf(stderr, "expS OoR\n");
     chanShut(e);
     chanShut(f);
@@ -1144,25 +1156,25 @@ oom:
 /*************************************************************************/
 
 /* stream R = 1/F */
-struct rcpST {
+struct rcpS_ {
   chan_t *r;
   chan_t *f;
 };
 
 static void *
-rcpST(
+rcpS_(
 void *v
-#define V ((struct rcpST *)v)
+#define V ((struct rcpS_ *)v)
 ){
   enum ch {
    R = 0, F, M, RM, RT, chCnt
   };
-  rational *r[chCnt];
+  rat_t *r[chCnt];
   chanArr_t ga1[chCnt]; /* get F then RT */
   chanArr_t pa1[chCnt]; /* put R */
   chanArr_t pa2[chCnt]; /* put RM */
   unsigned int i;
-  rational n;
+  rat_t n;
 
   memset(ga1, 0, sizeof (ga1));
   memset(pa1, 0, sizeof (pa1));
@@ -1170,8 +1182,10 @@ void *v
   ga1[R].c = V->r;
   ga1[F].c = V->f;
   for (i = 0; i < chCnt; ++i) {
-    if (!ga1[i].c && !(ga1[i].c = chanCreate(0, 0, 0)))
+    if (!ga1[i].c && !(ga1[i].c = chanCreate(0, 0, 0))) {
+      fprintf(stderr, "rcpS_ OoR\n");
       goto exit;
+    }
     ga1[i].v = (void **)&r[i];
     ga1[i].o = chanOpSht;
   }
@@ -1199,7 +1213,7 @@ void *v
     goto exit;
   }
   if (mulS(ga1[M].c, pa1[F].c, pa1[RM].c)
-   || mulT(ga1[RT].c, pa1[M].c, &n))
+   || multS(ga1[RT].c, pa1[M].c, &n))
     goto exit;
   ga1[RT].o = chanOpGet;
   while (chanOne(0, sizeof (ga1) / sizeof (ga1[0]), ga1) == RT + 1 && ga1[RT].s == chanOsGet) {
@@ -1234,20 +1248,20 @@ rcpS(
   chan_t *r
  ,chan_t *f
 ){
-  struct rcpST *x;
+  struct rcpS_ *x;
   pthread_t pt;
 
   if (!(x = malloc(sizeof (*x))))
-    goto oom;
+    goto oor;
   x->r = chanOpen(r);
   x->f = chanOpen(f);
-  if (pthread_create(&pt, 0, rcpST, x)) {
+  if (pthread_create(&pt, 0, rcpS_, x)) {
     void *v;
 
     chanClose(x->f);
     chanClose(x->r);
     free(x);
-oom:
+oor:
     fprintf(stderr, "rcpS OoR\n");
     chanShut(r);
     chanShut(f);
@@ -1262,25 +1276,25 @@ oom:
 /*************************************************************************/
 
 /* stream R = reversion: functional inverse of F, an R such that F(R(x)) = x */
-struct revST {
+struct revS_ {
   chan_t *r;
   chan_t *f;
 };
 
 static void *
-revST(
+revS_(
 void *v
-#define V ((struct revST *)v)
+#define V ((struct revS_ *)v)
 ){
   enum ch {
    R0 = 0, F, R1, FR1, RB2, RB0, RB1, RB2FR1, R, chCnt
   };
-  rational *r[chCnt];
+  rat_t *r[chCnt];
   chanArr_t ga1[chCnt]; /* get F then R */
   chanArr_t pa1[chCnt]; /* put R0 R1 */
   chanArr_t pa2[chCnt]; /* put RB0 RB1 */
   unsigned int i;
-  rational n;
+  rat_t n;
 
   memset(ga1, 0, sizeof (ga1));
   memset(pa1, 0, sizeof (pa1));
@@ -1288,8 +1302,10 @@ void *v
   ga1[R0].c = V->r;
   ga1[F].c = V->f;
   for (i = 0; i < chCnt; ++i) {
-    if (!ga1[i].c && !(ga1[i].c = chanCreate(0, 0, 0)))
+    if (!ga1[i].c && !(ga1[i].c = chanCreate(0, 0, 0))) {
+      fprintf(stderr, "revS_ OoR\n");
       goto exit;
+    }
     ga1[i].v = (void **)&r[i];
     ga1[i].o = chanOpSht;
   }
@@ -1311,7 +1327,7 @@ void *v
   if (sbtS(ga1[FR1].c, pa1[F].c, pa1[R1].c)
    || mulS(ga1[RB2].c, pa2[RB0].c, pa2[RB1].c)
    || mulS(ga1[RB2FR1].c, pa2[RB2].c, pa1[FR1].c)
-   || mulT(ga1[R].c, pa1[RB2FR1].c, &n)) {
+   || multS(ga1[R].c, pa1[RB2FR1].c, &n)) {
     free(r[R0]);
     free(r[F]);
     goto exit;
@@ -1365,20 +1381,20 @@ revS(
   chan_t *r
  ,chan_t *f
 ){
-  struct revST *x;
+  struct revS_ *x;
   pthread_t pt;
 
   if (!(x = malloc(sizeof (*x))))
-    goto oom;
+    goto oor;
   x->r = chanOpen(r);
   x->f = chanOpen(f);
-  if (pthread_create(&pt, 0, revST, x)) {
+  if (pthread_create(&pt, 0, revS_, x)) {
     void *v;
 
     chanClose(x->f);
     chanClose(x->r);
     free(x);
-oom:
+oor:
     fprintf(stderr, "revS OoR\n");
     chanShut(r);
     chanShut(f);
@@ -1393,22 +1409,22 @@ oom:
 /*************************************************************************/
 
 /* stream monomial substitution P = F(cx^n) */
-struct msbtST {
+struct msbtS_ {
   chan_t *p;
   chan_t *f;
-  rational c;
+  rat_t c;
   unsigned long n;
 };
 
 static void *
-msbtST(
+msbtS_(
 void *v
-#define V ((struct msbtST *)v)
+#define V ((struct msbtS_ *)v)
 ){
-  rational *f;
+  rat_t *f;
   chanArr_t ga[2];
   chanArr_t pa[2];
-  rational c;
+  rat_t c;
   unsigned long i;
 
   ga[0].c = V->p;
@@ -1455,24 +1471,24 @@ static int
 msbtS(
   chan_t *p
  ,chan_t *f
- ,rational *c
+ ,rat_t *c
  ,unsigned long n
 ){
-  struct msbtST *x;
+  struct msbtS_ *x;
   pthread_t pt;
 
   if (!(x = malloc(sizeof (*x))))
-    goto oom;
+    goto oor;
   x->p = chanOpen(p);
   x->f = chanOpen(f);
   cpyR(&x->c, c);
   x->n = n;
-  if (pthread_create(&pt, 0, msbtST, x)) {
+  if (pthread_create(&pt, 0, msbtS_, x)) {
     void *v;
 
     chanClose(x->f);
     chanClose(x->p);
-oom:
+oor:
     free(x);
     fprintf(stderr, "msbtS OoR\n");
     chanShut(p);
@@ -1492,7 +1508,7 @@ printS(
   chan_t *c
  ,unsigned int n
 ){
-  rational *o;
+  rat_t *o;
 
   for (; n; --n) {
     if (chanOp(0, c, (void **)&o, chanOpGet) != chanOsGet)
@@ -1513,9 +1529,9 @@ main(
   chan_t *c2;
   chan_t *c3;
   chan_t *c4;
-  rational r1;
-  rational r2;
-  rational r3;
+  rat_t r1;
+  rat_t r2;
+  rat_t r3;
 
   chanInit(realloc, free);
 
@@ -1532,9 +1548,9 @@ main(
   if (!(c1 = chanCreate(0, 0, 0))
    || conS(c1, &r1)
    || !(c2 = chanCreate(0, 0, 0))
-   || mulT(c2, c1, &r2))
+   || multS(c2, c1, &r2))
     goto exit;
-  printf("mulT:"),fflush(stdout);
+  printf("multS:"),fflush(stdout);
   printS(c2, 10);
   chanClose(c1);
   chanClose(c2);
@@ -1695,6 +1711,7 @@ main(
   chanClose(c3);
   chanClose(c4);
 
-exit:
   return (0);
+exit:
+  return (-1);
 }
