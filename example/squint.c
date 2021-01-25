@@ -25,6 +25,15 @@
 /*****************************************************
 **     C / pthread / Channel implementation of      **
 ** M. Douglas McIlroy's "Squinting at Power Series" **
+** [See https://cs.dartmouth.edu/~doug/powser.html] **
+**                                                  **
+**                       NOTE                       **
+**       This was developed to test chanAll()       **
+**           with a default store of one.           **
+**      Performance will increase dramatically      **
+**               using larger stores                **
+**   (since the threads talk much more than work)   **
+**   and chanOne() to enable asymmetric progress.   **
 *****************************************************/
 
 /*************************************************************************/
@@ -34,6 +43,54 @@ typedef struct {
   long n; /* numerator */
   long d; /* denominator */
 } rational;
+
+/* new rational from numerator and denominator */
+static rational *
+newR(
+  long n
+ ,long d
+){
+  rational *r;
+
+  if ((r = malloc(sizeof (*r)))) {
+    r->n = n;
+    r->d = d;
+  } else
+    fprintf(stderr, "newR OoR\n");
+  return (r);
+}
+static void
+setR(
+  rational *r
+ ,long n
+ ,long d
+){
+  r->n = n;
+  r->d = d;
+}
+
+/* new rational from rational */
+static rational *
+dupR(
+  const rational *a
+){
+  rational *r;
+
+  if ((r = malloc(sizeof (*r)))) {
+    r->n = a->n;
+    r->d = a->d;
+  } else
+    fprintf(stderr, "dupR OoR\n");
+  return (r);
+}
+static void
+cpyR(
+  rational *a
+ ,const rational *b
+){
+  a->n = b->n;
+  a->d = b->d;
+}
 
 /* https://en.wikipedia.org/wiki/Euclidean_algorithm */
 static long
@@ -49,41 +106,6 @@ gcdI(
     a = t;
   }
   return (a);
-}
-
-/* new rational from numerator and denominator */
-static rational *
-newR(
-  long n
- ,long d
-){
-  rational *r;
-  long g;
-
-  g = gcdI(n, d);
-  if ((r = malloc(sizeof (*r)))) {
-    r->n = n / g;
-    r->d = d / g;
-  } else
-    fprintf(stderr, "newR OoR\n");
-  return (r);
-}
-
-/* new rational from rational */
-static rational *
-dupR(
-  const rational *a
-){
-  rational *r;
-  long g;
-
-  g = gcdI(a->n, a->d);
-  if ((r = malloc(sizeof (*r)))) {
-    r->n = a->n / g;
-    r->d = a->d / g;
-  } else
-    fprintf(stderr, "dupR OoR\n");
-  return (r);
 }
 
 /* a/b + c/d = (ad + cb) / bd */
@@ -153,12 +175,17 @@ mulR(
 ){
   long g1;
   long g2;
+  long n;
+  long d;
 
   g1 = gcdI(a->n, b->d);
   g2 = gcdI(b->n, a->d);
+  n = (a->n / g1) * (b->n / g2);
+  d = (a->d / g2) * (b->d / g1);
+  g1 = gcdI(n, d);
   return (newR(
-   (a->n / g1) * (b->n / g2)
-  ,(a->d / g2) * (b->d / g1)
+   n / g1
+  ,d / g1
   ));
 }
 #endif
@@ -169,11 +196,16 @@ mulByR(
 ){
   long g1;
   long g2;
+  long n;
+  long d;
 
   g1 = gcdI(a->n, b->d);
   g2 = gcdI(b->n, a->d);
-  a->n = (a->n / g1) * (b->n / g2);
-  a->d = (a->d / g2) * (b->d / g1);
+  n = (a->n / g1) * (b->n / g2);
+  d = (a->d / g2) * (b->d / g1);
+  g1 = gcdI(n, d);
+  a->n = n / g1;
+  a->d = d / g1;
 }
 
 /* neg a/b = -1/b */
@@ -182,20 +214,27 @@ static rational *
 negR(
   const rational *a
 ){
-  return (newR(
-   -a->n
-  ,a->d
-  ));
+  if (a->d < 0)
+    return (newR(
+     a->n
+    ,-a->d
+    ));
+  else
+    return (newR(
+     -a->n
+    ,a->d
+    ));
 }
 #endif
-#if 0
 static void
 negOfR(
   rational *a
 ){
-  a->n = -a->n;
+  if (a->d < 0)
+    a->d = -a->d;
+  else
+    a->n = -a->n;
 }
-#endif
 
 /* reciprocal a/b = b/a */
 #if 0
@@ -220,6 +259,8 @@ rcpOfR(
   a->n = a->d;
   a->d = t;
 }
+
+/*************************************************************************/
 
 /* constant stream */
 struct conST {
@@ -257,8 +298,7 @@ conS(
   if (!(x = malloc(sizeof (*x))))
     goto oom;
   x->o = chanOpen(o);
-  x->c.n = c->n;
-  x->c.d = c->d;
+  cpyR(&x->c, c);
   if (pthread_create(&pt, 0, conST, x)) {
     chanClose(x->o);
 oom:
@@ -333,8 +373,7 @@ mulT(
     goto oom;
   x->p = chanOpen(p);
   x->f = chanOpen(f);
-  x->t.n = t->n;
-  x->t.d = t->d;
+  cpyR(&x->t, t);
   if (pthread_create(&pt, 0, mulTT, x)) {
     void *v;
 
@@ -593,10 +632,8 @@ void *v
   pa1[P].o = chanOpPut;
   if ((i = chanAll(0, sizeof (ga1) / sizeof (ga1[0]), ga1)) != chanAlOp)
     goto exit;
-  f.n = r[F]->n;
-  f.d = r[F]->d;
-  g.n = r[G]->n;
-  g.d = r[G]->d;
+  cpyR(&f, r[F]);
+  cpyR(&g, r[G]);
   r[P] = r[F];
   mulByR(r[P], r[G]);
   free(r[G]);
@@ -731,8 +768,7 @@ void *v
   if (chanOne(0, sizeof (ga) / sizeof (ga[0]), ga) != 2 || ga[1].s != chanOsGet)
     goto exit;
   free(f);
-  n.n = 0;
-  n.d = 1;
+  setR(&n, 0, 1);
   while (chanOne(0, sizeof (ga) / sizeof (ga[0]), ga) == 2 && ga[1].s == chanOsGet) {
     if (!++n.n) {
       free(f);
@@ -823,8 +859,7 @@ void *v
     free(f);
     goto exit;
   }
-  n.n = 1;
-  n.d = 0;
+  setR(&n, 1, 0);
   while (chanOne(0, sizeof (ga) / sizeof (ga[0]), ga) == 2 && ga[1].s == chanOsGet) {
     if (!++n.d) {
       free(f);
@@ -941,25 +976,24 @@ void *v
     goto exit;
   pa1[S].v = (void **)&r[S];
   /* "demand" channel end */
-  if (sbtS(ga1[FG].c, pa1[F].c, pa1[G0].c)
-   || mulS(ga1[S].c, pa1[G1].c, pa1[FG].c))
+  if (sbtS(ga1[FG].c, pa1[F].c, pa1[G1].c)
+   || mulS(ga1[S].c, pa1[G0].c, pa1[FG].c))
     goto exit;
   ga1[F].o = chanOpSht;
   pa1[S].o = chanOpSht;
+  pa1[G0].o = pa1[G1].o = chanOpPut;
   if (chanOne(0, sizeof (ga1) / sizeof (ga1[0]), ga1) != G + 1 || ga1[G].s != chanOsGet)
     goto exit;
-  r[G0] = r[G];
-  pa1[G0].o = pa1[G1].o = chanOpPut;
+  r[G1] = r[G];
   while (chanOne(0, sizeof (ga1) / sizeof (ga1[0]), ga1) == G + 1 && ga1[G].s == chanOsGet) {
-    if (!(r[G1] = dupR(r[G]))
+    if (!(r[G0] = dupR(r[G]))
      || chanAll(0, sizeof (pa1) / sizeof (pa1[0]), pa1) != chanAlOp) {
-      free(r[G1]);
-      free(r[G]);
+      free(r[G0]);
       break;
     }
-    r[G0] = r[G];
+    r[G1] = r[G];
   }
-  free(r[G0]);
+  free(r[G1]);
 exit:
   for (i = 0; i < chCnt; ++i)
     chanShut(ga1[i].c);
@@ -1044,8 +1078,7 @@ void *v
   }
   memcpy(pa1, ga1, sizeof (pa1));
 
-  c.n = 1;
-  c.d = 1;
+  setR(&c, 1, 1);
   ga1[F].o = chanOpGet;
   pa1[X0].o = chanOpPut;
   if (dffS(ga1[D].c, pa1[F].c)
@@ -1151,8 +1184,8 @@ void *v
     goto exit;
   ga1[F].o = chanOpSht;
   rcpOfR(r[F]);
-  n.n = -r[F]->n;
-  n.d = r[F]->d;
+  cpyR(&n, r[F]);
+  negOfR(&n);
   if (!(r[R] = dupR(r[F]))
    || chanOne(0, sizeof (pa1) / sizeof (pa1[0]), pa1) != R + 1 || pa1[R].s != chanOsPut) {
     free(r[R]);
@@ -1273,8 +1306,8 @@ void *v
     goto exit;
   }
   rcpOfR(r[F]);
-  n.n = -r[F]->n;
-  n.d = r[F]->d;
+  cpyR(&n, r[F]);
+  negOfR(&n);
   if (sbtS(ga1[FR1].c, pa1[F].c, pa1[R1].c)
    || mulS(ga1[RB2].c, pa2[RB0].c, pa2[RB1].c)
    || mulS(ga1[RB2FR1].c, pa2[RB2].c, pa1[FR1].c)
@@ -1375,6 +1408,7 @@ void *v
   rational *f;
   chanArr_t ga[2];
   chanArr_t pa[2];
+  rational c;
   unsigned long i;
 
   ga[0].c = V->p;
@@ -1391,13 +1425,15 @@ void *v
   pa[1].v = 0;
   pa[1].o = chanOpSht;
 
+  setR(&c, 1, 1);
   while (chanOne(0, sizeof (ga) / sizeof (ga[0]), ga) == 2 && ga[1].s == chanOsGet) {
-    mulByR(f, &V->c);
+    mulByR(f, &c);
     if (chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 1 || pa[0].s != chanOsPut) {
       free(f);
       break;
     }
-    for (i = 0; i < V->n; ++i)
+    mulByR(&c, &V->c);
+    for (i = 1; i < V->n; ++i)
       if (!(f = newR(0, 1))
        || chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 1 || pa[0].s != chanOsPut) {
         free(f);
@@ -1429,9 +1465,8 @@ msbtS(
     goto oom;
   x->p = chanOpen(p);
   x->f = chanOpen(f);
-  x->c.n = c->n;
-  x->c.d = c->d;
-  x->n = n > 1 ? n - 1 : 0;
+  cpyR(&x->c, c);
+  x->n = n;
   if (pthread_create(&pt, 0, msbtST, x)) {
     void *v;
 
@@ -1484,7 +1519,7 @@ main(
 
   chanInit(realloc, free);
 
-  r1.n = 1, r1.d = 1;
+  setR(&r1, 1, 1);
   if (!(c1 = chanCreate(0, 0, 0))
    || conS(c1, &r1))
     goto exit;
@@ -1492,8 +1527,8 @@ main(
   printS(c1, 10);
   chanClose(c1);
 
-  r1.n = 1, r1.d = 1;
-  r2.n = -1, r2.d = 1;
+  setR(&r1, 1, 1);
+  setR(&r2, -1, 1);
   if (!(c1 = chanCreate(0, 0, 0))
    || conS(c1, &r1)
    || !(c2 = chanCreate(0, 0, 0))
@@ -1504,7 +1539,7 @@ main(
   chanClose(c1);
   chanClose(c2);
 
-  r1.n = 1, r1.d = 1;
+  setR(&r1, 1, 1);
   if (!(c1 = chanCreate(0, 0, 0))
    || conS(c1, &r1)
    || !(c2 = chanCreate(0, 0, 0))
@@ -1518,7 +1553,7 @@ main(
   chanClose(c2);
   chanClose(c3);
 
-  r1.n = 1, r1.d = 1;
+  setR(&r1, 1, 1);
   if (!(c1 = chanCreate(0, 0, 0))
    || conS(c1, &r1)
    || !(c2 = chanCreate(0, 0, 0))
@@ -1529,7 +1564,7 @@ main(
   chanClose(c1);
   chanClose(c2);
 
-  r1.n = 1, r1.d = 1;
+  setR(&r1, 1, 1);
   if (!(c1 = chanCreate(0, 0, 0))
    || conS(c1, &r1)
    || !(c2 = chanCreate(0, 0, 0))
@@ -1543,7 +1578,7 @@ main(
   chanClose(c2);
   chanClose(c3);
 
-  r1.n = 1, r1.d = 1;
+  setR(&r1, 1, 1);
   if (!(c1 = chanCreate(0, 0, 0))
    || conS(c1, &r1)
    || !(c2 = chanCreate(0, 0, 0))
@@ -1554,8 +1589,8 @@ main(
   chanClose(c1);
   chanClose(c2);
 
-  r1.n = 1, r1.d = 1;
-  r2.n = 0, r2.d = 1;
+  setR(&r1, 1, 1);
+  setR(&r2, 0, 1);
   if (!(c1 = chanCreate(0, 0, 0))
    || conS(c1, &r1)
    || !(c2 = chanCreate(0, 0, 0))
@@ -1566,7 +1601,7 @@ main(
   chanClose(c1);
   chanClose(c2);
 
-  r1.n = 1, r1.d = 1;
+  setR(&r1, 1, 1);
   if (!(c1 = chanCreate(0, 0, 0))
    || conS(c1, &r1)
    || !(c2 = chanCreate(0, 0, 0))
@@ -1580,7 +1615,7 @@ main(
   chanClose(c2);
   chanClose(c3);
 
-  r1.n = 1, r1.d = 1;
+  setR(&r1, 1, 1);
   if (!(c1 = chanCreate(0, 0, 0))
    || conS(c1, &r1)
    || !(c2 = chanCreate(0, 0, 0))
@@ -1591,7 +1626,7 @@ main(
   chanClose(c1);
   chanClose(c2);
 
-  r1.n = 1, r1.d = 1;
+  setR(&r1, 1, 1);
   if (!(c1 = chanCreate(0, 0, 0))
    || conS(c1, &r1)
    || !(c2 = chanCreate(0, 0, 0))
@@ -1602,7 +1637,7 @@ main(
   chanClose(c1);
   chanClose(c2);
 
-  r1.n = 1, r1.d = 1;
+  setR(&r1, 1, 1);
   if (!(c1 = chanCreate(0, 0, 0))
    || conS(c1, &r1)
    || !(c2 = chanCreate(0, 0, 0))
@@ -1613,8 +1648,8 @@ main(
   chanClose(c1);
   chanClose(c2);
 
-  r1.n = 1, r1.d = 1;
-  r2.n = -1, r2.d = 1;
+  setR(&r1, 1, 1);
+  setR(&r2, -1, 1);
   if (!(c1 = chanCreate(0, 0, 0))
    || conS(c1, &r1)
    || !(c2 = chanCreate(0, 0, 0))
@@ -1625,9 +1660,9 @@ main(
   chanClose(c1);
   chanClose(c2);
 
-  r1.n = 1, r1.d = 1;
-  r2.n = -1, r2.d = 1;
-  r3.n = 0, r3.d = 1;
+  setR(&r1, 1, 1);
+  setR(&r2, -1, 1);
+  setR(&r3, 0, 1);
   if (!(c1 = chanCreate(0, 0, 0))
    || conS(c1, &r1)
    || !(c2 = chanCreate(0, 0, 0))
@@ -1641,9 +1676,9 @@ main(
   chanClose(c2);
   chanClose(c3);
 
-  r1.n = 1, r1.d = 1;
-  r2.n = -1, r2.d = 1;
-  r3.n = 0, r3.d = 1;
+  setR(&r1, 1, 1);
+  setR(&r2, -1, 1);
+  setR(&r3, 0, 1);
   if (!(c1 = chanCreate(0, 0, 0))
    || conS(c1, &r1)
    || !(c2 = chanCreate(0, 0, 0))
