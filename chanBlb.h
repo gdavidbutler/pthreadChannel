@@ -34,7 +34,9 @@ chanBlb_tSize(
 typedef enum {
   chanBlbFrmNf /* no framing, argument is readSize (supports non-STREAM sockets) */
  ,chanBlbFrmNs /* NetString read and write framing, argument is read Blob maxSize, otherwise no arbitrary max */
- ,chanBlbFrmH1 /* HTTP/1.1 read framing, argument is read Blob maxSize, otherwise no arbitrary max */
+ ,chanBlbFrmH1 /* HTTP/1.1 read framing and no write framing, argument is read Blob maxSize, otherwise no arbitrary max */
+ ,chanBlbFrmN0 /* NETCONF/1.0 read and write framing, argument is read Blob maxSize, otherwise no arbitrary max */
+ ,chanBlbFrmN1 /* NETCONF/1.1 read and write framing, argument is read Blob maxSize, otherwise no arbitrary max */
 } chanBlbFrm_t;
 
 /*
