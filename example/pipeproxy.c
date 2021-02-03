@@ -61,7 +61,7 @@ main(
     perror("pipe");
     return (1);
   }
-  if (!chanPipe(c[0], c[1], p[0], p[1], chanBlbFrmNs, 0)) {
+  if (!chanPipe(c[0], c[1], p[0], p[1], chanBlbFrmNs, 0, 0)) {
     perror("chanPipe");
     return (1);
   }

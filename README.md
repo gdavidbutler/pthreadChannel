@@ -125,7 +125,10 @@ Several "framing" methods are supported:
   * No framing. Writes are Blob size. Reads are, within a specified maximum, sized by the amount read.
 * chanBlbNs
   * Read and write framed using [Netstring](https://en.wikipedia.org/wiki/Netstring).
-A NetString headers are stripped and inserted.
+* chanBlbN0
+  * Read and write framed using [NETCONF](https://en.wikipedia.org/wiki/NETCONF)1.0.
+* chanBlbN1
+  * Read and write framed using [NETCONF](https://en.wikipedia.org/wiki/NETCONF)1.1.
 * chanBlbH1
   * Read framed using [HTTP/1.x](https://en.wikipedia.org/wiki/Hypertext_Transfer_Protocol) on headers Transfer-Encoding (chunked) and Content-Length.
 Blob flow (repeats):
@@ -207,7 +210,7 @@ Connects two chanSocks back-to-back, with Channels reversed.
     1. ./sockproxy -T 1 -F 2 -S 2222 -t 1 -f 2 -h localhost -s ssh &
     1. ssh -p 2222 user@localhost
 * pipeproxy
-  * Copy stdin to stdout through chanPipe() preserving read boundaries using NetString framing
+  * Copy stdin to stdout through chanPipe() preserving read boundaries using Netstring framing
 * squint
   * Implementation of [M. Douglas McIlroy's "Squinting at Power Series"](https://swtch.com/~rsc/thread/squint.pdf).
 

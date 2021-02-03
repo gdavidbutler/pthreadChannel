@@ -59,11 +59,11 @@ servT(
     goto exit2;
   }
   pthread_cleanup_push((void(*)(void*))chanClose, p[1].c);
-  if (!chanSock(p[0].c, p[1].c, s[0], chanBlbFrmNf, 65535)) {
+  if (!chanSock(p[0].c, p[1].c, s[0], chanBlbFrmNf, 65535, 0)) {
     perror("chanSock");
     goto exit3;
   }
-  if (!chanSock(p[1].c, p[0].c, s[1], chanBlbFrmNf, 65535)) {
+  if (!chanSock(p[1].c, p[0].c, s[1], chanBlbFrmNf, 65535, 0)) {
     perror("chanSock");
     goto exit3;
   }

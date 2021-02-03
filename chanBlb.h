@@ -33,10 +33,10 @@ chanBlb_tSize(
 
 typedef enum {
   chanBlbFrmNf /* no framing, argument is readSize (supports non-STREAM sockets) */
- ,chanBlbFrmNs /* NetString read and write framing, argument is read Blob maxSize, otherwise no arbitrary max */
- ,chanBlbFrmH1 /* HTTP/1.1 read framing and no write framing, argument is read Blob maxSize, otherwise no arbitrary max */
- ,chanBlbFrmN0 /* NETCONF/1.0 read and write framing, argument is read Blob maxSize, otherwise no arbitrary max */
- ,chanBlbFrmN1 /* NETCONF/1.1 read and write framing, argument is read Blob maxSize, otherwise no arbitrary max */
+ ,chanBlbFrmNs /* NetString read and write framing, non-zero argument is read Blob maxSize, otherwise no arbitrary max */
+ ,chanBlbFrmN0 /* NETCONF/1.0 read and write framing, non-zero argument is read Blob maxSize, otherwise no arbitrary max */
+ ,chanBlbFrmN1 /* NETCONF/1.1 read and write framing, non-zero argument is read Blob maxSize, otherwise no arbitrary max */
+ ,chanBlbFrmH1 /* HTTP/1.1 read framing and no write framing, non-zero argument is read Blob maxSize, otherwise no arbitrary max */
 } chanBlbFrm_t;
 
 /*
@@ -62,6 +62,8 @@ typedef enum {
  *  When read() on the socketFd fails, the socketFd is shutdown(SHUT_RD) and the ingress chan is chanShut()
  *  When write() on the socketFd fails, the socketFd is shutdown(SHUT_WR) and the egress chan is chanShut()
  *
+ * Provide an optional initialIngress; previous read bytes from protocol start
+ *
  * As a convenience, chanSock() chanOpen's the chan_t's (delegating chanClose's)
  */
 int
@@ -70,7 +72,8 @@ chanSock(
  ,chan_t *egress
  ,int socketFd
  ,chanBlbFrm_t framing
- ,int argument
+ ,unsigned int argument
+ ,chanBlb_t *initialIngress
 ); /* returns 0 on failure */
 
 /*
@@ -94,6 +97,8 @@ chanSock(
  *  When read() on the readFd fails, the readFd is close() and the ingress chan is chanShut()
  *  When write() on the writeFd fails, the writeFd is close() and the egress chan is chanShut()
  *
+ * Provide an optional initialIngress; previous read bytes from protocol start
+ *
  * As a convenience, chanPipe() chanOpen's the chan_t's (delegating chanClose's)
  */
 int
@@ -103,7 +108,8 @@ chanPipe(
  ,int readFd
  ,int writeFd
  ,chanBlbFrm_t framing
- ,int argument
+ ,unsigned int argument
+ ,chanBlb_t *initialIngress
 ); /* returns 0 on failure */
 
 #endif /* __CHANBLB_H__ */
