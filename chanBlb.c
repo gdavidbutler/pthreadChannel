@@ -290,19 +290,16 @@ chanBlbRead(
   unsigned int i;
   unsigned int j;
 
-  i = 0;
   for (i = 0; i < l && i < (*b)->l; ++i)
     *((unsigned char *)d + i) = *((*b)->b + i);
   (*b)->l -= i;
   if ((*b)->l)
     for (j = 0; j < (*b)->l; ++j)
-      *((unsigned char *)d + j) = *((*b)->b + i + j);
+      *((*b)->b + j) = *((*b)->b + i + j);
   else {
     ChanF(*b);
     *b = 0;
   }
-  if (i < l)
-    i = read(s, (unsigned char *)d + i, l - i);
   return (i);
 }
 
