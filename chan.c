@@ -127,26 +127,26 @@ struct chan {
   chanSi_t s;      /* store implementation function */
   chanSd_t d;      /* store done function */
   void *v;         /* if s, store context else value */
-  cpr_t **h;       /* shutdown event circular queue */
-  cpr_t **e;       /* get event circular queue */
-  cpr_t **u;       /* put event circular queue */
   cpr_t **g;       /* get circular queue */
   cpr_t **p;       /* put circular queue */
-  unsigned int hs; /* queue size */
-  unsigned int hh; /* queue head */
-  unsigned int ht; /* queue tail */
-  unsigned int es; /* queue size */
-  unsigned int eh; /* queue head */
-  unsigned int et; /* queue tail */
-  unsigned int us; /* queue size */
-  unsigned int uh; /* queue head */
-  unsigned int ut; /* queue tail */
+  cpr_t **e;       /* get event circular queue */
+  cpr_t **u;       /* put event circular queue */
+  cpr_t **h;       /* shutdown event circular queue */
   unsigned int gs; /* queue size */
   unsigned int gh; /* queue head */
   unsigned int gt; /* queue tail */
   unsigned int ps; /* queue size */
   unsigned int ph; /* queue head */
   unsigned int pt; /* queue tail */
+  unsigned int es; /* queue size */
+  unsigned int eh; /* queue head */
+  unsigned int et; /* queue tail */
+  unsigned int us; /* queue size */
+  unsigned int uh; /* queue head */
+  unsigned int ut; /* queue tail */
+  unsigned int hs; /* queue size */
+  unsigned int hh; /* queue head */
+  unsigned int ht; /* queue tail */
   unsigned int c;  /* open count */
   unsigned int l;  /* below chan bit flags */
   chanSs_t t;      /* store status */
@@ -154,12 +154,13 @@ struct chan {
 };
 
 /* chan bit flags */
-static const unsigned int chanSu = 0x01; /* is shutdown */
-static const unsigned int chanHe = 0x02; /* is empty to differentiate h==t */
+/* NOTE: chanGe and chanPe map to chanSw_t */
+static const unsigned int chanGe = 0x01; /* is empty to differentiate h==t */
+static const unsigned int chanPe = 0x02; /* is empty to differentiate h==t */
 static const unsigned int chanEe = 0x04; /* is empty to differentiate h==t */
 static const unsigned int chanUe = 0x08; /* is empty to differentiate h==t */
-static const unsigned int chanGe = 0x10; /* is empty to differentiate h==t */
-static const unsigned int chanPe = 0x20; /* is empty to differentiate h==t */
+static const unsigned int chanHe = 0x10; /* is empty to differentiate h==t */
+static const unsigned int chanSu = 0x20; /* is shutdown */
 
 /* "templates" to manually "inline" code */
 /* find "me" in a queue else make room if needed and ... */
@@ -239,34 +240,29 @@ chanCreate(
 
   if (!ChanA || !ChanF || !(c = ChanA(0, sizeof (*c))))
     return (0);
-  c->h = c->e = c->u = c->g = c->p = 0;
-  if (!(c->h = ChanA(0, sizeof (*c->h)))
+  c->p = c->e = c->u = c->h = 0;
+  if (!(c->g = ChanA(0, sizeof (*c->g)))
+   || !(c->p = ChanA(0, sizeof (*c->p)))
    || !(c->e = ChanA(0, sizeof (*c->e)))
    || !(c->u = ChanA(0, sizeof (*c->u)))
-   || !(c->g = ChanA(0, sizeof (*c->g)))
-   || !(c->p = ChanA(0, sizeof (*c->p)))
+   || !(c->h = ChanA(0, sizeof (*c->h)))
    || pthread_mutex_init(&c->m, 0)) {
-    if (c->p)
-      ChanF(c->p);
-    if (c->g)
-      ChanF(c->g);
-    if (c->u)
-      ChanF(c->u);
-    if (c->e)
-      ChanF(c->e);
-    if (c->h)
-      ChanF(c->h);
+    ChanF(c->h);
+    ChanF(c->u);
+    ChanF(c->e);
+    ChanF(c->p);
+    ChanF(c->g);
     ChanF(c);
     return (0);
   }
   c->s = s;
   c->d = d;
   c->v = v;
-  c->hs = c->es = c->us = c->gs = c->ps = 1;
-  c->hh = c->eh = c->uh = c->gh = c->ph = 0;
-  c->ht = c->et = c->ut = c->gt = c->pt = 0;
+  c->gs = c->ps = c->es = c->us = c->hs = 1;
+  c->gh = c->ph = c->eh = c->uh = c->hh = 0;
+  c->gt = c->pt = c->et = c->ut = c->ht = 0;
   c->c = 0;
-  c->l = chanHe | chanEe | chanUe | chanGe | chanPe;
+  c->l = chanGe | chanPe | chanEe | chanUe | chanHe;
   c->t = chanSsCanPut;
   return (c);
 }

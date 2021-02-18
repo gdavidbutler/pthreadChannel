@@ -30,7 +30,7 @@ typedef enum chanSo {
 } chanSo_t;
 
 /* channel store wait */
-typedef enum chanSw {
+typedef enum chanSw { /* bit map */
   chanSwNoGet = 1 /* no waiting Gets */
  ,chanSwNoPut = 2 /* no waiting Puts */
 } chanSw_t;

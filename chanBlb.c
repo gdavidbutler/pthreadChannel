@@ -283,7 +283,6 @@ bad:
 static int
 chanBlbRead(
   chanBlb_t **b
- ,int s
  ,void *d
  ,unsigned int l
 ){
@@ -322,8 +321,8 @@ chanNsI(
   p[0].v = (void **)&m;
   p[0].o = chanOpPut;
   i0 = 0;
-  while ((i = V->b ? chanBlbRead(&V->b, V->s, b + i0, sizeof (b) - i0)
-                   :               read(V->s, b + i0, sizeof (b) - i0)) > 0) {
+  while ((i = V->b ? chanBlbRead(&V->b, b + i0, sizeof (b) - i0)
+                   :         read(V->s, b + i0, sizeof (b) - i0)) > 0) {
     unsigned int i1;
     unsigned int i2;
     unsigned int i3;
@@ -345,8 +344,8 @@ chanNsI(
       b[i2++] = b[i1++];
     i0 = i2;
     pthread_cleanup_push((void(*)(void*))ChanF, m);
-    for (i2 = m->l; i3 < i2 && (i = V->b ? chanBlbRead(&V->b, V->s, m->b + i3, i2 - i3)
-                                                       : read(V->s, m->b + i3, i2 - i3)) > 0; i3 += i);
+    for (i2 = m->l; i3 < i2 && (i = V->b ? chanBlbRead(&V->b, m->b + i3, i2 - i3)
+                                                 : read(V->s, m->b + i3, i2 - i3)) > 0; i3 += i);
     if (i > 0) {
       if ((i0 && b[--i0] == ',')
        || (!i0 && (i = read(V->s, b, 1)) == 1 && b[0] == ','))
@@ -491,8 +490,8 @@ chanN1I(
   m = 0;
   i0 = 0;
   i1 = 0;
-  while ((i = V->b ? chanBlbRead(&V->b, V->s, b + i1, sizeof (b) - i1)
-                   :               read(V->s, b + i1, sizeof (b) - i1)) > 0) {
+  while ((i = V->b ? chanBlbRead(&V->b, b + i1, sizeof (b) - i1)
+                   :         read(V->s, b + i1, sizeof (b) - i1)) > 0) {
     void *tv;
     unsigned int i2;
     unsigned int i3;
@@ -536,8 +535,8 @@ chanN1I(
         b[i4] = b[i2];
       i1 = i4;
       pthread_cleanup_push((void(*)(void*))ChanF, m);
-      for (; i3 && (i = V->b ? chanBlbRead(&V->b, V->s, m->b + i0, i3)
-                             :               read(V->s, m->b + i0, i3)) > 0; i3 -= i, i0 += i);
+      for (; i3 && (i = V->b ? chanBlbRead(&V->b, m->b + i0, i3)
+                             :         read(V->s, m->b + i0, i3)) > 0; i3 -= i, i0 += i);
       pthread_cleanup_pop(0);
       if (i <= 0)
         goto bad;

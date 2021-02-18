@@ -100,8 +100,8 @@ primeT(
   if ((i = (Goal - prime) / 500) > 1) {
     void *tv;
 
-    if (!(tv = chanFifoDySa(i, i / 2))
-     || !(c = chanCreate(chanFifoDySi, tv, chanFifoDySd)))
+    if (!(tv = chanFifoStSa(i))
+     || !(c = chanCreate(chanFifoStSi, tv, chanFifoStSd)))
       free(tv);
   } else
 #endif
@@ -172,8 +172,8 @@ main(
   if ((i = (Goal - 2) / 500) > 1) {
     void *tv;
 
-    if (!(tv = chanFifoDySa(i, i / 2))
-     || !(c = chanCreate(chanFifoDySi, tv, chanFifoDySd))) {
+    if (!(tv = chanFifoStSa(i))
+     || !(c = chanCreate(chanFifoStSi, tv, chanFifoStSd))) {
       free(tv);
       c = 0;
     }
