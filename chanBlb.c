@@ -352,9 +352,10 @@ chanNsI(
         i = chanOne(0, sizeof (p) / sizeof (p[0]), p) == 1 && p[0].s == chanOsPut;
       else
         i = 0;
-    }
+    } else
+      i = 0;
     pthread_cleanup_pop(0); /* ChanF(m) */
-    if (i <= 0) {
+    if (!i) {
       ChanF(m);
       break;
     }
