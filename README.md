@@ -7,7 +7,7 @@ Yet another implementation of a "Channel" construct for POSIX threads (pthreads)
 A Channel is an anonymous, pthread coordinating, Store of pointer (void *) sized items in a shared heap.
 
 For a background on Channels see Russ Cox's [Bell Labs and CSP Threads](https://swtch.com/~rsc/thread/).
-For another perspective see [Flow-based programming](https://en.wikipedia.org/wiki/Flow-based_programming).
+For other perspectives see [Actor model](https://en.wikipedia.org/wiki/Actor_model) and [Flow-based programming](https://en.wikipedia.org/wiki/Flow-based_programming).
 
 * Channels, by default, store a single item. (For more, see [Store](#store), below.)
 * Channels only support intra-process exchanges. (For inter-process, see [Blob](#blob), below.)
