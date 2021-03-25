@@ -7,15 +7,15 @@ Yet another implementation of a "Channel" construct for POSIX threads (pthreads)
 A Channel is an anonymous, pthread coordinating, Store of pointer (void *) sized items in a shared heap.
 
 For a background on Channels see Russ Cox's [Bell Labs and CSP Threads](https://swtch.com/~rsc/thread/).
-For other perspectives see [Actor model](https://en.wikipedia.org/wiki/Actor_model) and [Flow-based programming](https://en.wikipedia.org/wiki/Flow-based_programming).
+For other perspectives see [actor model](https://en.wikipedia.org/wiki/Actor_model) and [flow-based programming](https://en.wikipedia.org/wiki/Flow-based_programming).
 
-* Channels, by default, store a single item. (For more, see [Store](#store), below.)
-* Channels only support intra-process exchanges. (For inter-process, see [Blob](#blob), below.)
+* Channels, by default, store a single item. (For more, see [store](#store).)
+* Channels only support intra-process exchanges. (For inter-process, see [blob](#blob).)
 * Any number of pthreads can Put/Get on a Channel.
-  * Monitoring of Channel demand is supported. (See [Example](#example) squint, below.)
+  * Monitoring of Channel demand is supported. (See [squint](#example).)
 * A pthread can Put/Get on any number of Channels.
-  * Ordered unicast (One) and atomic multicast (All) operations are supported. (See [Example](#example) squint, below.)
-* The canonical Channel use is a transfer of a pointer to heap. (Delegating heap locking complexities to a heap management implementation e.g. realloc and free.)
+  * Unicast (One) and Multicast (All) operations are supported. (See [squint](#example).)
+* The canonical Channel use is a transfer of a pointer to heap. (Delegating heap locking complexities to a heap management implementation e.g. realloc and free.) (See [primes](#example).)
   * Putting pthread:
     ````C
     m = malloc(...);
@@ -65,9 +65,9 @@ Find the API in chan.h:
 * chanOp(...)
   * perform an operation on a Channel
 * chanOne(...)
-  * Perform one operation on an array of Channels (in the order provided).
+  * Perform one operation (the first available) on an array of Channels.
 * chanAll(...)
-  * Perform all operations on an array of Channels (distributed [Store](#store)).
+  * Perform all operations on an array of Channels. (See [etomic broadcast](https://en.wikipedia.org/wiki/Atomic_broadcast).)
 
 ### Store
 
@@ -87,6 +87,7 @@ If none is provided, a Channel contains a single item.
 This is best (lowest latency) when the cost of processing an item dominates the cost of a context switch.
 But as the processing cost decreases toward the context switch cost, Stores can drastically decrease context switching.
 Therefore, a Store's size depends on how much latency can be tolerated in the quest for efficiency.
+(See [queueing theory](https://en.wikipedia.org/wiki/Queueing_theory).)
 
 A statically sized Channel FIFO Store implementation is provided.
 When a context is created, a size is allocated.
