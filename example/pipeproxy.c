@@ -52,8 +52,8 @@ main(
   int i;
 
   chanInit(realloc, free);
-  if (!(c[0] = chanCreate(0,0,0))
-   || !(c[1] = chanCreate(0,0,0))) {
+  if (!(c[0] = chanCreate(0,0,(chanSd_t)free))
+   || !(c[1] = chanCreate(0,0,(chanSd_t)free))) {
     perror("chanCreate");
     return (1);
   }

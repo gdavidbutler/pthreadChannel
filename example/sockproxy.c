@@ -49,12 +49,12 @@ servT(
     perror("connect");
     goto exit1;
   }
-  if (!(p[0].c = chanCreate(0,0,0))) {
+  if (!(p[0].c = chanCreate(0,0,(chanSd_t)free))) {
     perror("chanCreate");
     goto exit1;
   }
   pthread_cleanup_push((void(*)(void*))chanClose, p[0].c);
-  if (!(p[1].c = chanCreate(0,0,0))) {
+  if (!(p[1].c = chanCreate(0,0,(chanSd_t)free))) {
     perror("chanCreate");
     goto exit2;
   }
