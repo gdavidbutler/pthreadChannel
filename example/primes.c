@@ -44,7 +44,6 @@
  * using a FIFO store drastically decreases thread context switching.
  * Since each prime thread is a filter, there are many more messages at the head of
  * the chain than at the end. Stores are sized relative to the length of the chain.
- * The context switch overhead dominates, so the initial size is set to the max.
  */
 #define STORE 1 /* 0 or 1 to use a store */
 #if STORE
@@ -100,12 +99,21 @@ primeT(
   if ((i = (Goal - prime) / 500) > 1) {
     void *tv;
 
-    if (!(tv = chanFifoStSa(i))
+#if MEMORY
+    tv = chanFifoStSa(free, i);
+#else
+    tv = chanFifoStSa(0, i);
+#endif
+    if (!tv
      || !(c = chanCreate(chanFifoStSi, tv, chanFifoStSd)))
       free(tv);
   } else
 #endif
-    c = chanCreate(0,0,0);
+#if MEMORY
+    c = chanCreate(0, 0, (chanSd_t)free);
+#else
+    c = chanCreate(0, 0, 0);
+#endif
   if (!c) {
     puts("out of memory");
     goto exit;
@@ -139,11 +147,6 @@ exit:
   chanShut(c);
   chanClose(c);
   chanShut(v);
-  while (chanOp(0, v, (void **)&ip, chanOpGet) == chanOsGet)
-#if MEMORY
-    free(ip)
-#endif
-    ;
   chanClose(v);
   return (0);
 }
@@ -172,14 +175,24 @@ main(
   if ((i = (Goal - 2) / 500) > 1) {
     void *tv;
 
-    if (!(tv = chanFifoStSa(i))
+#if MEMORY
+    tv = chanFifoStSa(free, i);
+#else
+    tv = chanFifoStSa(0, i);
+#endif
+    if (!tv
      || !(c = chanCreate(chanFifoStSi, tv, chanFifoStSd))) {
       free(tv);
       c = 0;
     }
   } else
 #endif
-  if (!(c = chanCreate(0,0,0))) {
+#if MEMORY
+    c = chanCreate(0, 0, (chanSd_t)free);
+#else
+    c = chanCreate(0, 0, 0);
+#endif
+  if (!c) {
     puts("Can't create channel");
     goto exit;
   }

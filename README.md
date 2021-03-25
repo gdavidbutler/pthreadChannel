@@ -16,7 +16,6 @@ For other perspectives see [Actor model](https://en.wikipedia.org/wiki/Actor_mod
 * A pthread can Put/Get on any number of Channels.
   * Ordered unicast (One) and atomic multicast (All) operations are supported. (See [Example](#example) squint, below.)
 * The canonical Channel use is a transfer of a pointer to heap. (Delegating heap locking complexities to a heap management implementation e.g. realloc and free.)
-NOTE: Items are discarded on last chanClose(). (To avoid leaking heap, chanOpGet till chanOsSht).
   * Putting pthread:
     ````C
     m = malloc(...);

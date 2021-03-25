@@ -26,6 +26,7 @@ extern void (*ChanF)(void *);
 
 /* chan fifo store context */
 struct chanFifoStSc {
+  void (*d)(void *); /* last close item callback */
   void **q;          /* circular store */
   unsigned int s;    /* store size */
   unsigned int h;    /* store head */
@@ -34,7 +35,8 @@ struct chanFifoStSc {
 
 void *
 chanFifoStSa(
-  unsigned int s
+  void (*d)(void *)
+ ,unsigned int s
 ){
   struct chanFifoStSc *c;
 
@@ -45,6 +47,7 @@ chanFifoStSa(
     ChanF(c);
     return (0);
   }
+  c->d = d;
   c->s = s;
   c->h = c->t = 0;
   return (c);
@@ -55,7 +58,13 @@ chanFifoStSa(
 void
 chanFifoStSd(
   void *c
+ ,chanSs_t s
 ){
+  if (s & chanSsCanGet) do {
+    SC->d(SC->q[SC->h]);
+    if (++SC->h == SC->s)
+      SC->h = 0;
+  } while (SC->h != SC->t);
   ChanF(SC->q);
   ChanF(c);
 }
@@ -91,6 +100,7 @@ chanFifoStSi(
 
 /* chan fifo store context */
 struct chanFifoDySc {
+  void (*d)(void *); /* last close item callback */
   void **q;          /* circular store */
   unsigned int m;    /* store max */
   unsigned int s;    /* store size */
@@ -100,7 +110,8 @@ struct chanFifoDySc {
 
 void *
 chanFifoDySa(
-  unsigned int m
+  void (*d)(void *)
+ ,unsigned int m
  ,unsigned int s
 ){
   struct chanFifoDySc *c;
@@ -112,6 +123,7 @@ chanFifoDySa(
     ChanF(c);
     return (0);
   }
+  c->d = d;
   c->m = m;
   c->s = s;
   c->h = c->t = 0;
@@ -123,7 +135,13 @@ chanFifoDySa(
 void
 chanFifoDySd(
   void *c
+ ,chanSs_t s
 ){
+  if (s & chanSsCanGet) do {
+    SC->d(SC->q[SC->h]);
+    if (++SC->h == SC->s)
+      SC->h = 0;
+  } while (SC->h != SC->t);
   ChanF(SC->q);
   ChanF(c);
 }

@@ -31,13 +31,15 @@
 /* allocate a context of items */
 void *
 chanFifoStSa(
-  unsigned int size
+  void (*lastCloseItemCb)(void *)
+ ,unsigned int size
 ); /* returns 0 on failure */
 
 /* deallocate context */
 void
 chanFifoStSd(
   void *context
+ ,chanSs_t state
 );
 
 /* the chan implementation */
@@ -54,7 +56,8 @@ chanFifoStSi(
 /* allocate a context of items */
 void *
 chanFifoDySa(
-  unsigned int max
+  void (*lastCloseItemCb)(void *)
+ ,unsigned int max
  ,unsigned int initial
 ); /* returns 0 on failure */
 
@@ -62,6 +65,7 @@ chanFifoDySa(
 void
 chanFifoDySd(
   void *context
+ ,chanSs_t state
 );
 
 /* the chan implementation */

@@ -62,6 +62,7 @@ typedef chanSs_t
 typedef void
 (*chanSd_t)(
   void *cntx
+ ,chanSs_t state
 );
 
 /*
@@ -86,9 +87,9 @@ typedef struct chan chan_t;
  *  This works best (providing low latency) when threads work more and talk less.
  *
  * When allocating the channel, supply:
- *  the store implementation function (or 0 if none)
- *  the store context (or 0 if none)
- *  the store context done function (or 0 if none)
+ *  a store implementation function (0 if none)
+ *  a store context (0 if none)
+ *  a store done function (0 if none)
  *
  * Return 0 on error (memory allocation)
  * Returned channel is Open.
@@ -156,7 +157,6 @@ chanOp(
 );
 
 /* channel array */
-/* must be private to a thread */
 typedef struct chanArr {
   chan_t *c;  /* channel to operate on, 0 == chanOpNop */
   void **v;   /* where to get/put or 0 for monitor */

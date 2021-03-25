@@ -287,7 +287,8 @@ void *v
       break;
     }
   }
-  chanShut(V->o), chanClose(V->o);
+  chanShut(V->o);
+  chanClose(V->o);
   free(v);
   return (0);
 }
@@ -356,10 +357,9 @@ void *v
       break;
     }
   }
-  chanShut(V->p), chanClose(V->p);
+  chanShut(V->p);
+  chanClose(V->p);
   chanShut(V->f);
-  while (chanOp(0, V->f, (void **)&f, chanOpGet) == chanOsGet)
-    free(f);
   chanClose(V->f);
   free(v);
   return (0);
@@ -381,8 +381,6 @@ multS(
   x->f = chanOpen(f);
   cpyR(&x->t, t);
   if (pthread_create(&pt, 0, multS_, x)) {
-    void *v;
-
     chanClose(x->f);
     chanClose(x->p);
 oor:
@@ -390,8 +388,6 @@ oor:
     fprintf(stderr, "multS OoR\n");
     chanShut(p);
     chanShut(f);
-    while (chanOp(0, f, &v, chanOpGet) == chanOsGet)
-      free(v);
     return (1);
   }
   pthread_detach(pt);
@@ -445,14 +441,11 @@ void *v
       break;
     }
   }
-  chanShut(V->s), chanClose(V->s);
+  chanShut(V->s);
+  chanClose(V->s);
   chanShut(V->f);
-  chanShut(V->g);
-  while (chanOp(0, V->f, (void **)&f, chanOpGet) == chanOsGet)
-    free(f);
   chanClose(V->f);
-  while (chanOp(0, V->g, (void **)&g, chanOpGet) == chanOsGet)
-    free(g);
+  chanShut(V->g);
   chanClose(V->g);
   free(v);
   return (0);
@@ -474,8 +467,6 @@ addS(
   x->f = chanOpen(f);
   x->g = chanOpen(g);
   if (pthread_create(&pt, 0, addS_, x)) {
-    void *v;
-
     chanClose(x->g);
     chanClose(x->f);
     chanClose(x->s);
@@ -485,10 +476,6 @@ oor:
     chanShut(s);
     chanShut(f);
     chanShut(g);
-    while (chanOp(0, f, &v, chanOpGet) == chanOsGet)
-      free(v);
-    while (chanOp(0, g, &v, chanOpGet) == chanOsGet)
-      free(v);
     return (1);
   }
   pthread_detach(pt);
@@ -541,10 +528,9 @@ void *v
     }
   }
 exit:
-  chanShut(V->p), chanClose(V->p);
+  chanShut(V->p);
+  chanClose(V->p);
   chanShut(V->f);
-  while (chanOp(0, V->f, (void **)&f, chanOpGet) == chanOsGet)
-    free(f);
   chanClose(V->f);
   free(v);
   return (0);
@@ -566,8 +552,6 @@ xnS(
   x->f = chanOpen(f);
   x->n = n;
   if (pthread_create(&pt, 0, xnS_, x)) {
-    void *v;
-
     chanClose(x->f);
     chanClose(x->p);
     free(x);
@@ -575,8 +559,6 @@ oor:
     fprintf(stderr, "xnS OoR\n");
     chanShut(p);
     chanShut(f);
-    while (chanOp(0, f, &v, chanOpGet) == chanOsGet)
-      free(v);
     return (1);
   }
   pthread_detach(pt);
@@ -625,7 +607,7 @@ void *v
   ga1[F].c = V->f;
   ga1[G].c = V->g;
   for (i = 0; i < chCnt; ++i) {
-    if (!ga1[i].c && !(ga1[i].c = chanCreate(0, 0, 0))) {
+    if (!ga1[i].c && !(ga1[i].c = chanCreate(0, 0, (chanSd_t)free))) {
       fprintf(stderr, "mulS_ OoR\n");
       goto exit;
     }
@@ -688,18 +670,10 @@ void *v
     }
   }
 exit:
-  for (i = 0; i < chCnt; ++i)
+  for (i = 0; i < chCnt; ++i) {
     chanShut(ga1[i].c);
-  for (i = 0; i < chCnt; ++i)
-    if (ga1[i].o == chanOpGet)
-      while (chanOp(0, ga1[i].c, (void **)&r[0], chanOpGet) == chanOsGet)
-        free(r[0]);
-  for (i = 0; i < chCnt; ++i)
-    if (ga2[i].o == chanOpGet)
-      while (chanOp(0, ga2[i].c, (void **)&r[0], chanOpGet) == chanOsGet)
-        free(r[0]);
-  for (i = 0; i < chCnt; ++i)
     chanClose(ga1[i].c);
+  }
   free(v);
   return (0);
 }
@@ -720,8 +694,6 @@ mulS(
   x->f = chanOpen(f);
   x->g = chanOpen(g);
   if (pthread_create(&pt, 0, mulS_, x)) {
-    void *v;
-
     chanClose(x->g);
     chanClose(x->f);
     chanClose(x->p);
@@ -730,10 +702,6 @@ oor:
     chanShut(p);
     chanShut(f);
     chanShut(g);
-    while (chanOp(0, f, &v, chanOpGet) == chanOsGet)
-      free(v);
-    while (chanOp(0, g, &v, chanOpGet) == chanOsGet)
-      free(v);
     fprintf(stderr, "mulS OoR\n");
     return (1);
   }
@@ -789,10 +757,9 @@ void *v
     }
   }
 exit:
-  chanShut(V->p), chanClose(V->p);
+  chanShut(V->p);
+  chanClose(V->p);
   chanShut(V->f);
-  while (chanOp(0, V->f, (void **)&f, chanOpGet) == chanOsGet)
-    free(f);
   chanClose(V->f);
   free(v);
   return (0);
@@ -812,8 +779,6 @@ dffS(
   x->p = chanOpen(p);
   x->f = chanOpen(f);
   if (pthread_create(&pt, 0, dffS_, x)) {
-    void *v;
-
     chanClose(x->f);
     chanClose(x->p);
     free(x);
@@ -821,8 +786,6 @@ oor:
     fprintf(stderr, "dffS OoR\n");
     chanShut(p);
     chanShut(f);
-    while (chanOp(0, f, &v, chanOpGet) == chanOsGet)
-      free(v);
     return (1);
   }
   pthread_detach(pt);
@@ -880,10 +843,9 @@ void *v
     }
   }
 exit:
-  chanShut(V->p), chanClose(V->p);
+  chanShut(V->p);
+  chanClose(V->p);
   chanShut(V->f);
-  while (chanOp(0, V->f, (void **)&f, chanOpGet) == chanOsGet)
-    free(f);
   chanClose(V->f);
   free(v);
   return (0);
@@ -905,8 +867,6 @@ ntgS(
   x->p = chanOpen(p);
   x->f = chanOpen(f);
   if (pthread_create(&pt, 0, ntgS_, x)) {
-    void *v;
-
     chanClose(x->f);
     chanClose(x->p);
     free(x->c);
@@ -915,8 +875,6 @@ oor:
     fprintf(stderr, "ntgS OoR\n");
     chanShut(p);
     chanShut(f);
-    while (chanOp(0, f, &v, chanOpGet) == chanOsGet)
-      free(v);
     return (1);
   }
   pthread_detach(pt);
@@ -959,7 +917,7 @@ void *v
   ga1[F].c = V->f;
   ga1[G].c = V->g;
   for (i = 0; i < chCnt; ++i) {
-    if (!ga1[i].c && !(ga1[i].c = chanCreate(0, 0, 0))) {
+    if (!ga1[i].c && !(ga1[i].c = chanCreate(0, 0, (chanSd_t)free))) {
       fprintf(stderr, "sbtS_ OoR\n");
       goto exit;
     }
@@ -1005,14 +963,10 @@ void *v
   }
   free(r[G1]);
 exit:
-  for (i = 0; i < chCnt; ++i)
+  for (i = 0; i < chCnt; ++i) {
     chanShut(ga1[i].c);
-  for (i = 0; i < chCnt; ++i)
-    if (ga1[i].o == chanOpGet)
-      while (chanOp(0, ga1[i].c, (void **)&r[0], chanOpGet) == chanOsGet)
-        free(r[0]);
-  for (i = 0; i < chCnt; ++i)
     chanClose(ga1[i].c);
+  }
   free(v);
   return (0);
 }
@@ -1033,8 +987,6 @@ sbtS(
   x->f = chanOpen(f);
   x->g = chanOpen(g);
   if (pthread_create(&pt, 0, sbtS_, x)) {
-    void *v;
-
     chanClose(x->g);
     chanClose(x->f);
     chanClose(x->s);
@@ -1044,10 +996,6 @@ oor:
     chanShut(s);
     chanShut(f);
     chanShut(g);
-    while (chanOp(0, f, &v, chanOpGet) == chanOsGet)
-      free(v);
-    while (chanOp(0, g, &v, chanOpGet) == chanOsGet)
-      free(v);
     return (1);
   }
   pthread_detach(pt);
@@ -1081,7 +1029,7 @@ void *v
   ga1[F].c = V->f;
   ga1[X0].c = V->e;
   for (i = 0; i < chCnt; ++i) {
-    if (!ga1[i].c && !(ga1[i].c = chanCreate(0, 0, 0))) {
+    if (!ga1[i].c && !(ga1[i].c = chanCreate(0, 0, (chanSd_t)free))) {
       fprintf(stderr, "expS_ OoR\n");
       goto exit;
     }
@@ -1110,14 +1058,10 @@ void *v
     }
   }
 exit:
-  for (i = 0; i < chCnt; ++i)
+  for (i = 0; i < chCnt; ++i) {
     chanShut(ga1[i].c);
-  for (i = 0; i < chCnt; ++i)
-    if (ga1[i].o == chanOpGet)
-      while (chanOp(0, ga1[i].c, (void **)&r[0], chanOpGet) == chanOsGet)
-        free(r[0]);
-  for (i = 0; i < chCnt; ++i)
     chanClose(ga1[i].c);
+  }
   free(v);
   return (0);
 }
@@ -1136,8 +1080,6 @@ expS(
   x->e = chanOpen(e);
   x->f = chanOpen(f);
   if (pthread_create(&pt, 0, expS_, x)) {
-    void *v;
-
     chanClose(x->f);
     chanClose(x->e);
     free(x);
@@ -1145,8 +1087,6 @@ oor:
     fprintf(stderr, "expS OoR\n");
     chanShut(e);
     chanShut(f);
-    while (chanOp(0, f, &v, chanOpGet) == chanOsGet)
-      free(v);
     return (1);
   }
   pthread_detach(pt);
@@ -1182,7 +1122,7 @@ void *v
   ga1[R].c = V->r;
   ga1[F].c = V->f;
   for (i = 0; i < chCnt; ++i) {
-    if (!ga1[i].c && !(ga1[i].c = chanCreate(0, 0, 0))) {
+    if (!ga1[i].c && !(ga1[i].c = chanCreate(0, 0, (chanSd_t)free))) {
       fprintf(stderr, "rcpS_ OoR\n");
       goto exit;
     }
@@ -1230,14 +1170,10 @@ void *v
     }
   }
 exit:
-  for (i = 0; i < chCnt; ++i)
+  for (i = 0; i < chCnt; ++i) {
     chanShut(ga1[i].c);
-  for (i = 0; i < chCnt; ++i)
-    if (ga1[i].o == chanOpGet)
-      while (chanOp(0, ga1[i].c, (void **)&r[0], chanOpGet) == chanOsGet)
-        free(r[0]);
-  for (i = 0; i < chCnt; ++i)
     chanClose(ga1[i].c);
+  }
   free(v);
   return (0);
 }
@@ -1256,8 +1192,6 @@ rcpS(
   x->r = chanOpen(r);
   x->f = chanOpen(f);
   if (pthread_create(&pt, 0, rcpS_, x)) {
-    void *v;
-
     chanClose(x->f);
     chanClose(x->r);
     free(x);
@@ -1265,8 +1199,6 @@ oor:
     fprintf(stderr, "rcpS OoR\n");
     chanShut(r);
     chanShut(f);
-    while (chanOp(0, f, &v, chanOpGet) == chanOsGet)
-      free(v);
     return (1);
   }
   pthread_detach(pt);
@@ -1302,7 +1234,7 @@ void *v
   ga1[R0].c = V->r;
   ga1[F].c = V->f;
   for (i = 0; i < chCnt; ++i) {
-    if (!ga1[i].c && !(ga1[i].c = chanCreate(0, 0, 0))) {
+    if (!ga1[i].c && !(ga1[i].c = chanCreate(0, 0, (chanSd_t)free))) {
       fprintf(stderr, "revS_ OoR\n");
       goto exit;
     }
@@ -1363,14 +1295,10 @@ void *v
     }
   } while (chanOne(0, sizeof (ga1) / sizeof (ga1[0]), ga1) == R + 1 && ga1[R].s == chanOsGet);
 exit:
-  for (i = 0; i < chCnt; ++i)
+  for (i = 0; i < chCnt; ++i) {
     chanShut(ga1[i].c);
-  for (i = 0; i < chCnt; ++i)
-    if (ga1[i].o == chanOpGet)
-      while (chanOp(0, ga1[i].c, (void **)&r[0], chanOpGet) == chanOsGet)
-        free(r[0]);
-  for (i = 0; i < chCnt; ++i)
     chanClose(ga1[i].c);
+  }
   free(v);
   return (0);
 }
@@ -1389,8 +1317,6 @@ revS(
   x->r = chanOpen(r);
   x->f = chanOpen(f);
   if (pthread_create(&pt, 0, revS_, x)) {
-    void *v;
-
     chanClose(x->f);
     chanClose(x->r);
     free(x);
@@ -1398,8 +1324,6 @@ oor:
     fprintf(stderr, "revS OoR\n");
     chanShut(r);
     chanShut(f);
-    while (chanOp(0, f, &v, chanOpGet) == chanOsGet)
-      free(v);
     return (1);
   }
   pthread_detach(pt);
@@ -1457,10 +1381,9 @@ void *v
       }
   }
 exit:
-  chanShut(V->p), chanClose(V->p);
+  chanShut(V->p);
+  chanClose(V->p);
   chanShut(V->f);
-  while (chanOp(0, V->f, (void **)&f, chanOpGet) == chanOsGet)
-    free(f);
   chanClose(V->f);
   free(v);
   return (0);
@@ -1484,8 +1407,6 @@ msbtS(
   cpyR(&x->c, c);
   x->n = n;
   if (pthread_create(&pt, 0, msbtS_, x)) {
-    void *v;
-
     chanClose(x->f);
     chanClose(x->p);
 oor:
@@ -1493,8 +1414,6 @@ oor:
     fprintf(stderr, "msbtS OoR\n");
     chanShut(p);
     chanShut(f);
-    while (chanOp(0, f, &v, chanOpGet) == chanOsGet)
-      free(v);
     return (1);
   }
   pthread_detach(pt);
@@ -1518,8 +1437,6 @@ printS(
   }
   putchar('\n'),fflush(stdout);
   chanShut(c);
-  while (chanOp(0, c, (void **)&o, chanOpGet) == chanOsGet)
-    free(o);
 }
 
 int
@@ -1536,7 +1453,7 @@ main(
   chanInit(realloc, free);
 
   setR(&r1, 1, 1);
-  if (!(c1 = chanCreate(0, 0, 0))
+  if (!(c1 = chanCreate(0, 0, (chanSd_t)free))
    || conS(c1, &r1))
     goto exit;
   printf("conS:"),fflush(stdout);
@@ -1545,9 +1462,9 @@ main(
 
   setR(&r1, 1, 1);
   setR(&r2, -1, 1);
-  if (!(c1 = chanCreate(0, 0, 0))
+  if (!(c1 = chanCreate(0, 0, (chanSd_t)free))
    || conS(c1, &r1)
-   || !(c2 = chanCreate(0, 0, 0))
+   || !(c2 = chanCreate(0, 0, (chanSd_t)free))
    || multS(c2, c1, &r2))
     goto exit;
   printf("multS:"),fflush(stdout);
@@ -1556,11 +1473,11 @@ main(
   chanClose(c2);
 
   setR(&r1, 1, 1);
-  if (!(c1 = chanCreate(0, 0, 0))
+  if (!(c1 = chanCreate(0, 0, (chanSd_t)free))
    || conS(c1, &r1)
-   || !(c2 = chanCreate(0, 0, 0))
+   || !(c2 = chanCreate(0, 0, (chanSd_t)free))
    || conS(c2, &r1)
-   || !(c3 = chanCreate(0, 0, 0))
+   || !(c3 = chanCreate(0, 0, (chanSd_t)free))
    || addS(c3, c1, c2))
     goto exit;
   printf("addS:"),fflush(stdout);
@@ -1570,9 +1487,9 @@ main(
   chanClose(c3);
 
   setR(&r1, 1, 1);
-  if (!(c1 = chanCreate(0, 0, 0))
+  if (!(c1 = chanCreate(0, 0, (chanSd_t)free))
    || conS(c1, &r1)
-   || !(c2 = chanCreate(0, 0, 0))
+   || !(c2 = chanCreate(0, 0, (chanSd_t)free))
    || xnS(c2, c1, 1))
     goto exit;
   printf("xnS:"),fflush(stdout);
@@ -1581,11 +1498,11 @@ main(
   chanClose(c2);
 
   setR(&r1, 1, 1);
-  if (!(c1 = chanCreate(0, 0, 0))
+  if (!(c1 = chanCreate(0, 0, (chanSd_t)free))
    || conS(c1, &r1)
-   || !(c2 = chanCreate(0, 0, 0))
+   || !(c2 = chanCreate(0, 0, (chanSd_t)free))
    || conS(c2, &r1)
-   || !(c3 = chanCreate(0, 0, 0))
+   || !(c3 = chanCreate(0, 0, (chanSd_t)free))
    || mulS(c3, c1, c2))
     goto exit;
   printf("mulS:"),fflush(stdout);
@@ -1595,9 +1512,9 @@ main(
   chanClose(c3);
 
   setR(&r1, 1, 1);
-  if (!(c1 = chanCreate(0, 0, 0))
+  if (!(c1 = chanCreate(0, 0, (chanSd_t)free))
    || conS(c1, &r1)
-   || !(c2 = chanCreate(0, 0, 0))
+   || !(c2 = chanCreate(0, 0, (chanSd_t)free))
    || dffS(c2, c1))
     goto exit;
   printf("dffS:"),fflush(stdout);
@@ -1607,9 +1524,9 @@ main(
 
   setR(&r1, 1, 1);
   setR(&r2, 0, 1);
-  if (!(c1 = chanCreate(0, 0, 0))
+  if (!(c1 = chanCreate(0, 0, (chanSd_t)free))
    || conS(c1, &r1)
-   || !(c2 = chanCreate(0, 0, 0))
+   || !(c2 = chanCreate(0, 0, (chanSd_t)free))
    || ntgS(c2, c1, &r2))
     goto exit;
   printf("ntgS:"),fflush(stdout);
@@ -1618,11 +1535,11 @@ main(
   chanClose(c2);
 
   setR(&r1, 1, 1);
-  if (!(c1 = chanCreate(0, 0, 0))
+  if (!(c1 = chanCreate(0, 0, (chanSd_t)free))
    || conS(c1, &r1)
-   || !(c2 = chanCreate(0, 0, 0))
+   || !(c2 = chanCreate(0, 0, (chanSd_t)free))
    || conS(c2, &r1)
-   || !(c3 = chanCreate(0, 0, 0))
+   || !(c3 = chanCreate(0, 0, (chanSd_t)free))
    || sbtS(c3, c1, c2))
     goto exit;
   printf("sbtS:"),fflush(stdout);
@@ -1632,9 +1549,9 @@ main(
   chanClose(c3);
 
   setR(&r1, 1, 1);
-  if (!(c1 = chanCreate(0, 0, 0))
+  if (!(c1 = chanCreate(0, 0, (chanSd_t)free))
    || conS(c1, &r1)
-   || !(c2 = chanCreate(0, 0, 0))
+   || !(c2 = chanCreate(0, 0, (chanSd_t)free))
    || expS(c2, c1))
     goto exit;
   printf("expS:"),fflush(stdout);
@@ -1643,9 +1560,9 @@ main(
   chanClose(c2);
 
   setR(&r1, 1, 1);
-  if (!(c1 = chanCreate(0, 0, 0))
+  if (!(c1 = chanCreate(0, 0, (chanSd_t)free))
    || conS(c1, &r1)
-   || !(c2 = chanCreate(0, 0, 0))
+   || !(c2 = chanCreate(0, 0, (chanSd_t)free))
    || rcpS(c2, c1))
     goto exit;
   printf("rcpS:"),fflush(stdout);
@@ -1654,9 +1571,9 @@ main(
   chanClose(c2);
 
   setR(&r1, 1, 1);
-  if (!(c1 = chanCreate(0, 0, 0))
+  if (!(c1 = chanCreate(0, 0, (chanSd_t)free))
    || conS(c1, &r1)
-   || !(c2 = chanCreate(0, 0, 0))
+   || !(c2 = chanCreate(0, 0, (chanSd_t)free))
    || revS(c2, c1))
     goto exit;
   printf("revS:"),fflush(stdout);
@@ -1666,9 +1583,9 @@ main(
 
   setR(&r1, 1, 1);
   setR(&r2, -1, 1);
-  if (!(c1 = chanCreate(0, 0, 0))
+  if (!(c1 = chanCreate(0, 0, (chanSd_t)free))
    || conS(c1, &r1)
-   || !(c2 = chanCreate(0, 0, 0))
+   || !(c2 = chanCreate(0, 0, (chanSd_t)free))
    || msbtS(c2, c1, &r2, 2))
     goto exit;
   printf("msbtS:"),fflush(stdout);
@@ -1679,11 +1596,11 @@ main(
   setR(&r1, 1, 1);
   setR(&r2, -1, 1);
   setR(&r3, 0, 1);
-  if (!(c1 = chanCreate(0, 0, 0))
+  if (!(c1 = chanCreate(0, 0, (chanSd_t)free))
    || conS(c1, &r1)
-   || !(c2 = chanCreate(0, 0, 0))
+   || !(c2 = chanCreate(0, 0, (chanSd_t)free))
    || msbtS(c2, c1, &r2, 2)
-   || !(c3 = chanCreate(0, 0, 0))
+   || !(c3 = chanCreate(0, 0, (chanSd_t)free))
    || ntgS(c3, c2, &r3))
     goto exit;
   printf("ntg-msbt:"),fflush(stdout);
@@ -1695,13 +1612,13 @@ main(
   setR(&r1, 1, 1);
   setR(&r2, -1, 1);
   setR(&r3, 0, 1);
-  if (!(c1 = chanCreate(0, 0, 0))
+  if (!(c1 = chanCreate(0, 0, (chanSd_t)free))
    || conS(c1, &r1)
-   || !(c2 = chanCreate(0, 0, 0))
+   || !(c2 = chanCreate(0, 0, (chanSd_t)free))
    || msbtS(c2, c1, &r2, 2)
-   || !(c3 = chanCreate(0, 0, 0))
+   || !(c3 = chanCreate(0, 0, (chanSd_t)free))
    || ntgS(c3, c2, &r3)
-   || !(c4 = chanCreate(0, 0, 0))
+   || !(c4 = chanCreate(0, 0, (chanSd_t)free))
    || revS(c4, c3))
     goto exit;
   printf("tanS:"),fflush(stdout);

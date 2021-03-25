@@ -321,8 +321,8 @@ chanClose(
   ChanF(c->u);
   ChanF(c->e);
   ChanF(c->h);
-  if (c->d)
-    c->d(c->v);
+  if (c->d && (c->s || c->t & chanSsCanGet))
+    c->d(c->v, c->t);
   pthread_mutex_unlock(&c->m);
   pthread_mutex_destroy(&c->m);
   ChanF(c);
