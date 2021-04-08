@@ -90,6 +90,8 @@ typedef struct chan chan_t;
  *  a store implementation function (0 if none)
  *  a store context (0 if none)
  *  a store done function (0 if none)
+ *   when the impl function is 0 the done function
+ *   is called, if needed, with the single item
  *
  * Return 0 on error (memory allocation)
  * Returned channel is Open.

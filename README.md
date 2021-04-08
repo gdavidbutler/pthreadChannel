@@ -102,13 +102,13 @@ To balance latency and efficiency size is adjusted by:
 
 Find the API in chanFifo.h:
 
-* allocate a chanFifoSc (chanFifo Store context)
+* allocate a store context
   * chanFifoStSa(...) static
   * chanFifoDySa(...) dynamic
-* deallocate a chanFifoSc (chanFifo Store context)
+* deallocate a store context
   * chanFifoStSd(...) static
   * chanFifoDySd(...) dynamic
-* implement a chanFifo
+* implement a store (chanSi_t)
   * chanFifoStSi(...) static
   * chanFifoDySi(...) dynamic
 
