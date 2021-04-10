@@ -203,7 +203,7 @@ chanN1E(
         for (l = 0; l < m->l && (i = write(V->s, m->b + l, m->l - l)) > 0; l += i);
     } else
       i = 0;
-empty:
+empty:;
     pthread_cleanup_pop(1); /* ChanF(m) */
     if (i <= 0)
       break;
