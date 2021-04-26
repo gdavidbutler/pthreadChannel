@@ -162,7 +162,6 @@ static const unsigned int chanUe = 0x08; /* is empty to differentiate h==t */
 static const unsigned int chanHe = 0x10; /* is empty to differentiate h==t */
 static const unsigned int chanSu = 0x20; /* is shutdown */
 
-/* "templates" to manually "inline" code */
 /* find "me" in a queue else make room if needed and ... */
 #define FIND_ELSE(F,V,G) do {\
   if (!(c->l & F)) {\

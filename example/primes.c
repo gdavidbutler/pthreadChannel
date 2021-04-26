@@ -40,14 +40,14 @@
  */
 
 /*
- * Since this example talks more and works less (see README, chan.h and chanFifo.h),
+ * Since this example talks more and works less (see README),
  * using a FIFO store drastically decreases thread context switching.
  * Since each prime thread is a filter, there are many more messages at the head of
  * the chain than at the end. Stores are sized relative to the length of the chain.
  */
 #define STORE 1 /* 0 or 1 to use a store */
 #if STORE
-#include "chanFifo.h"
+#include "chanStr.h"
 #endif
 
 /*
@@ -100,12 +100,12 @@ primeT(
     void *tv;
 
 #if MEMORY
-    tv = chanFifoStSa(free, i);
+    tv = chanFifoSa(free, i);
 #else
-    tv = chanFifoStSa(0, i);
+    tv = chanFifoSa(0, i);
 #endif
     if (!tv
-     || !(c = chanCreate(chanFifoStSi, tv, chanFifoStSd)))
+     || !(c = chanCreate(chanFifoSi, tv, chanFifoSd)))
       free(tv);
   } else
 #endif
@@ -176,12 +176,12 @@ main(
     void *tv;
 
 #if MEMORY
-    tv = chanFifoStSa(free, i);
+    tv = chanFifoSa(free, i);
 #else
-    tv = chanFifoStSa(0, i);
+    tv = chanFifoSa(0, i);
 #endif
     if (!tv
-     || !(c = chanCreate(chanFifoStSi, tv, chanFifoStSd))) {
+     || !(c = chanCreate(chanFifoSi, tv, chanFifoSd))) {
       free(tv);
       c = 0;
     }

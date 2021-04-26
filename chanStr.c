@@ -17,15 +17,15 @@
  */
 
 #include "chan.h"
-#include "chanFifo.h"
+#include "chanStr.h"
 
 extern void *(*ChanA)(void *, unsigned long);
 extern void (*ChanF)(void *);
 
-/* Static */
+/* FIFO */
 
 /* chan fifo store context */
-struct chanFifoStSc {
+struct chanFifoSc {
   void (*d)(void *); /* last close item callback */
   void **q;          /* circular store */
   unsigned int s;    /* store size */
@@ -34,11 +34,11 @@ struct chanFifoStSc {
 };
 
 void *
-chanFifoStSa(
+chanFifoSa(
   void (*d)(void *)
  ,unsigned int s
 ){
-  struct chanFifoStSc *c;
+  struct chanFifoSc *c;
 
   if (!s)
     return (0);
@@ -53,16 +53,16 @@ chanFifoStSa(
   return (c);
 }
 
-#define SC ((struct chanFifoStSc *)c)
+#define SC ((struct chanFifoSc *)c)
 
 void
-chanFifoStSd(
+chanFifoSd(
   void *c
  ,chanSs_t s
 ){
   if (s & chanSsCanGet) do {
-    SC->d(SC->q[SC->h]);
-    if (++SC->h == SC->s)
+    SC->d(SC->q[SC->h++]);
+    if (SC->h == SC->s)
       SC->h = 0;
   } while (SC->h != SC->t);
   ChanF(SC->q);
@@ -71,7 +71,7 @@ chanFifoStSd(
 
 /* a store is started in chanSsCanPut status */
 chanSs_t
-chanFifoStSi(
+chanFifoSi(
   void *c
  ,chanSo_t o
  ,chanSw_t w
@@ -79,14 +79,14 @@ chanFifoStSi(
 ){
   (void) w;
   if (o == chanSoPut) {
-    SC->q[SC->t] = *v;
-    if (++SC->t == SC->s)
+    SC->q[SC->t++] = *v;
+    if (SC->t == SC->s)
       SC->t = 0;
     if (SC->t == SC->h)
       return (chanSsCanGet);
   } else {
-    *v = SC->q[SC->h];
-    if (++SC->h == SC->s)
+    *v = SC->q[SC->h++];
+    if (SC->h == SC->s)
       SC->h = 0;
     if (SC->h == SC->t)
       return (chanSsCanPut);
@@ -96,10 +96,10 @@ chanFifoStSi(
 
 #undef SC
 
-/* Dynamic */
+/* Latency Sensitive FIFO */
 
 /* chan fifo store context */
-struct chanFifoDySc {
+struct chanFlsoSc {
   void (*d)(void *); /* last close item callback */
   void **q;          /* circular store */
   unsigned int m;    /* store max */
@@ -109,12 +109,12 @@ struct chanFifoDySc {
 };
 
 void *
-chanFifoDySa(
+chanFlsoSa(
   void (*d)(void *)
  ,unsigned int m
  ,unsigned int s
 ){
-  struct chanFifoDySc *c;
+  struct chanFlsoSc *c;
 
   if (!m || !s || m < s)
     return (0);
@@ -130,16 +130,16 @@ chanFifoDySa(
   return (c);
 }
 
-#define SC ((struct chanFifoDySc *)c)
+#define SC ((struct chanFlsoSc *)c)
 
 void
-chanFifoDySd(
+chanFlsoSd(
   void *c
  ,chanSs_t s
 ){
   if (s & chanSsCanGet) do {
-    SC->d(SC->q[SC->h]);
-    if (++SC->h == SC->s)
+    SC->d(SC->q[SC->h++]);
+    if (SC->h == SC->s)
       SC->h = 0;
   } while (SC->h != SC->t);
   ChanF(SC->q);
@@ -148,7 +148,7 @@ chanFifoDySd(
 
 /* a store is started in chanSsCanPut status */
 chanSs_t
-chanFifoDySi(
+chanFlsoSi(
   void *c
  ,chanSo_t o
  ,chanSw_t w
@@ -163,8 +163,8 @@ chanFifoDySi(
       --SC->s;
       SC->h = SC->t = 0;
     }
-    SC->q[SC->t] = *v;
-    if (++SC->t == SC->s)
+    SC->q[SC->t++] = *v;
+    if (SC->t == SC->s)
       SC->t = 0;
     if (SC->t == SC->h) {
       if (!(w & chanSwNoGet)
@@ -185,8 +185,8 @@ chanFifoDySi(
       ++SC->s;
       ++SC->h;
     }
-    *v = SC->q[SC->h];
-    if (++SC->h == SC->s)
+    *v = SC->q[SC->h++];
+    if (SC->h == SC->s)
       SC->h = 0;
     if (SC->h == SC->t) {
       if ((w & chanSwNoPut)
@@ -196,6 +196,73 @@ chanFifoDySi(
       }
       return (chanSsCanPut);
     }
+  }
+  return (chanSsCanGet | chanSsCanPut);
+}
+
+#undef SC
+
+/* LIFO */
+
+/* chan lifo store context */
+struct chanLifoSc {
+  void (*d)(void *); /* last close item callback */
+  void **q;          /* linear store */
+  unsigned int s;    /* store size */
+  unsigned int t;    /* store tail */
+};
+
+void *
+chanLifoSa(
+  void (*d)(void *)
+ ,unsigned int s
+){
+  struct chanLifoSc *c;
+
+  if (!s)
+    return (0);
+  if (!(c = ChanA(0, sizeof (*c)))
+   || !(c->q = ChanA(0, s * sizeof (*c->q)))) {
+    ChanF(c);
+    return (0);
+  }
+  c->d = d;
+  c->s = s;
+  c->t = 0;
+  return (c);
+}
+
+#define SC ((struct chanLifoSc *)c)
+
+void
+chanLifoSd(
+  void *c
+ ,chanSs_t s
+){
+  if (s & chanSsCanGet) do
+    SC->d(SC->q[--SC->t]);
+  while (SC->t);
+  ChanF(SC->q);
+  ChanF(c);
+}
+
+/* a store is started in chanSsCanPut status */
+chanSs_t
+chanLifoSi(
+  void *c
+ ,chanSo_t o
+ ,chanSw_t w
+ ,void **v
+){
+  (void) w;
+  if (o == chanSoPut) {
+    SC->q[SC->t++] = *v;
+    if (SC->t == SC->s)
+      return (chanSsCanGet);
+  } else {
+    *v = SC->q[--SC->t];
+    if (!SC->t)
+      return (chanSsCanPut);
   }
   return (chanSsCanGet | chanSsCanPut);
 }

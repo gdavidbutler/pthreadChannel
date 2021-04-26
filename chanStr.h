@@ -16,46 +16,43 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#ifndef __CHANFIFO_H__
-#define __CHANFIFO_H__
+#ifndef __CHANSTR_H__
+#define __CHANSTR_H__
 
 /*
  * Channel FIFO Store
- *
- * When threads talk more and work less,
- * a store of more than one item may be desired.
  */
-
-/* Static */
 
 /* allocate a context of items */
 void *
-chanFifoStSa(
+chanFifoSa(
   void (*lastCloseItemCb)(void *)
  ,unsigned int size
 ); /* returns 0 on failure */
 
 /* deallocate context */
 void
-chanFifoStSd(
+chanFifoSd(
   void *context
  ,chanSs_t state
 );
 
 /* the chan implementation */
 chanSs_t
-chanFifoStSi(
+chanFifoSi(
   void *context
  ,chanSo_t operation
  ,chanSw_t wait
  ,void **value
 );
 
-/* Dynamic */
+/*
+ * Channel Latency Sensitive FIFO
+ */
 
 /* allocate a context of items */
 void *
-chanFifoDySa(
+chanFlsoSa(
   void (*lastCloseItemCb)(void *)
  ,unsigned int max
  ,unsigned int initial
@@ -63,18 +60,45 @@ chanFifoDySa(
 
 /* deallocate context */
 void
-chanFifoDySd(
+chanFlsoSd(
   void *context
  ,chanSs_t state
 );
 
 /* the chan implementation */
 chanSs_t
-chanFifoDySi(
+chanFlsoSi(
   void *context
  ,chanSo_t operation
  ,chanSw_t wait
  ,void **value
 );
 
-#endif /* __CHANFIFO_H__ */
+/*
+ * Channel LIFO Store
+ */
+
+/* allocate a context of items */
+void *
+chanLifoSa(
+  void (*lastCloseItemCb)(void *)
+ ,unsigned int size
+); /* returns 0 on failure */
+
+/* deallocate context */
+void
+chanLifoSd(
+  void *context
+ ,chanSs_t state
+);
+
+/* the chan implementation */
+chanSs_t
+chanLifoSi(
+  void *context
+ ,chanSo_t operation
+ ,chanSw_t wait
+ ,void **value
+);
+
+#endif /* __CHANSTR_H__ */

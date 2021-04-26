@@ -4,10 +4,8 @@ Yet another implementation of a "Channel" construct for POSIX threads (pthreads)
 
 ### Channel
 
-A Channel is an anonymous, pthread coordinating, Store of pointer (void *) sized items in a shared heap.
-
-For a background on Channels see Russ Cox's [Bell Labs and CSP Threads](https://swtch.com/~rsc/thread/).
-For other perspectives see [actor model](https://en.wikipedia.org/wiki/Actor_model) and [flow-based programming](https://en.wikipedia.org/wiki/Flow-based_programming).
+This library provides a [Channel](https://en.wikipedia.org/wiki/Channel_(programming)) style programming environment for C.
+A Channel is an anonymous, pthread coordinating, Store of pointer (void *) sized items.
 
 * Channels, by default, store a single item. (For more, see [store](#store).)
 * Channels only support intra-process exchanges. (For inter-process, see [blob](#blob).)
@@ -15,7 +13,7 @@ For other perspectives see [actor model](https://en.wikipedia.org/wiki/Actor_mod
   * Monitoring of Channel demand is supported. (See [squint](#example).)
 * A pthread can Put/Get on any number of Channels.
   * Unicast (One) and Multicast (All) operations are supported. (See [squint](#example).)
-* The canonical Channel use is a transfer of a pointer to heap. (Delegating heap locking complexities to a heap management implementation e.g. realloc and free.) (See [primes](#example).)
+* The canonical Channel use is a transfer of a pointer to heap. (Delegating locking complexities to a heap management implementation e.g. realloc and free.) (See [primes](#example).)
   * Putting pthread:
     ````C
     m = malloc(...);
@@ -89,10 +87,12 @@ But as the processing cost decreases toward the context switch cost, Stores can 
 Therefore, a Store's size depends on how much latency can be tolerated in the quest for efficiency.
 (See [queueing theory](https://en.wikipedia.org/wiki/Queueing_theory).)
 
-A statically sized Channel FIFO Store implementation is provided.
+NOTE: These implementations preallocate heap with a maximum size to provide [lazy evaluation](https://en.wikipedia.org/wiki/Lazy_evaluation) semantics.
+
+A maximum sized Channel FIFO Store implementation is provided.
 When a context is created, a size is allocated.
 
-A dynamically sized Channel FIFO Store implementation is provided.
+A maximum sized, latency sensitive, Channel FIFO Store implementation is provided.
 When a context is created, a maximum is allocated and starts at initial.
 To balance latency and efficiency size is adjusted by:
 * Before a Put, if the Store is empty and there are no waiting Gets, the size is decremented.
@@ -100,17 +100,25 @@ To balance latency and efficiency size is adjusted by:
 * After a Get, if the Store is empty and there are no waiting Puts, the size is decremented.
 * Before a Get, if the Store is full and there are waiting Puts, the size is incremented.
 
-Find the API in chanFifo.h:
+A maximum sized Channel LIFO Store implementation is provided.
+When a context is created, a size is allocated.
+
+TODO: Priority Store
+
+Find the API in chanStr.h:
 
 * allocate a store context
-  * chanFifoStSa(...) static
-  * chanFifoDySa(...) dynamic
+  * chanFifoSa(...) FIFO
+  * chanFlsoSa(...) FI-latency-sensitive-FO
+  * chanLifoSa(...) LIFO
 * deallocate a store context
-  * chanFifoStSd(...) static
-  * chanFifoDySd(...) dynamic
+  * chanFifoSd(...) FIFO
+  * chanFlsoSd(...) FI-latency-sensitive-FO
+  * chanLifoSd(...) LIFO
 * implement a store (chanSi_t)
-  * chanFifoStSi(...) static
-  * chanFifoDySi(...) dynamic
+  * chanFifoSi(...) FIFO
+  * chanFlsoSi(...) FI-latency-sensitive-FO
+  * chanLifoSi(...) LIFO
 
 ### Blob
 
@@ -169,9 +177,9 @@ Find the API in chanBlb.h:
     * pthread_condattr_setclock()
     * pthread_condattr_destroy()
     * pthread_yield() - MacOS pthread_yield_np()
-* chanFifo.c:
+* chanStr.c:
   * chan.h
-  * chanFifo.h
+  * chanStr.h
 * chanBlb.c:
   * chan.h
   * chanBlb.h
