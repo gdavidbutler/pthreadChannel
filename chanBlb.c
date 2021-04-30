@@ -39,8 +39,10 @@ chanBlb_tSize(
 /**********************************************************/
 
 struct chanBlbE {
-  void (*d)(void *);
+  void (*d)(void *); /* destructor */
   chan_t *c;
+  pthread_mutex_t m; /* destructor state mutex */
+  unsigned int ds;   /* destructor state */
   int s;
 };
 
@@ -222,11 +224,13 @@ empty:;
 /**********************************************************/
 
 struct chanBlbI {
-  void (*d)(void *);
+  void (*d)(void *); /* destructor */
   chan_t *c;
   chanBlb_t *b;
-  int s;
   unsigned int l;
+  pthread_mutex_t m; /* destructor state mutex */
+  unsigned int ds;   /* destructor state */
+  int s;
 };
 
 static void *
@@ -936,6 +940,15 @@ shutSockE(
 ){
 #define V ((struct chanBlbE *)v)
   shutdown(V->s, SHUT_WR);
+  pthread_mutex_lock(&V->m);
+  if (!V->ds) {
+    V->ds = 1;
+    pthread_mutex_unlock(&V->m);
+    return;
+  }
+  pthread_mutex_unlock(&V->m);
+  pthread_mutex_destroy(&V->m);
+  close(V->s);
 #undef V
 }
 
@@ -944,7 +957,19 @@ shutSockI(
   void *v
 ){
 #define V ((struct chanBlbI *)v)
+  char b[1024];
+
   shutdown(V->s, SHUT_RD);
+  while (read(V->s, b, sizeof (b)) > 0);
+  pthread_mutex_lock(&V->m);
+  if (!V->ds) {
+    V->ds = 1;
+    pthread_mutex_unlock(&V->m);
+    return;
+  }
+  pthread_mutex_unlock(&V->m);
+  pthread_mutex_destroy(&V->m);
+  close(V->s);
 #undef V
 }
 
@@ -973,9 +998,13 @@ chanSock(
   if (e) {
     struct chanBlbE *x;
 
-    if (!(x = ChanA(0, sizeof (*x))))
+    if (!(x = ChanA(0, sizeof (*x)))
+     || pthread_mutex_init(&x->m, 0)) {
+      ChanF(x);
       goto error;
+    }
     x->d = shutSockE;
+    x->ds = i ? 0 : 1;
     x->c = chanOpen(e);
     x->s = s;
     if (pthread_create(&t, 0
@@ -993,9 +1022,13 @@ chanSock(
   if (i) {
     struct chanBlbI *x;
 
-    if (!(x = ChanA(0, sizeof (*x))))
+    if (!(x = ChanA(0, sizeof (*x)))
+     || pthread_mutex_init(&x->m, 0)) {
+      ChanF(x);
       goto error;
+    }
     x->d = shutSockI;
+    x->ds = e ? 0 : 1;
     x->c = chanOpen(i);
     x->s = s;
     x->l = g;

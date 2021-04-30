@@ -50,7 +50,7 @@ typedef enum {
  * A chanOpGet on the ingress channel will return chanBlb_t items from read()s on the socketFd:
  *  A chanOpPut or read() failure will shutdown(socketFd, SHUT_RD) and chanShut() the ingress channel.
  *
- * After completion, the socketFd has been shutdown(), as above, but NOT closed.
+ * After completion, the socketFd has been shutdown(), as above, and close()
  *
  * Provide an optional ingress chan_t: (if not provided, socketFd will not be shutdown(SHUT_RD))
  *   chanOpGet data that is read() from socketFd
