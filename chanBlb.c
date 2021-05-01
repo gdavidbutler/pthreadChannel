@@ -36,13 +36,17 @@ chanBlb_tSize(
   );
 }
 
+struct chanBlb {
+  pthread_mutex_t m; /* destructor state mutex */
+  unsigned int s;    /* destructor state */
+};
+
 /**********************************************************/
 
 struct chanBlbE {
   void (*d)(void *); /* destructor */
+  struct chanBlb *ds;
   chan_t *c;
-  pthread_mutex_t m; /* destructor state mutex */
-  unsigned int ds;   /* destructor state */
   int s;
 };
 
@@ -225,11 +229,10 @@ empty:;
 
 struct chanBlbI {
   void (*d)(void *); /* destructor */
+  struct chanBlb *ds;
   chan_t *c;
   chanBlb_t *b;
   unsigned int l;
-  pthread_mutex_t m; /* destructor state mutex */
-  unsigned int ds;   /* destructor state */
   int s;
 };
 
@@ -940,14 +943,15 @@ shutSockE(
 ){
 #define V ((struct chanBlbE *)v)
   shutdown(V->s, SHUT_WR);
-  pthread_mutex_lock(&V->m);
-  if (!V->ds) {
-    V->ds = 1;
-    pthread_mutex_unlock(&V->m);
+  pthread_mutex_lock(&V->ds->m);
+  if (!V->ds->s) {
+    V->ds->s = 1;
+    pthread_mutex_unlock(&V->ds->m);
     return;
   }
-  pthread_mutex_unlock(&V->m);
-  pthread_mutex_destroy(&V->m);
+  pthread_mutex_unlock(&V->ds->m);
+  pthread_mutex_destroy(&V->ds->m);
+  ChanF(V->ds);
   close(V->s);
 #undef V
 }
@@ -961,14 +965,15 @@ shutSockI(
 
   shutdown(V->s, SHUT_RD);
   while (read(V->s, b, sizeof (b)) > 0);
-  pthread_mutex_lock(&V->m);
-  if (!V->ds) {
-    V->ds = 1;
-    pthread_mutex_unlock(&V->m);
+  pthread_mutex_lock(&V->ds->m);
+  if (!V->ds->s) {
+    V->ds->s = 1;
+    pthread_mutex_unlock(&V->ds->m);
     return;
   }
-  pthread_mutex_unlock(&V->m);
-  pthread_mutex_destroy(&V->m);
+  pthread_mutex_unlock(&V->ds->m);
+  pthread_mutex_destroy(&V->ds->m);
+  ChanF(V->ds);
   close(V->s);
 #undef V
 }
@@ -983,6 +988,7 @@ chanSock(
  ,chanBlb_t *b
 ){
   pthread_t t;
+  struct chanBlb *d;
 
   if ((!i && !e)
    || s < 0
@@ -995,16 +1001,22 @@ chanSock(
    || (m == chanBlbFrmH1 && g > 0 && g < 18) /* GET / HTTP/x.y\r\n\r\n is as short as it can get */
   )
     goto error;
+  if (!(d = ChanA(0, sizeof (*d)))
+   || pthread_mutex_init(&d->m, 0)) {
+    ChanF(d);
+    goto error;
+  }
+  d->s = i && e ? 0 : 1;
   if (e) {
     struct chanBlbE *x;
 
-    if (!(x = ChanA(0, sizeof (*x)))
-     || pthread_mutex_init(&x->m, 0)) {
-      ChanF(x);
+    if (!(x = ChanA(0, sizeof (*x)))) {
+      pthread_mutex_destroy(&d->m);
+      ChanF(d);
       goto error;
     }
     x->d = shutSockE;
-    x->ds = i ? 0 : 1;
+    x->ds = d;
     x->c = chanOpen(e);
     x->s = s;
     if (pthread_create(&t, 0
@@ -1013,8 +1025,12 @@ chanSock(
      :m == chanBlbFrmN0 ? chanN0E
      :m == chanBlbFrmN1 ? chanN1E
      :chanNfE, x)) {
+      d->s = 1;
+      shutSockE(x);
       chanClose(x->c);
       ChanF(x);
+      chanShut(i);
+      chanShut(e);
       goto error;
     }
     pthread_detach(t);
@@ -1022,13 +1038,12 @@ chanSock(
   if (i) {
     struct chanBlbI *x;
 
-    if (!(x = ChanA(0, sizeof (*x)))
-     || pthread_mutex_init(&x->m, 0)) {
+    if (!(x = ChanA(0, sizeof (*x)))) {
       ChanF(x);
       goto error;
     }
     x->d = shutSockI;
-    x->ds = e ? 0 : 1;
+    x->ds = d;
     x->c = chanOpen(i);
     x->s = s;
     x->l = g;
@@ -1039,8 +1054,12 @@ chanSock(
      :m == chanBlbFrmN0 ? chanN0I
      :m == chanBlbFrmN1 ? chanN1I
      :chanNfI, x)) {
+      shutSockI(x);
       chanClose(x->c);
       ChanF(x);
+      chanShut(i);
+      chanShut(e);
+      ChanF(b);
       goto error;
     }
     pthread_detach(t);
@@ -1109,8 +1128,11 @@ chanPipe(
      :m == chanBlbFrmN0 ? chanN0E
      :m == chanBlbFrmN1 ? chanN1E
      :chanNfE, x)) {
+      closeFdE(x);
       chanClose(x->c);
       ChanF(x);
+      chanShut(i);
+      chanShut(e);
       goto error;
     }
     pthread_detach(t);
@@ -1131,8 +1153,12 @@ chanPipe(
      :m == chanBlbFrmN0 ? chanN0I
      :m == chanBlbFrmN1 ? chanN1I
      :chanNfI, x)) {
+      closeFdI(x);
       chanClose(x->c);
       ChanF(x);
+      chanShut(i);
+      chanShut(e);
+      ChanF(b);
       goto error;
     }
     pthread_detach(t);
