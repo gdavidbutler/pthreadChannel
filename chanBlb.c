@@ -36,7 +36,7 @@ chanBlb_tSize(
   );
 }
 
-struct chanBlb {
+struct chanBlbD {
   pthread_mutex_t m; /* destructor state mutex */
   unsigned int s;    /* destructor state */
 };
@@ -45,7 +45,7 @@ struct chanBlb {
 
 struct chanBlbE {
   void (*d)(void *); /* destructor */
-  struct chanBlb *ds;
+  struct chanBlbD *ds;
   chan_t *c;
   int s;
 };
@@ -229,7 +229,7 @@ empty:;
 
 struct chanBlbI {
   void (*d)(void *); /* destructor */
-  struct chanBlb *ds;
+  struct chanBlbD *ds;
   chan_t *c;
   chanBlb_t *b;
   unsigned int l;
@@ -254,6 +254,7 @@ chanNfI(
   p[0].o = chanOpPut;
   if (V->b) {
     m = V->b;
+    V->b = 0;
     pthread_cleanup_push((void(*)(void*))ChanF, m);
     i = chanOne(0, sizeof (p) / sizeof (p[0]), p) == 1 && p[0].s == chanOsPut;
     pthread_cleanup_pop(0); /* ChanF(m) */
@@ -403,6 +404,7 @@ chanN0I(
   p[0].o = chanOpPut;
   if (V->b) {
     m = V->b;
+    V->b = 0;
     i = i0 = V->b->l;
     goto next;
   } else if (!(m = ChanA(0, chanBlb_tSize(bs))))
@@ -588,6 +590,7 @@ chanH1I(
   p[0].o = chanOpPut;
   if (V->b) {
     m = V->b;
+    V->b = 0;
     i = i0 = V->b->l;
     goto nextHeaders;
   } else if (!(m = ChanA(0, chanBlb_tSize(bs))))
@@ -963,6 +966,7 @@ shutSockI(
 #define V ((struct chanBlbI *)v)
   char b[1024];
 
+  ChanF(V->b);
   shutdown(V->s, SHUT_RD);
   while (read(V->s, b, sizeof (b)) > 0);
   pthread_mutex_lock(&V->ds->m);
@@ -988,8 +992,9 @@ chanSock(
  ,chanBlb_t *b
 ){
   pthread_t t;
-  struct chanBlb *d;
+  struct chanBlbD *d;
 
+  d = 0;
   if ((!i && !e)
    || s < 0
    || m < chanBlbFrmNf
@@ -1002,17 +1007,14 @@ chanSock(
   )
     goto error;
   if (!(d = ChanA(0, sizeof (*d)))
-   || pthread_mutex_init(&d->m, 0)) {
-    ChanF(d);
+   || pthread_mutex_init(&d->m, 0))
     goto error;
-  }
   d->s = i && e ? 0 : 1;
   if (e) {
     struct chanBlbE *x;
 
     if (!(x = ChanA(0, sizeof (*x)))) {
       pthread_mutex_destroy(&d->m);
-      ChanF(d);
       goto error;
     }
     x->d = shutSockE;
@@ -1029,8 +1031,6 @@ chanSock(
       shutSockE(x);
       chanClose(x->c);
       ChanF(x);
-      chanShut(i);
-      chanShut(e);
       goto error;
     }
     pthread_detach(t);
@@ -1039,15 +1039,22 @@ chanSock(
     struct chanBlbI *x;
 
     if (!(x = ChanA(0, sizeof (*x)))) {
-      ChanF(x);
+      if (e) {
+        d = 0;
+        s = -1;
+      } else
+        pthread_mutex_destroy(&d->m);
       goto error;
     }
     x->d = shutSockI;
     x->ds = d;
+    d = 0;
     x->c = chanOpen(i);
     x->s = s;
+    s = -1;
     x->l = g;
     x->b = b;
+    b = 0;
     if (pthread_create(&t, 0
      ,m == chanBlbFrmNs ? chanNsI
      :m == chanBlbFrmH1 ? chanH1I
@@ -1057,16 +1064,18 @@ chanSock(
       shutSockI(x);
       chanClose(x->c);
       ChanF(x);
-      chanShut(i);
-      chanShut(e);
-      ChanF(b);
       goto error;
     }
     pthread_detach(t);
-  } else
-    ChanF(b);
+  }
   return (1);
 error:
+  ChanF(d);
+  chanShut(i);
+  chanShut(e);
+  if (s >= 0)
+    close(s);
+  ChanF(b);
   return (0);
 }
 
@@ -1086,6 +1095,7 @@ closeFdI(
   void *v
 ){
 #define V ((struct chanBlbI *)v)
+  ChanF(V->b);
   close(V->s);
 #undef V
 }
@@ -1122,6 +1132,7 @@ chanPipe(
     x->d = closeFdE;
     x->c = chanOpen(e);
     x->s = w;
+    w = -1;
     if (pthread_create(&t, 0
      ,m == chanBlbFrmNs ? chanNsE
      :m == chanBlbFrmH1 ? chanNfE
@@ -1131,8 +1142,6 @@ chanPipe(
       closeFdE(x);
       chanClose(x->c);
       ChanF(x);
-      chanShut(i);
-      chanShut(e);
       goto error;
     }
     pthread_detach(t);
@@ -1145,8 +1154,10 @@ chanPipe(
     x->d = closeFdI;
     x->c = chanOpen(i);
     x->s = r;
+    r = -1;
     x->l = g;
     x->b = b;
+    b = 0;
     if (pthread_create(&t, 0
      ,m == chanBlbFrmNs ? chanNsI
      :m == chanBlbFrmH1 ? chanH1I
@@ -1156,15 +1167,18 @@ chanPipe(
       closeFdI(x);
       chanClose(x->c);
       ChanF(x);
-      chanShut(i);
-      chanShut(e);
-      ChanF(b);
       goto error;
     }
     pthread_detach(t);
-  } else
-    ChanF(b);
+  }
   return (1);
 error:
+  chanShut(i);
+  chanShut(e);
+  if (r >= 0)
+    close(r);
+  if (w >= 0)
+    close(w);
+  ChanF(b);
   return (0);
 }
