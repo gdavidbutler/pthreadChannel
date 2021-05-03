@@ -828,15 +828,19 @@ sizeHeader:
           if ((tv = ChanA(m, chanBlb_tSize(m->l))))
             m = tv;
         } else if (i2 < ch) {
-          if (!(tv = ChanA(m, chanBlb_tSize(m->l))))
+          if (!(tv = ChanA(m, chanBlb_tSize(m->l)))) {
+            ChanF(m1);
             goto bad;
+          }
           m = tv;
           s1 = m->b + i1 - i2;
           pthread_cleanup_push((void(*)(void*))ChanF, m);
           for (s1 = m->b + i1 - i2; i2 < ch && (i = read(V->s, s1 + i2, ch - i2)) > 0; i2 += i);
           pthread_cleanup_pop(0); /* ChanF(m) */
-          if (i <= 0)
+          if (i <= 0) {
+            ChanF(m1);
             goto bad;
+          }
         }
         i2 -= ch;
         pthread_cleanup_push((void(*)(void*))ChanF, m);
@@ -908,8 +912,10 @@ endTrailers:
         pthread_cleanup_push((void(*)(void*))ChanF, m);
         for (s1 = m->b; i2 < cl && (i = read(V->s, s1 + i2, cl - i2)) > 0; i2 += i);
         pthread_cleanup_pop(0); /* ChanF(m) */
-        if (i <= 0)
+        if (i <= 0) {
+          ChanF(m1);
           goto bad;
+        }
       }
       i2 -= cl;
       pthread_cleanup_push((void(*)(void*))ChanF, m);
