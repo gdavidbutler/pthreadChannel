@@ -402,16 +402,16 @@ chanN0I(
   p[0].c = V->c;
   p[0].v = (void **)&m;
   p[0].o = chanOpPut;
+  i1 = 0;
   if (V->b) {
     m = V->b;
     V->b = 0;
-    i = i0 = V->b->l;
+    i = i0 = m->l;
     goto next;
   } else if (!(m = ChanA(0, chanBlb_tSize(bs))))
     goto bad;
   else
     i0 = bs;
-  i1 = 0;
   for (;;) {
     chanBlb_t *m1;
     void *tv;
@@ -426,7 +426,7 @@ chanN0I(
       if (i <= 0)
         goto bad;
 next:
-      for (i2 = (i1 > 5 ? 6 : i1) + i, s1 = m->b + i1 + i - i2; i2; --i2, ++s1)
+      for (i2 = (i1 > 4 ? 5 : i1) + i, s1 = m->b + i1 + i - i2; i2 > 5; --i2, ++s1)
         if (*(s1 + 0) == ']'
          && *(s1 + 1) == ']'
          && *(s1 + 2) == '>'
@@ -588,16 +588,16 @@ chanH1I(
   p[0].c = V->c;
   p[0].v = (void **)&m;
   p[0].o = chanOpPut;
+  i1 = 0;
   if (V->b) {
     m = V->b;
     V->b = 0;
-    i = i0 = V->b->l;
+    i = i0 = m->l;
     goto nextHeaders;
   } else if (!(m = ChanA(0, chanBlb_tSize(bs))))
     goto bad;
   else
     i0 = bs;
-  i1 = 0;
   for (;;) {
     chanBlb_t *m1;
     void *tv;
