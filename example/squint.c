@@ -308,8 +308,8 @@ conS(
   cpyR(&x->c, c);
   if (pthread_create(&pt, 0, conS_, x)) {
     chanClose(x->o);
-oor:
     free(x);
+oor:
     fprintf(stderr, "conS OoR\n");
     chanShut(o);
     return (1);
@@ -370,7 +370,7 @@ static int
 multS(
   chan_t *p
  ,chan_t *f
- ,rat_t *t
+ ,const rat_t *t
 ){
   struct multS_ *x;
   pthread_t pt;
@@ -383,8 +383,8 @@ multS(
   if (pthread_create(&pt, 0, multS_, x)) {
     chanClose(x->f);
     chanClose(x->p);
-oor:
     free(x);
+oor:
     fprintf(stderr, "multS OoR\n");
     chanShut(p);
     chanShut(f);
@@ -699,10 +699,10 @@ mulS(
     chanClose(x->p);
     free(x);
 oor:
+    fprintf(stderr, "mulS OoR\n");
     chanShut(p);
     chanShut(f);
     chanShut(g);
-    fprintf(stderr, "mulS OoR\n");
     return (1);
   }
   pthread_detach(pt);
@@ -751,7 +751,7 @@ void *v
       break;
     }
     mulByR(f, &n);
-    if (chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 1 && pa[0].s != chanOsPut) {
+    if (chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 1 || pa[0].s != chanOsPut) {
       free(f);
       break;
     }
@@ -798,7 +798,7 @@ oor:
 struct ntgS_ {
   chan_t *p;
   chan_t *f;
-  rat_t *c;
+  rat_t c;
 };
 
 static void *
@@ -825,8 +825,8 @@ void *v
   pa[1].v = 0;
   pa[1].o = chanOpSht;
 
-  f = V->c;
-  if (chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 1 || pa[0].s != chanOsPut) {
+  if (!(f = dupR(&V->c))
+   || chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 1 || pa[0].s != chanOsPut) {
     free(f);
     goto exit;
   }
@@ -837,7 +837,7 @@ void *v
       break;
     }
     mulByR(f, &n);
-    if (chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 1 && pa[0].s != chanOsPut) {
+    if (chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 1 || pa[0].s != chanOsPut) {
       free(f);
       break;
     }
@@ -856,22 +856,21 @@ static int
 ntgS(
   chan_t *p
  ,chan_t *f
- ,rat_t *c
+ ,const rat_t *c
 ){
   struct ntgS_ *x;
   pthread_t pt;
 
-  if (!(x = malloc(sizeof (*x)))
-   || !(x->c = dupR(c)))
+  if (!(x = malloc(sizeof (*x))))
     goto oor;
   x->p = chanOpen(p);
   x->f = chanOpen(f);
+  cpyR(&x->c, c);
   if (pthread_create(&pt, 0, ntgS_, x)) {
     chanClose(x->f);
     chanClose(x->p);
-    free(x->c);
-oor:
     free(x);
+oor:
     fprintf(stderr, "ntgS OoR\n");
     chanShut(p);
     chanShut(f);
@@ -927,13 +926,10 @@ void *v
   memcpy(pa1, ga1, sizeof (pa1));
 
   ga1[F].o = chanOpGet;
-  pa1[S].o = chanOpPut;
-  if (chanOne(0, sizeof (ga1) / sizeof (ga1[0]), ga1) != F + 1 || ga1[F].s != chanOsGet) {
-    ga1[G].o = chanOpGet;
+  if (chanOne(0, sizeof (ga1) / sizeof (ga1[0]), ga1) != F + 1 || ga1[F].s != chanOsGet)
     goto exit;
-  }
-  ga1[G].o = chanOpGet;
   r[S] = r[F];
+  pa1[S].o = chanOpPut;
   if (chanOne(0, sizeof (pa1) / sizeof (pa1[0]), pa1) != S + 1 || pa1[S].s != chanOsPut) {
     free(r[S]);
     goto exit;
@@ -944,19 +940,21 @@ void *v
     goto exit;
   pa1[S].v = (void **)&r[S];
   /* "demand" channel end */
+  pa1[S].o = chanOpSht;
   if (sbtS(ga1[FG].c, pa1[F].c, pa1[G1].c)
    || mulS(ga1[S].c, pa1[G0].c, pa1[FG].c))
     goto exit;
   ga1[F].o = chanOpSht;
-  pa1[S].o = chanOpSht;
-  pa1[G0].o = pa1[G1].o = chanOpPut;
+  ga1[G].o = chanOpGet;
   if (chanOne(0, sizeof (ga1) / sizeof (ga1[0]), ga1) != G + 1 || ga1[G].s != chanOsGet)
     goto exit;
   r[G1] = r[G];
+  pa1[G0].o = pa1[G1].o = chanOpPut;
   while (chanOne(0, sizeof (ga1) / sizeof (ga1[0]), ga1) == G + 1 && ga1[G].s == chanOsGet) {
     if (!(r[G0] = dupR(r[G]))
      || chanAll(0, sizeof (pa1) / sizeof (pa1[0]), pa1) != chanAlOp) {
       free(r[G0]);
+      free(r[G]);
       break;
     }
     r[G1] = r[G];
@@ -1245,7 +1243,6 @@ void *v
   memcpy(pa2, ga1, sizeof (pa2));
 
   ga1[F].o = chanOpGet;
-  pa1[R0].o = chanOpPut;
   if (chanOne(0, sizeof (ga1) / sizeof (ga1[0]), ga1) != F + 1 || ga1[F].s != chanOsGet)
     goto exit;
   r[R0] = r[F];
@@ -1266,7 +1263,7 @@ void *v
   }
   ga1[F].o = chanOpSht;
   ga1[R].o = chanOpGet;
-  pa1[R1].o = chanOpPut;
+  pa1[R0].o = pa1[R1].o = chanOpPut;
   if (!(r[R1] = dupR(r[R0]))
    || chanAll(0, sizeof (pa1) / sizeof (pa1[0]), pa1) != chanAlOp) {
     free(r[R1]);
@@ -1394,7 +1391,7 @@ static int
 msbtS(
   chan_t *p
  ,chan_t *f
- ,rat_t *c
+ ,const rat_t *c
  ,unsigned long n
 ){
   struct msbtS_ *x;
@@ -1409,8 +1406,8 @@ msbtS(
   if (pthread_create(&pt, 0, msbtS_, x)) {
     chanClose(x->f);
     chanClose(x->p);
-oor:
     free(x);
+oor:
     fprintf(stderr, "msbtS OoR\n");
     chanShut(p);
     chanShut(f);
