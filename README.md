@@ -31,16 +31,16 @@ NOTE: chanOpen a chan_t before passing it (delegating chanClose) to eliminate a 
   * requesting pthread:
     ````C
     chanOpen(responseChan);
-    chanOp(serviceChan, responseChan, chanOpPut);
-    response = chanOp(responseChan, chanOpGet);
+    chanOp(serviceChan, &responseChan, chanOpPut);
+    chanOp(responseChan, &response, chanOpGet);
     ````
   * responding pthread:
     ````C
-    responseChan = chanOp(serviceChan, chanOpGet);
-    chanOp(responseChan, response, chanOpPut);
+    chanOp(serviceChan, &responseChan, chanOpGet);
+    chanOp(responseChan, &response, chanOpPut);
     chanClose(responseChan);
     ````
-* Channels distribute items fairly under pressure:
+* Channels distribute items fairly unless under pressure:
   * If there are waiting Gets, a new Get goes to the end of the line
     * unless there are also waiting Puts (as waiting Gets won't wait long)
       * then an item is opportunistically Get instead of waiting.
@@ -65,7 +65,7 @@ Find the API in chan.h:
 * chanOne(...)
   * Perform one operation (the first available) on an array of Channels.
 * chanAll(...)
-  * Perform all operations on an array of Channels. (See [etomic broadcast](https://en.wikipedia.org/wiki/Atomic_broadcast).)
+  * Perform all operations on an array of Channels. (See [atomic broadcast](https://en.wikipedia.org/wiki/Atomic_broadcast).)
 
 ### Store
 
