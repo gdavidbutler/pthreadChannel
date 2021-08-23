@@ -32,81 +32,44 @@ chanBlb_tSize(
 );
 
 typedef enum {
-  chanBlbFrmNf /* no framing, argument is readSize (supports non-STREAM sockets) */
+  chanBlbFrmNf /* no framing, argument is readSize */
  ,chanBlbFrmNs /* NetString read and write framing, non-zero argument is read Blob maxSize, otherwise no arbitrary max */
  ,chanBlbFrmN0 /* NETCONF/1.0 read and write framing, non-zero argument is read Blob maxSize, otherwise no arbitrary max */
  ,chanBlbFrmN1 /* NETCONF/1.1 read and write framing, non-zero argument is read Blob maxSize, otherwise no arbitrary max */
  ,chanBlbFrmH1 /* HTTP/1.1 read framing and no write framing, non-zero argument is read Blob maxSize, otherwise no arbitrary max */
 } chanBlbFrm_t;
 
-/*
- * Channel Sock
+/* Channel Blob
  *
- * Support I/O on a connected full duplex socket via ingress and egress channels.
+ * Support input/output via ingress and egress channels.
  *
- * A chanOpPut of chanBlb_t items on the egress channel does write()s on the socketFd:
- *  A chanOpGet or write() failure will shutdown(socketFd, SHUT_WR) and chanShut() the egress channel.
+ * Provide an optional ingress chan_t: (if not provided, in parameters are not used)
+ *  Otherwise, input() is required, inShut() and inClose() are optional.
+ * Provide an optional egress chan_t: (if not provided, out parameters are not used)
+ *  Otherwise, output() is required, outShut() and outClose() are optional.
  *
- * A chanOpGet on the ingress channel will return chanBlb_t items from read()s on the socketFd:
- *  A chanOpPut or read() failure will shutdown(socketFd, SHUT_RD) and chanShut() the ingress channel.
+ * A chanOpPut of chanBlb_t items on the egress channel does output():
+ *  A chanOpGet or output() failure will chanShut(egress) and outShut(out).
  *
- * After completion, the socketFd has been shutdown(), as above, and close()
+ * A chanOpGet on the ingress channel will return chanBlb_t items from input():
+ *  A chanOpPut or input() failure will chanShut(egress) and outShut(in).
  *
- * Provide an optional ingress chan_t: (if not provided, socketFd will not be shutdown(SHUT_RD))
- *   chanOpGet data that is read() from socketFd
- *   chanShut() to shutdown(SHUT_RD) on socketFd
- * Provide an optional egress chan_t: (if not provided, socketFd will not be shutdown(SHUT_WR))
- *   chanOpPut data that is write() to socketFd
- *   chanShut() to shutdown(SHUT_WR) on socketFd
- * Provide a socketFd:
- *  When read() on the socketFd fails, the socketFd is shutdown(SHUT_RD) and the ingress chan is chanShut()
- *  When write() on the socketFd fails, the socketFd is shutdown(SHUT_WR) and the egress chan is chanShut()
+ * After both sides have been Shut, if provided, inClose() and outClose() are invoked
  *
  * Provide an optional initialIngress; previous read bytes from protocol start
- *
- * As a convenience, chanSock() chanOpen's the chan_t's (delegating chanClose's)
  */
 int
-chanSock(
+chanBlb(
   chan_t *ingress
+ ,void *in
+ ,unsigned int (*input)(void *in, void *buffer, unsigned int size) /* return 0 on failure */
+ ,void (*inShut)(void *in)
+ ,void (*inClose)(void *in)
  ,chan_t *egress
- ,int socketFd
- ,chanBlbFrm_t framing
- ,unsigned int argument
- ,chanBlb_t *initialIngress
-); /* returns 0 on failure */
-
-/*
- * Channel Pipe
- *
- * Support I/O on a pair of half duplex pipes via ingress and egress channels.
- *
- * A chanOpPut of chanBlb_t items on the egress channel does write()s on the writeFd:
- *  A chanOpGet or write() failure will close() the writeFd and chanShut() the egress channel.
- *
- * A chanOpGet on the ingress channel will return chanBlb_t items from read()s on the readFd:
- *  A chanOpPut or read() failure will close() the readFd and chanShut() the ingress channel.
- *
- * Provide an optional ingress chan_t
- *   chanOpGet data that is read() from readFd
- *   chanShut() to close() readFd
- * Provide an optional egress chan_t
- *   chanOpPut data that is write() to writeFd
- *   chanShut() to close() writeFd
- * Provide readFd and writeFd:
- *  When read() on the readFd fails, the readFd is close() and the ingress chan is chanShut()
- *  When write() on the writeFd fails, the writeFd is close() and the egress chan is chanShut()
- *
- * Provide an optional initialIngress; previous read bytes from protocol start
- *
- * As a convenience, chanPipe() chanOpen's the chan_t's (delegating chanClose's)
- */
-int
-chanPipe(
-  chan_t *ingress
- ,chan_t *egress
- ,int readFd
- ,int writeFd
+ ,void *out
+ ,unsigned int (*output)(void *out, const void *buffer, unsigned int size) /* return 0 on failure */
+ ,void (*outShut)(void *out)
+ ,void (*outClose)(void *out)
  ,chanBlbFrm_t framing
  ,unsigned int argument
  ,chanBlb_t *initialIngress

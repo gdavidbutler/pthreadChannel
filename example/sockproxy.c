@@ -30,6 +30,53 @@
 
 struct addrinfo *Caddr;
 
+static unsigned int
+input(
+ void *v
+,void *b
+,unsigned int l
+){
+  int i;
+
+  if ((i = read((int)(long)v, b, l)) < 0)
+    i = 0;
+  return (i);
+}
+
+static unsigned int
+output(
+ void *v
+,const void *b
+,unsigned int l
+){
+  int i;
+
+  if ((i = write((int)(long)v, b, l)) < 0)
+    i = 0;
+  return (i);
+}
+
+static void
+ishut(
+ void *v
+){
+  shutdown((int)(long)v, SHUT_RD);
+}
+
+static void
+oshut(
+ void *v
+){
+  shutdown((int)(long)v, SHUT_RDWR);
+}
+
+static void
+cls(
+ void *v
+){
+  close((int)(long)v);
+}
+
 /* connect two chanSocks back to back, with ingress and egress channels reversed */
 static void *
 servT(
@@ -59,11 +106,11 @@ servT(
     goto exit2;
   }
   pthread_cleanup_push((void(*)(void*))chanClose, p[1].c);
-  if (!chanSock(p[0].c, p[1].c, s[0], chanBlbFrmNf, 65535, 0)) {
+  if (!chanBlb(p[0].c, (void *)(long)s[0], input, ishut, 0, p[1].c, (void *)(long)s[0], output, oshut, cls, chanBlbFrmNf, 65535, 0)) {
     perror("chanSock");
     goto exit3;
   }
-  if (!chanSock(p[1].c, p[0].c, s[1], chanBlbFrmNf, 65535, 0)) {
+  if (!chanBlb(p[1].c, (void *)(long)s[1], input, ishut, 0, p[0].c, (void *)(long)s[1], output, oshut, cls, chanBlbFrmNf, 65535, 0)) {
     perror("chanSock");
     goto exit3;
   }

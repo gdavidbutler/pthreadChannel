@@ -42,6 +42,39 @@ outT(
   return (0);
 }
 
+static unsigned int
+input(
+ void *v
+,void *b
+,unsigned int l
+){
+  int i;
+
+  if ((i = read((int)(long)v, b, l)) < 0)
+    i = 0;
+  return (i);
+}
+
+static unsigned int
+output(
+ void *v
+,const void *b
+,unsigned int l
+){
+  int i;
+
+  if ((i = write((int)(long)v, b, l)) < 0)
+    i = 0;
+  return (i);
+}
+
+static void
+shut(
+ void *v
+){
+  close((int)(long)v);
+}
+
 int
 main(
 ){
@@ -61,7 +94,7 @@ main(
     perror("pipe");
     return (1);
   }
-  if (!chanPipe(c[0], c[1], p[0], p[1], chanBlbFrmNs, 0, 0)) {
+  if (!chanBlb(c[0], (void *)(long)p[0], input, shut, 0, c[1], (void *)(long)p[1], output, shut, 0, chanBlbFrmNs, 0, 0)) {
     perror("chanPipe");
     return (1);
   }

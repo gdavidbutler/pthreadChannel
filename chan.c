@@ -400,7 +400,7 @@ sht1:
       if (c->t & chanSsCanGet && (c->l & chanGe || !(c->l & chanPe))) {
 get1:
         if (c->s)
-          c->t = c->s(c->v, chanSoGet, c->l & (chanGe|chanPe), (a + i)->v);
+          c->t = c->s(c->v, chanSoGet, c->l & (chanGe | chanPe), (a + i)->v);
         else {
           *((a + i)->v) = c->v;
           c->t = chanSsCanPut;
@@ -434,7 +434,7 @@ get2:
       if (c->t & chanSsCanPut && (c->l & chanPe || !(c->l & chanGe))) {
 put1:
         if (c->s)
-          c->t = c->s(c->v, chanSoPut, c->l & (chanGe|chanPe), (a + i)->v);
+          c->t = c->s(c->v, chanSoPut, c->l & (chanGe | chanPe), (a + i)->v);
         else {
           c->v = *((a + i)->v);
           c->t = chanSsCanGet;
@@ -1108,7 +1108,7 @@ unlock1:
         goto get1;
       else if (c->t & chanSsCanGet && (c->l & chanGe || !(c->l & chanPe))) {
         if (c->s)
-          c->t = c->s(c->v, chanSoGet, c->l & (chanGe|chanPe), (a + i)->v);
+          c->t = c->s(c->v, chanSoGet, c->l & (chanGe | chanPe), (a + i)->v);
         else {
           *((a + i)->v) = c->v;
           c->t = chanSsCanPut;
@@ -1131,7 +1131,7 @@ get1:
         goto put1;
       else if (c->t & chanSsCanPut && (c->l & chanPe || !(c->l & chanGe))) {
         if (c->s)
-          c->t = c->s(c->v, chanSoPut, c->l & (chanGe|chanPe), (a + i)->v);
+          c->t = c->s(c->v, chanSoPut, c->l & (chanGe | chanPe), (a + i)->v);
         else {
           c->v = *((a + i)->v);
           c->t = chanSsCanGet;
@@ -1414,7 +1414,7 @@ unlock2:
           break;
         if (c->t & chanSsCanGet && (a + i)->v) {
           if (c->s)
-            c->t = c->s(c->v, chanSoGet, c->l & (chanGe|chanPe), (a + i)->v);
+            c->t = c->s(c->v, chanSoGet, c->l & (chanGe | chanPe), (a + i)->v);
           else {
             *((a + i)->v) = c->v;
             c->t = chanSsCanPut;
@@ -1442,7 +1442,7 @@ unlock2:
           break;
         if (c->t & chanSsCanPut && (a + i)->v) {
           if (c->s)
-            c->t = c->s(c->v, chanSoPut, c->l & (chanGe|chanPe), (a + i)->v);
+            c->t = c->s(c->v, chanSoPut, c->l & (chanGe | chanPe), (a + i)->v);
           else {
             c->v = *((a + i)->v);
             c->t = chanSsCanGet;

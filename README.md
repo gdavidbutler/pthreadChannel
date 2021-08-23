@@ -124,8 +124,13 @@ Find the API in chanStr.h:
 
 A Blob is a length specified collection of octets used as a discrete unit of communication, i.e. a message.
 
-To support inter-process exchanges, blobs can be transported through sockets and pipes.
-[Since a pthread can't both wait in a pthread_cond_wait() and in a poll()/select()/etc., a pair of blocking reader and writer pthreads are used.]
+To support inter-process exchanges, blobs can be transported via message transfer mechanisms.
+[Since a pthread can't both wait in a pthread_cond_wait() and in poll()/select()/etc., a pair of blocking reader and writer pthreads are used.]
+
+For two common cases of sockets and pipes:
+
+* socket: use shutdown() on inShut and outShut and a single inClose or outClose
+* pipe: use close() on inShut and outShut and no inClose or outClose.
 
 Several "framing" methods are supported:
 
@@ -149,10 +154,8 @@ Blob flow (repeats):
 
 Find the API in chanBlb.h:
 
-* chanSock(...)
-  * Blob exchange through a full duplex connected socket over ingress and egress Channels.
-* chanPipe(...)
-  * Blob exchange through half duplex read and write pipes over ingress and egress Channels.
+* chanBlb(...)
+  * Blob exchange over ingress and egress Channels.
 
 ### Dependencies:
 
@@ -188,12 +191,6 @@ Find the API in chanBlb.h:
     * pthread_detach()
     * pthread_cleanup_push()
     * pthread_cleanup_pop()
-  * unistd.h
-    * read()
-    * write()
-    * close()
-  * sys/socket.h
-    * shutdown()
 
 ### Serialize
 
@@ -209,7 +206,7 @@ TODO: create examples
 (It is a bit more complex because of pthread's API and Channel's features.)
 * sockproxy
   * Modeled on tcpproxy.c from [libtask](https://swtch.com/libtask/).
-Connects two chanSocks back-to-back, with Channels reversed.
+Connects two chanBlb()s back-to-back, with Channels reversed.
   * Sockproxy needs numeric values for socket type (-T, -t) and family type (-F, -f).
   * The options protocol type (-P, -p), service type (-S, -s) and host name (-H, -h) can be symbolic (see getaddrinfo()).
   * Upper case options are for the "server" side, lower case options are for the "client" side.
@@ -218,7 +215,7 @@ Connects two chanSocks back-to-back, with Channels reversed.
     1. ./sockproxy -T 1 -F 2 -S 2222 -t 1 -f 2 -h localhost -s ssh &
     1. ssh -p 2222 user@localhost
 * pipeproxy
-  * Copy stdin to stdout through chanPipe() preserving read boundaries using Netstring framing
+  * Copy stdin to stdout through chanBlb() preserving read boundaries using Netstring framing
 * squint
   * Implementation of [M. Douglas McIlroy's "Squinting at Power Series"](https://swtch.com/~rsc/thread/squint.pdf).
 
