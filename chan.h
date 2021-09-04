@@ -162,6 +162,7 @@ chanOp(
 typedef struct chanArr {
   chan_t *c;  /* channel to operate on, 0 == chanOpNop */
   void **v;   /* where to get/put or 0 for monitor */
+  void *x;    /* application context - not used by channels */
   chanOp_t o;
   chanOs_t s;
 } chanArr_t;
