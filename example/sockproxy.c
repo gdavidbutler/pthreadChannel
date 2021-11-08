@@ -57,17 +57,17 @@ output(
 }
 
 static void
-ishut(
+icls(
  void *v
 ){
   shutdown((int)(long)v, SHUT_RD);
 }
 
 static void
-oshut(
+ocls(
  void *v
 ){
-  shutdown((int)(long)v, SHUT_RDWR);
+  shutdown((int)(long)v, SHUT_WR);
 }
 
 static void
@@ -106,11 +106,11 @@ servT(
     goto exit2;
   }
   pthread_cleanup_push((void(*)(void*))chanClose, p[1].c);
-  if (!chanBlb(p[0].c, (void *)(long)s[0], input, ishut, 0, p[1].c, (void *)(long)s[0], output, oshut, cls, chanBlbFrmNf, 65535, 0)) {
+  if (!chanBlb(p[0].c, (void *)(long)s[0], input, icls, p[1].c, (void *)(long)s[0], output, ocls, (void *)(long)s[0], cls, chanBlbFrmNf, 65535, 0)) {
     perror("chanSock");
     goto exit3;
   }
-  if (!chanBlb(p[1].c, (void *)(long)s[1], input, ishut, 0, p[0].c, (void *)(long)s[1], output, oshut, cls, chanBlbFrmNf, 65535, 0)) {
+  if (!chanBlb(p[1].c, (void *)(long)s[1], input, icls, p[0].c, (void *)(long)s[1], output, ocls, (void *)(long)s[1], cls, chanBlbFrmNf, 65535, 0)) {
     perror("chanSock");
     goto exit3;
   }

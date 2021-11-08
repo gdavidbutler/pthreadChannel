@@ -129,8 +129,8 @@ To support inter-process exchanges, blobs can be transported via message transfe
 
 For two common cases of sockets and pipes:
 
-* socket: use shutdown() on inShut and outShut and a single inClose or outClose
-* pipe: use close() on inShut and outShut and no inClose or outClose.
+* socket: use shutdown() on inClose and outClose and close() on finClose
+* pipe: use close() on inClose and outClose and no finClose
 
 Several "framing" methods are supported:
 

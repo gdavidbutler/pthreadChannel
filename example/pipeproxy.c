@@ -69,7 +69,7 @@ output(
 }
 
 static void
-shut(
+cls(
  void *v
 ){
   close((int)(long)v);
@@ -94,7 +94,7 @@ main(
     perror("pipe");
     return (1);
   }
-  if (!chanBlb(c[0], (void *)(long)p[0], input, shut, 0, c[1], (void *)(long)p[1], output, shut, 0, chanBlbFrmNs, 0, 0)) {
+  if (!chanBlb(c[0], (void *)(long)p[0], input, cls, c[1], (void *)(long)p[1], output, cls, 0, 0, chanBlbFrmNs, 0, 0)) {
     perror("chanPipe");
     return (1);
   }

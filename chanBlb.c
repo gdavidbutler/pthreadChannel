@@ -47,10 +47,9 @@ struct chanBlbE {
   chan_t *c;
   void *x;
   unsigned int (*xo)(void *, const void *, unsigned int);
-  void (*xs)(void *);
   void (*xc)(void *);
-  void *o;
-  void (*oc)(void *);
+  void *f;
+  void (*fc)(void *);
 };
 
 static void *
@@ -238,10 +237,9 @@ struct chanBlbI {
   unsigned int l;
   void *x;
   unsigned int (*xo)(void *, void *, unsigned int);
-  void (*xs)(void *);
   void (*xc)(void *);
-  void *o;
-  void (*oc)(void *);
+  void *f;
+  void (*fc)(void *);
 };
 
 static void *
@@ -957,8 +955,8 @@ finE(
   void *v
 ){
 #define V ((struct chanBlbE *)v)
-  if (V->xs)
-    V->xs(V->x);
+  if (V->xc)
+    V->xc(V->x);
   if (V->ds) {
     pthread_mutex_lock(&V->ds->m);
     if (!V->ds->s) {
@@ -969,11 +967,9 @@ finE(
     pthread_mutex_unlock(&V->ds->m);
     pthread_mutex_destroy(&V->ds->m);
     ChanF(V->ds);
-    if (V->oc)
-      V->oc(V->o);
   }
-  if (V->xc)
-    V->xc(V->x);
+  if (V->fc)
+    V->fc(V->f);
 #undef V
 }
 
@@ -983,8 +979,8 @@ finI(
 ){
 #define V ((struct chanBlbI *)v)
   ChanF(V->b);
-  if (V->xs)
-    V->xs(V->x);
+  if (V->xc)
+    V->xc(V->x);
   if (V->ds) {
     pthread_mutex_lock(&V->ds->m);
     if (!V->ds->s) {
@@ -995,11 +991,9 @@ finI(
     pthread_mutex_unlock(&V->ds->m);
     pthread_mutex_destroy(&V->ds->m);
     ChanF(V->ds);
-    if (V->oc)
-      V->oc(V->o);
   }
-  if (V->xc)
-    V->xc(V->x);
+  if (V->fc)
+    V->fc(V->f);
 #undef V
 }
 
@@ -1008,13 +1002,13 @@ chanBlb(
   chan_t *i
  ,void *in
  ,unsigned int (*ino)(void *, void *, unsigned int)
- ,void (*ins)(void *)
  ,void (*inc)(void *)
  ,chan_t *e
  ,void *ot
  ,unsigned int (*oto)(void *, const void *, unsigned int)
- ,void (*ots)(void *)
  ,void (*otc)(void *)
+ ,void *f
+ ,void (*fc)(void *)
  ,chanBlbFrm_t m
  ,unsigned int g
  ,chanBlb_t *b
@@ -1035,40 +1029,33 @@ chanBlb(
    || (m == chanBlbFrmH1 && g > 0 && g < 18) /* GET / HTTP/x.y\r\n\r\n is as short as it can get */
   )
     goto error;
-  if (i && e && inc && otc) {
+  if (i && e && fc) {
     if (!(d = ChanA(0, sizeof (*d)))
-     || pthread_mutex_init(&d->m, 0))
+     || pthread_mutex_init(&d->m, 0)) {
+      ChanF(d);
       goto error;
+    }
     d->s = 0;
-  } else
-    d = 0;
+  }
   if (e) {
     struct chanBlbE *x;
 
-    if (!(x = ChanA(0, sizeof (*x)))) {
-      pthread_mutex_destroy(&d->m);
+    if (!(x = ChanA(0, sizeof (*x))))
       goto error;
-    }
     x->d = finE;
     x->ds = d;
     x->c = chanOpen(e);
     x->x = ot;
     x->xo = oto;
-    x->xs = ots;
     x->xc = otc;
-    if (i) {
-      x->o = in;
-      x->oc = inc;
-    } else
-      x->oc = 0;
+    x->f = f;
+    x->fc = fc;
     if (pthread_create(&t, 0
      ,m == chanBlbFrmNs ? chanNsE
      :m == chanBlbFrmH1 ? chanNfE
      :m == chanBlbFrmN0 ? chanN0E
      :m == chanBlbFrmN1 ? chanN1E
      :chanNfE, x)) {
-      d->s = 1;
-      finE(x);
       chanClose(x->c);
       ChanF(x);
       goto error;
@@ -1079,25 +1066,25 @@ chanBlb(
     struct chanBlbI *x;
 
     if (!(x = ChanA(0, sizeof (*x)))) {
-      if (e)
-        d = 0;
-      else
-        pthread_mutex_destroy(&d->m);
+      if (d) {
+        pthread_mutex_lock(&d->m);
+        if (!d->s) {
+          d->s = 1;
+          pthread_mutex_unlock(&d->m);
+          d = 0;
+        } else
+          pthread_mutex_unlock(&d->m);
+      }
       goto error;
     }
     x->d = finI;
     x->ds = d;
-    d = 0;
     x->c = chanOpen(i);
     x->x = in;
     x->xo = ino;
-    x->xs = ins;
     x->xc = inc;
-    if (e) {
-      x->o = ot;
-      x->oc = otc;
-    } else
-      x->oc = 0;
+    x->f = f;
+    x->fc = fc;
     x->l = g;
     x->b = b;
     b = 0;
@@ -1107,7 +1094,15 @@ chanBlb(
      :m == chanBlbFrmN0 ? chanN0I
      :m == chanBlbFrmN1 ? chanN1I
      :chanNfI, x)) {
-      finI(x);
+      if (d) {
+        pthread_mutex_lock(&d->m);
+        if (!d->s) {
+          d->s = 1;
+          pthread_mutex_unlock(&d->m);
+          d = 0;
+        } else
+          pthread_mutex_unlock(&d->m);
+      }
       chanClose(x->c);
       ChanF(x);
       goto error;
@@ -1116,17 +1111,18 @@ chanBlb(
   }
   return (1);
 error:
-  ChanF(d);
+  if (d) {
+    pthread_mutex_destroy(&d->m);
+    ChanF(d);
+  }
   chanShut(i);
   chanShut(e);
-  if (ots)
-    ots(ot);
-  if (ins)
-    ins(in);
   if (otc)
     otc(ot);
   if (inc)
     inc(in);
+  if (fc)
+    fc(f);
   ChanF(b);
   return (0);
 }

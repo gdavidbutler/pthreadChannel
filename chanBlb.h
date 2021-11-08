@@ -44,17 +44,17 @@ typedef enum {
  * Support input/output via ingress and egress channels.
  *
  * Provide an optional ingress chan_t: (if not provided, in parameters are not used)
- *  Otherwise, input() is required, inShut() and inClose() are optional.
+ *  Otherwise, input() is required, inClose() is optional.
  * Provide an optional egress chan_t: (if not provided, out parameters are not used)
- *  Otherwise, output() is required, outShut() and outClose() are optional.
+ *  Otherwise, output() is required, outShut() is optional.
  *
  * A chanOpPut of chanBlb_t items on the egress channel does output():
- *  A chanOpGet or output() failure will chanShut(egress) and outShut(out).
+ *  A chanOpGet or output() failure will chanShut(egress) and outClose(out).
  *
  * A chanOpGet on the ingress channel will return chanBlb_t items from input():
- *  A chanOpPut or input() failure will chanShut(egress) and outShut(in).
+ *  A chanOpPut or input() failure will chanShut(ingress) and inClose(in).
  *
- * After both sides have been Shut, if provided, inClose() and outClose() are invoked
+ * After all chanShut(), if provided, finClose(fin) is invoked
  *
  * Provide an optional initialIngress; previous read bytes from protocol start
  */
@@ -63,13 +63,13 @@ chanBlb(
   chan_t *ingress
  ,void *in
  ,unsigned int (*input)(void *in, void *buffer, unsigned int size) /* return 0 on failure */
- ,void (*inShut)(void *in)
  ,void (*inClose)(void *in)
  ,chan_t *egress
  ,void *out
  ,unsigned int (*output)(void *out, const void *buffer, unsigned int size) /* return 0 on failure */
- ,void (*outShut)(void *out)
  ,void (*outClose)(void *out)
+ ,void *fin
+ ,void (*finClose)(void *out)
  ,chanBlbFrm_t framing
  ,unsigned int argument
  ,chanBlb_t *initialIngress
