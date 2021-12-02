@@ -74,12 +74,14 @@ cdCpr(
 
 static void
 cCpr(
+  void
 ){
   pthread_key_create(&Cpr, cdCpr);
 }
 
 static cpr_t *
 gCpr(
+  void
 ){
   static pthread_once_t o = PTHREAD_ONCE_INIT;
   cpr_t *p;

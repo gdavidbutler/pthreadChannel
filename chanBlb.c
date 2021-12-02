@@ -294,7 +294,7 @@ bad:
 #undef V
 }
 
-static int
+static unsigned int
 chanBlbConsume(
   chanBlb_t **b
  ,void *d
