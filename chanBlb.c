@@ -400,10 +400,8 @@ chanN0I(
   pthread_cleanup_push((void(*)(void*))chanShut, V->c);
   if (V->l)
     bs = V->l;
-  else {
-    i1 = sizeof (bs);
-    bs = 65535; /* when zero maxSize, balance data rate, io() call overhead and realloc() release policy */
-  }
+  else
+    bs = 65536; /* when zero maxSize, balance data rate, io() call overhead and realloc() release policy */
   p[0].c = V->c;
   p[0].v = (void **)&m;
   p[0].o = chanOpPut;
@@ -585,10 +583,8 @@ chanH1I(
   pthread_cleanup_push((void(*)(void*))chanShut, V->c);
   if (V->l)
     bs = V->l;
-  else {
-    i1 = sizeof (bs);
-    bs = 65535; /* when zero maxSize, balance data rate, io() call overhead and realloc() release policy */
-  }
+  else
+    bs = 65536; /* when zero maxSize, balance data rate, io() call overhead and realloc() release policy */
   p[0].c = V->c;
   p[0].v = (void **)&m;
   p[0].o = chanOpPut;
@@ -612,8 +608,6 @@ chanH1I(
     unsigned int i2;
     unsigned int i3;
 
-    cl = 0;
-    ch = 0;
     for (; i1 < i0; i1 += i) {
       pthread_cleanup_push((void(*)(void*))ChanF, m);
       i = V->xo(V->x, m->b + i1, i0 - i1);
@@ -621,6 +615,8 @@ chanH1I(
       if (!i)
         goto bad;
 nextHeaders:
+      cl = 0;
+      ch = 0;
       for (i2 = (i1 > 27 ? 28 : i1) + i, s1 = m->b + i1 + i - i2; i2; --i2, ++s1)
         switch (*s1) {
         case 0x00: case 0x01: case 0x02: case 0x03: case 0x04: case 0x05: case 0x06: case 0x07:
@@ -724,7 +720,6 @@ nextHeaders:
           break;
         }
     }
-#if 0 /* arbitrarily large headers? 16k is enough? */
     if (!V->l) {
       i0 += bs;
       if (!(tv = ChanA(m, chanBlb_tSize(i0))))
@@ -732,7 +727,6 @@ nextHeaders:
       m = tv;
       continue;
     }
-#endif
     goto bad;
 endHeaders:
     m->l = i1 + i - i2;
@@ -755,17 +749,21 @@ endHeaders:
      || *s2++ != 'P'
      || *s2   != '/')
       goto bad;
-    if (ch)
-      i0 = bs;
-    else if (cl) {
-      if (V->l && cl > V->l)
+    if (V->l) {
+      if (cl > i2)
         goto bad;
-      i0 = cl >= i2 ? cl : bs;
-    } else
+      if (ch && !i2)
+        goto bad;
       i0 = bs;
+    } else {
+      if (cl > i2)
+        i0 = cl;
+      else
+        i0 = bs;
+    }
     if (!(m1 = ChanA(0, chanBlb_tSize(i0))))
       goto bad;
-    for (i1 = i2, s2 = m1->b; i1; --i1, ++s1, ++s2)
+    for (i1 = i2, s2 = m1->b; i1; --i1, ++s2, ++s1)
       *s2 = *s1;
     if ((tv = ChanA(m, chanBlb_tSize(m->l))))
       m = tv;
@@ -903,14 +901,13 @@ endTrailers:
       i2 = i1 + i;
     }
     if (cl) {
-      m->l = cl;
       i0 = bs;
       if (!(m1 = ChanA(0, chanBlb_tSize(i0))))
         goto bad;
       if (i2 > cl) {
-        for (i1 = i2 - cl, s2 = m1->b, s1 = m->b + m->l; i1; --i1, ++s1, ++s2)
+        for (i1 = i0, s2 = m1->b, s1 = m->b + cl; i1; --i1, ++s2, ++s1)
           *s2 = *s1;
-        if ((tv = ChanA(m, chanBlb_tSize(m->l))))
+        if ((tv = ChanA(m, chanBlb_tSize(cl))))
           m = tv;
       } else if (i2 < cl) {
         pthread_cleanup_push((void(*)(void*))ChanF, m);
@@ -922,6 +919,8 @@ endTrailers:
         }
       }
       i2 -= cl;
+      m->l = cl;
+      cl = 0;
       pthread_cleanup_push((void(*)(void*))ChanF, m);
       pthread_cleanup_push((void(*)(void*))ChanF, m1);
       i = chanOne(0, sizeof (p) / sizeof (p[0]), p) == 1 && p[0].s == chanOsPut;
@@ -932,7 +931,6 @@ endTrailers:
         goto bad;
       }
       m = m1;
-      cl = 0;
     }
     if ((i = i2))
       goto nextHeaders;
