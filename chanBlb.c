@@ -101,28 +101,38 @@ chanNsE(
   p[0].v = (void **)&m;
   p[0].o = chanOpGet;
   while (chanOne(0, sizeof (p) / sizeof (p[0]), p) == 1 && p[0].s == chanOsGet) {
+    unsigned char *t;
     unsigned int o;
     unsigned int l;
     unsigned int i;
-    char b[16];
+    unsigned char b[16];
 
     pthread_cleanup_push((void(*)(void*))ChanF, m);
-    l = m->l;
-    o = sizeof (b) - 1;
-    b[o] = ':';
-    do {
+    for (l = m->l, o = sizeof (b); l && o; l /= 10)
       b[--o] = l % 10 + '0';
-      l /= 10;
-    } while (o && l);
     if (!l) {
-      for (l = sizeof (b) - o, i = 0; l && (i = V->xo(V->x, &b[o], l)) > 0; l -= i, o += i);
-      if (i > 0)
-        for (l = 0; l < m->l && (i = V->xo(V->x, m->b + l, m->l - l)) > 0; l += i);
+      i = sizeof (b) - o;
+      l = i + 1 + m->l + 1;
+      if (!(t = ChanA(0, l)))
+        l = 0;
+    }
+    if (l) {
+      unsigned char *s1;
+      unsigned char *s2;
+
+      pthread_cleanup_push((void(*)(void*))ChanF, t);
+      for (s2 = t, s1 = &b[o]; i; --i, ++s2, ++s1)
+        *s2 = *s1;
+      *s2++ = ':';
+      for (s1 = m->b, o = m->l; o; --o, ++s2, ++s1)
+        *s2 = *s1;
+      *s2 = ',';
+      for (o = 0; o < l && (i = V->xo(V->x, t + o, l - o)) > 0; o += i);
+      pthread_cleanup_pop(1); /* ChanF(t) */
     } else
       i = 0;
     pthread_cleanup_pop(1); /* ChanF(m) */
-    if (!i
-     || V->xo(V->x, ",", 1) != 1)
+    if (!i)
       break;
   }
   pthread_cleanup_pop(1); /* chanShut(V->c) */
@@ -149,16 +159,33 @@ chanN0E(
   p[0].v = (void **)&m;
   p[0].o = chanOpGet;
   while (chanOne(0, sizeof (p) / sizeof (p[0]), p) == 1 && p[0].s == chanOsGet) {
-    const unsigned char t[] = "]]>]]>";
+    unsigned char *t;
+    unsigned int o;
     unsigned int l;
     unsigned int i;
 
     pthread_cleanup_push((void(*)(void*))ChanF, m);
-    for (l = 0, i = 1; l < m->l && (i = V->xo(V->x, m->b + l, m->l - l)) > 0; l += i);
+    l = m->l + 6;
+    if (!(t = ChanA(0, l)))
+      l = 0;
+    if (l) {
+      unsigned char *s1;
+      unsigned char *s2;
+
+      pthread_cleanup_push((void(*)(void*))ChanF, t);
+      for (s2 = t, s1 = m->b, o = m->l; o; --o, ++s2, ++s1)
+        *s2 = *s1;
+      *s2++ = ']';
+      *s2++ = ']';
+      *s2++ = '>';
+      *s2++ = ']';
+      *s2++ = ']';
+      *s2 = '>';
+      for (o = 0; o < l && (i = V->xo(V->x, t + o, l - o)) > 0; o += i);
+      pthread_cleanup_pop(1); /* ChanF(t) */
+    } else
+      i = 0;
     pthread_cleanup_pop(1); /* ChanF(m) */
-    if (!i)
-      break;
-    for (l = 0, i = 0; l < (sizeof (t) - 1) && (i = V->xo(V->x, t + l, (sizeof (t) - 1) - l)) > 0; l += i);
     if (!i)
       break;
   }
@@ -186,36 +213,48 @@ chanN1E(
   p[0].v = (void **)&m;
   p[0].o = chanOpGet;
   while (chanOne(0, sizeof (p) / sizeof (p[0]), p) == 1 && p[0].s == chanOsGet) {
-    const unsigned char t[] = "\n##\n";
+    unsigned char *t;
     unsigned int o;
     unsigned int l;
     unsigned int i;
-    char b[16];
+    unsigned char b[16];
 
     pthread_cleanup_push((void(*)(void*))ChanF, m);
-    if (!(l = m->l)) {
-      i = 1;
-      goto empty;
-    }
-    o = sizeof (b) - 1;
-    b[o] = '\n';
-    do {
+    for (l = m->l, o = sizeof (b); l && o; l /= 10)
       b[--o] = l % 10 + '0';
-      l /= 10;
-    } while (o > 2 && l);
     if (!l) {
-      b[--o] = '#';
-      b[--o] = '\n';
-      for (l = sizeof (b) - o, i = 0; l && (i = V->xo(V->x, &b[o], l)) > 0; l -= i, o += i);
-      if (i > 0)
-        for (l = 0; l < m->l && (i = V->xo(V->x, m->b + l, m->l - l)) > 0; l += i);
+      i = sizeof (b) - o;
+      if (m->l)
+        l = 2 + i + 1 + m->l + 4;
+      else
+        l = 4;
+      if (!(t = ChanA(0, l)))
+        l = 0;
+    }
+    if (l) {
+      unsigned char *s1;
+      unsigned char *s2;
+
+      pthread_cleanup_push((void(*)(void*))ChanF, t);
+      s2 = t;
+      if (m->l) {
+        *s2++ = '\n';
+        *s2++ = '#';
+        for (s1 = &b[o]; i; --i, ++s2, ++s1)
+          *s2 = *s1;
+        *s2++ = '\n';
+        for (s1 = m->b, o = m->l; o; --o, ++s2, ++s1)
+          *s2 = *s1;
+      }
+      *s2++ = '\n';
+      *s2++ = '#';
+      *s2++ = '#';
+      *s2 = '\n';
+      for (o = 0; o < l && (i = V->xo(V->x, t + o, l - o)) > 0; o += i);
+      pthread_cleanup_pop(1); /* ChanF(t) */
     } else
       i = 0;
-empty:;
     pthread_cleanup_pop(1); /* ChanF(m) */
-    if (!i)
-      break;
-    for (l = 0, i = 0; l < (sizeof (t) - 1) && (i = V->xo(V->x, t + l, (sizeof (t) - 1) - l)) > 0; l += i);
     if (!i)
       break;
   }
