@@ -10,7 +10,7 @@ A Channel is an anonymous, pthread coordinating, Store of pointer (void *) sized
 * Channels, by default, store a single item. (For more, see [store](#store).)
 * Channels only support intra-process exchanges. (For inter-process, see [blob](#blob).)
 * Any number of pthreads can Put/Get on a Channel.
-  * Monitoring of Channel demand is supported. (See [squint](#example).)
+  * Monitoring of Channel demand is supported. (See [squint](#example) for an example of [lazy evaluation](https://en.wikipedia.org/wiki/Lazy_evaluation).)
 * A pthread can Put/Get on any number of Channels.
   * Unicast (One) and Multicast (All) operations are supported. (See [squint](#example).)
 * The canonical Channel use is a transfer of a pointer to heap. (Delegating locking complexities to a heap management implementation e.g. realloc and free.) (See [primes](#example).)
@@ -87,7 +87,7 @@ But as the processing cost decreases toward the context switch cost, Stores can 
 Therefore, a Store's size depends on how much latency can be tolerated in the quest for efficiency.
 (See [queueing theory](https://en.wikipedia.org/wiki/Queueing_theory).)
 
-NOTE: These implementations preallocate heap with a maximum size to provide [lazy evaluation](https://en.wikipedia.org/wiki/Lazy_evaluation) semantics.
+NOTE: These implementations preallocate heap with a maximum size to provide "back pressure" propagation semantics.
 
 A maximum sized Channel FIFO Store implementation is provided.
 When a context is created, a size is allocated.
