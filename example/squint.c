@@ -25,7 +25,20 @@
 /*****************************************************
 **     C / pthread / Channel implementation of      **
 ** M. Douglas McIlroy's "Squinting at Power Series" **
-**   [https://cs.dartmouth.edu/~doug/powser.html]   **
+**                                                  **
+**    This implementation produces the stream of    **
+**  coefficients of the tangent series on page 23.  **
+**  (Note: "fanout", "queuing" and "demand" are no  **
+**      are no longer technical difficulties.)      **
+**                                                  **
+**                   In Postscript                  **
+**  [https://cs.dartmouth.edu/~doug/squint.ps.gz]   **
+**                                                  **
+**                      In PDF                      **
+**    [https://swtch.com/~rsc/thread/squint.pdf]    **
+**                                                  **
+**                  A Later paper                   **
+**    [https://cs.dartmouth.edu/~doug/music.pdf]    **
 **                                                  **
 **                       NOTE                       **
 **       This was developed to test chanAll()       **
@@ -1454,7 +1467,7 @@ main(
    || conS(c1, &r1))
     goto exit;
   printf("conS:"),fflush(stdout);
-  printS(c1, 10);
+  printS(c1, 12);
   chanClose(c1);
 
   setR(&r1, 1, 1);
@@ -1465,7 +1478,7 @@ main(
    || multS(c2, c1, &r2))
     goto exit;
   printf("multS:"),fflush(stdout);
-  printS(c2, 10);
+  printS(c2, 12);
   chanClose(c1);
   chanClose(c2);
 
@@ -1478,7 +1491,7 @@ main(
    || addS(c3, c1, c2))
     goto exit;
   printf("addS:"),fflush(stdout);
-  printS(c3, 10);
+  printS(c3, 12);
   chanClose(c1);
   chanClose(c2);
   chanClose(c3);
@@ -1490,7 +1503,7 @@ main(
    || xnS(c2, c1, 1))
     goto exit;
   printf("xnS:"),fflush(stdout);
-  printS(c2, 10);
+  printS(c2, 12);
   chanClose(c1);
   chanClose(c2);
 
@@ -1503,7 +1516,7 @@ main(
    || mulS(c3, c1, c2))
     goto exit;
   printf("mulS:"),fflush(stdout);
-  printS(c3, 10);
+  printS(c3, 12);
   chanClose(c1);
   chanClose(c2);
   chanClose(c3);
@@ -1515,7 +1528,7 @@ main(
    || dffS(c2, c1))
     goto exit;
   printf("dffS:"),fflush(stdout);
-  printS(c2, 10);
+  printS(c2, 12);
   chanClose(c1);
   chanClose(c2);
 
@@ -1527,7 +1540,7 @@ main(
    || ntgS(c2, c1, &r2))
     goto exit;
   printf("ntgS:"),fflush(stdout);
-  printS(c2, 10);
+  printS(c2, 12);
   chanClose(c1);
   chanClose(c2);
 
@@ -1540,7 +1553,7 @@ main(
    || sbtS(c3, c1, c2))
     goto exit;
   printf("sbtS:"),fflush(stdout);
-  printS(c3, 10);
+  printS(c3, 12);
   chanClose(c1);
   chanClose(c2);
   chanClose(c3);
@@ -1552,7 +1565,7 @@ main(
    || expS(c2, c1))
     goto exit;
   printf("expS:"),fflush(stdout);
-  printS(c2, 10);
+  printS(c2, 12);
   chanClose(c1);
   chanClose(c2);
 
@@ -1563,7 +1576,7 @@ main(
    || rcpS(c2, c1))
     goto exit;
   printf("rcpS:"),fflush(stdout);
-  printS(c2, 10);
+  printS(c2, 12);
   chanClose(c1);
   chanClose(c2);
 
@@ -1574,7 +1587,7 @@ main(
    || revS(c2, c1))
     goto exit;
   printf("revS:"),fflush(stdout);
-  printS(c2, 10);
+  printS(c2, 12);
   chanClose(c1);
   chanClose(c2);
 
@@ -1586,7 +1599,7 @@ main(
    || msbtS(c2, c1, &r2, 2))
     goto exit;
   printf("msbtS:"),fflush(stdout);
-  printS(c2, 10);
+  printS(c2, 12);
   chanClose(c1);
   chanClose(c2);
 
@@ -1601,7 +1614,7 @@ main(
    || ntgS(c3, c2, &r3))
     goto exit;
   printf("ntg-msbt:"),fflush(stdout);
-  printS(c3, 10);
+  printS(c3, 12);
   chanClose(c1);
   chanClose(c2);
   chanClose(c3);
@@ -1619,7 +1632,7 @@ main(
    || revS(c4, c3))
     goto exit;
   printf("tanS:"),fflush(stdout);
-  printS(c4, 10);
+  printS(c4, 12);
   chanClose(c1);
   chanClose(c2);
   chanClose(c3);
