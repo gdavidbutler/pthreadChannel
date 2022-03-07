@@ -17,6 +17,7 @@
  */
 
 #include <pthread.h>
+#include <sched.h>
 #include "chan.h"
 
 void *(*ChanA)(void *, unsigned long);
@@ -533,7 +534,7 @@ unlock1:
       pthread_mutex_unlock(&c->m);
       break;
     }
-    pthread_yield();
+    sched_yield();
     goto lock1;
 fnd1:
     j = i;
@@ -770,7 +771,7 @@ unlock2:
         pthread_mutex_unlock(&c->m);
         break;
       }
-      pthread_yield();
+      sched_yield();
       goto lock2;
 fnd2:
       j = i;
@@ -1039,7 +1040,7 @@ unlock1:
       pthread_mutex_unlock(&c->m);
       break;
     }
-    pthread_yield();
+    sched_yield();
     goto lock1;
   }
   if (j & 2) {
@@ -1333,7 +1334,7 @@ unlock2:
         pthread_mutex_unlock(&c->m);
         break;
       }
-      pthread_yield();
+      sched_yield();
       goto lock2;
     }
     if (j & 2) {

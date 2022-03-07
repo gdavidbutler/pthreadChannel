@@ -18,7 +18,7 @@ squint: example/squint.c chan.h chan.o
 	$(CC) $(CFLAGS) -o squint example/squint.c chan.o -lpthread
 
 # for MacOS change to
-#	$(CC) $(CFLAGS) -D_GNU_SOURCE -Dpthread_yield=pthread_yield_np -c chan.c
+#	$(CC) $(CFLAGS) -D_GNU_SOURCE -c chan.c
 chan.o: chan.c chan.h
 	$(CC) $(CFLAGS) -D_GNU_SOURCE -DHAVE_CONDATTR_SETCLOCK -c chan.c
 
