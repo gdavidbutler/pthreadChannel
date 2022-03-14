@@ -121,10 +121,7 @@ gcdI(
       r = b % a;
       t = a > r ? a - r : r - a;
       b = a;
-      if (r < t)
-        a = r;
-      else
-        a = t;
+      a = r < t ? r : t;
     }
     return (b);
   } else {
@@ -132,10 +129,7 @@ gcdI(
       r = a % b;
       t = b > r ? b - r : r - b;
       a = b;
-      if (r < t)
-        b = r;
-      else
-        b = t;
+      b = r < t ? r : t;
     }
     return (a);
   }
