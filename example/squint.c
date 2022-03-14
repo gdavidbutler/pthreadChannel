@@ -107,20 +107,38 @@ cpyR(
   a->d = b->d;
 }
 
-/* https://en.wikipedia.org/wiki/Euclidean_algorithm */
+/* https://en.wikipedia.org/wiki/Euclidean_algorithm#Method_of_least_absolute_remainders */
 static long
 gcdI(
   long a
  ,long b
 ){
-  while (b) {
-    long t;
+  long r;
+  long t;
 
-    t = b;
-    b = a % b;
-    a = t;
+  if (a < b) {
+    while (a) {
+      r = b % a;
+      t = a > r ? a - r : r - a;
+      b = a;
+      if (r < t)
+        a = r;
+      else
+        a = t;
+    }
+    return (b);
+  } else {
+    while (b) {
+      r = a % b;
+      t = b > r ? b - r : r - b;
+      a = b;
+      if (r < t)
+        b = r;
+      else
+        b = t;
+    }
+    return (a);
   }
-  return (a);
 }
 
 /* a/b + c/d = (ad + cb) / bd */
