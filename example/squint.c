@@ -116,7 +116,7 @@ gcdI(
   long r;
   long t;
 
-  if (a < b) {
+  if ((a < 0 ? -a : a) < (b < 0 ? -b : b)) {
     while (a) {
       r = b % a;
       t = a > r ? a - r : r - a;
