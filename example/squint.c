@@ -651,9 +651,6 @@ void *v
   unsigned int i;
 
   memset(ga1, 0, sizeof (ga1));
-  memset(pa1, 0, sizeof (pa1));
-  memset(pa2, 0, sizeof (pa2));
-  memset(ga2, 0, sizeof (ga2));
   ga1[P].c = V->p;
   ga1[F].c = V->f;
   ga1[G].c = V->g;
@@ -962,7 +959,6 @@ void *v
   unsigned int i;
 
   memset(ga1, 0, sizeof (ga1));
-  memset(pa1, 0, sizeof (pa1));
   ga1[S].c = V->s;
   ga1[F].c = V->f;
   ga1[G].c = V->g;
@@ -1074,7 +1070,6 @@ void *v
   rat_t c;
 
   memset(ga1, 0, sizeof (ga1));
-  memset(pa1, 0, sizeof (pa1));
   ga1[F].c = V->f;
   ga1[X0].c = V->e;
   for (i = 0; i < chCnt; ++i) {
@@ -1166,8 +1161,6 @@ void *v
   rat_t n;
 
   memset(ga1, 0, sizeof (ga1));
-  memset(pa1, 0, sizeof (pa1));
-  memset(pa2, 0, sizeof (pa2));
   ga1[R].c = V->r;
   ga1[F].c = V->f;
   for (i = 0; i < chCnt; ++i) {
@@ -1278,8 +1271,6 @@ void *v
   rat_t n;
 
   memset(ga1, 0, sizeof (ga1));
-  memset(pa1, 0, sizeof (pa1));
-  memset(pa2, 0, sizeof (pa2));
   ga1[R0].c = V->r;
   ga1[F].c = V->f;
   for (i = 0; i < chCnt; ++i) {
