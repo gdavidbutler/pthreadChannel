@@ -11,8 +11,8 @@ sockproxy: example/sockproxy.c chan.h chanBlb.h chan.o chanBlb.o
 pipeproxy: example/pipeproxy.c chan.h chanBlb.h chan.o chanBlb.o
 	$(CC) $(CFLAGS) -o pipeproxy example/pipeproxy.c chan.o chanBlb.o -lpthread
 
-squint: example/squint.c chan.h chan.o
-	$(CC) $(CFLAGS) -o squint example/squint.c chan.o -lpthread
+squint: example/squint.c chan.h chan.o chanStr.o
+	$(CC) $(CFLAGS) -o squint example/squint.c chan.o chanStr.o -lpthread
 
 # for MacOS change to
 #	$(CC) $(CFLAGS) -D_GNU_SOURCE -c chan.c

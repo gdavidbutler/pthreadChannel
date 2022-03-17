@@ -21,6 +21,7 @@
 #include <string.h>
 #include <pthread.h>
 #include "chan.h"
+#include "chanStr.h"
 
 /*****************************************************
 **     C / pthread / Channel implementation of      **
@@ -39,15 +40,9 @@
 **                                                  **
 **                  A Later paper                   **
 **    [https://cs.dartmouth.edu/~doug/music.pdf]    **
-**                                                  **
-**                       NOTE                       **
-**       This was developed to test chanAll()       **
-**          using a default store of one.           **
-**      Performance will increase dramatically      **
-**               using larger stores                **
-**   (since the threads talk much more than work)   **
-**   and chanOne() to enable asymmetric progress.   **
 *****************************************************/
+
+unsigned int Count; /* use the count of of coefficients to print to size each channel store */
 
 /*************************************************************************/
 
@@ -659,7 +654,10 @@ void *v
   ga1[F].c = V->f;
   ga1[G].c = V->g;
   for (i = 0; i < chCnt; ++i) {
-    if (!ga1[i].c && !(ga1[i].c = chanCreate(0, 0, (chanSd_t)free))) {
+    void *tv;
+
+    if (!ga1[i].c && (!(tv = chanFifoSa(free, Count)) || !(ga1[i].c = chanCreate(chanFifoSi, tv, chanFifoSd)))) {
+      if (tv) chanFifoSd(tv, 0);
       fprintf(stderr, "mulS_ OoR\n");
       goto exit;
     }
@@ -968,7 +966,10 @@ void *v
   ga1[F].c = V->f;
   ga1[G].c = V->g;
   for (i = 0; i < chCnt; ++i) {
-    if (!ga1[i].c && !(ga1[i].c = chanCreate(0, 0, (chanSd_t)free))) {
+    void *tv;
+
+    if (!ga1[i].c && (!(tv = chanFifoSa(free, Count)) || !(ga1[i].c = chanCreate(chanFifoSi, tv, chanFifoSd)))) {
+      if (tv) chanFifoSd(tv, 0);
       fprintf(stderr, "sbtS_ OoR\n");
       goto exit;
     }
@@ -1079,7 +1080,10 @@ void *v
   ga1[F].c = V->f;
   ga1[X0].c = V->e;
   for (i = 0; i < chCnt; ++i) {
-    if (!ga1[i].c && !(ga1[i].c = chanCreate(0, 0, (chanSd_t)free))) {
+    void *tv;
+
+    if (!ga1[i].c && (!(tv = chanFifoSa(free, Count)) || !(ga1[i].c = chanCreate(chanFifoSi, tv, chanFifoSd)))) {
+      if (tv) chanFifoSd(tv, 0);
       fprintf(stderr, "expS_ OoR\n");
       goto exit;
     }
@@ -1172,7 +1176,10 @@ void *v
   ga1[R].c = V->r;
   ga1[F].c = V->f;
   for (i = 0; i < chCnt; ++i) {
-    if (!ga1[i].c && !(ga1[i].c = chanCreate(0, 0, (chanSd_t)free))) {
+    void *tv;
+
+    if (!ga1[i].c && (!(tv = chanFifoSa(free, Count)) || !(ga1[i].c = chanCreate(chanFifoSi, tv, chanFifoSd)))) {
+      if (tv) chanFifoSd(tv, 0);
       fprintf(stderr, "rcpS_ OoR\n");
       goto exit;
     }
@@ -1284,7 +1291,10 @@ void *v
   ga1[R0].c = V->r;
   ga1[F].c = V->f;
   for (i = 0; i < chCnt; ++i) {
-    if (!ga1[i].c && !(ga1[i].c = chanCreate(0, 0, (chanSd_t)free))) {
+    void *tv;
+
+    if (!ga1[i].c && (!(tv = chanFifoSa(free, Count)) || !(ga1[i].c = chanCreate(chanFifoSi, tv, chanFifoSd)))) {
+      if (tv) chanFifoSd(tv, 0);
       fprintf(stderr, "revS_ OoR\n");
       goto exit;
     }
@@ -1494,6 +1504,7 @@ main(
  int argc
 ,char *argv[]
 ){
+  void *tv;
   chan_t *c1;
   chan_t *c2;
   chan_t *c3;
@@ -1501,169 +1512,198 @@ main(
   rat_t r1;
   rat_t r2;
   rat_t r3;
-  unsigned int count;
 
   if (argc != 2)
-    count = 12;
-  else if (!(count = atoi(argv[1]))) {
+    Count = 12;
+  else if (!(Count = atoi(argv[1]))) {
     fprintf(stderr, "Usage %s: count\n", argv[0]);
     return (-1);
   }
   chanInit(realloc, free);
 
   setR(&r1, 1, 1);
-  if (!(c1 = chanCreate(0, 0, (chanSd_t)free))
+
+  if (!(tv = chanFifoSa(free, Count))
+   || !(c1 = chanCreate(chanFifoSi, tv, chanFifoSd))
    || conS(c1, &r1))
     goto exit;
   printf("conS:"),fflush(stdout);
-  printS(c1, count);
+  printS(c1, Count);
   chanClose(c1);
 
   setR(&r1, 1, 1);
   setR(&r2, -1, 1);
-  if (!(c1 = chanCreate(0, 0, (chanSd_t)free))
+  if (!(tv = chanFifoSa(free, Count))
+   || !(c1 = chanCreate(chanFifoSi, tv, chanFifoSd))
    || conS(c1, &r1)
-   || !(c2 = chanCreate(0, 0, (chanSd_t)free))
+   || !(tv = chanFifoSa(free, Count))
+   || !(c2 = chanCreate(chanFifoSi, tv, chanFifoSd))
    || multS(c2, c1, &r2))
     goto exit;
   printf("multS:"),fflush(stdout);
-  printS(c2, count);
+  printS(c2, Count);
   chanClose(c1);
   chanClose(c2);
 
   setR(&r1, 1, 1);
-  if (!(c1 = chanCreate(0, 0, (chanSd_t)free))
+  if (!(tv = chanFifoSa(free, Count))
+   || !(c1 = chanCreate(chanFifoSi, tv, chanFifoSd))
    || conS(c1, &r1)
-   || !(c2 = chanCreate(0, 0, (chanSd_t)free))
+   || !(tv = chanFifoSa(free, Count))
+   || !(c2 = chanCreate(chanFifoSi, tv, chanFifoSd))
    || conS(c2, &r1)
-   || !(c3 = chanCreate(0, 0, (chanSd_t)free))
+   || !(tv = chanFifoSa(free, Count))
+   || !(c3 = chanCreate(chanFifoSi, tv, chanFifoSd))
    || addS(c3, c1, c2))
     goto exit;
   printf("addS:"),fflush(stdout);
-  printS(c3, count);
+  printS(c3, Count);
   chanClose(c1);
   chanClose(c2);
   chanClose(c3);
 
   setR(&r1, 1, 1);
-  if (!(c1 = chanCreate(0, 0, (chanSd_t)free))
+  if (!(tv = chanFifoSa(free, Count))
+   || !(c1 = chanCreate(chanFifoSi, tv, chanFifoSd))
    || conS(c1, &r1)
-   || !(c2 = chanCreate(0, 0, (chanSd_t)free))
+   || !(tv = chanFifoSa(free, Count))
+   || !(c2 = chanCreate(chanFifoSi, tv, chanFifoSd))
    || xnS(c2, c1, 1))
     goto exit;
   printf("xnS:"),fflush(stdout);
-  printS(c2, count);
+  printS(c2, Count);
   chanClose(c1);
   chanClose(c2);
 
   setR(&r1, 1, 1);
-  if (!(c1 = chanCreate(0, 0, (chanSd_t)free))
+  if (!(tv = chanFifoSa(free, Count))
+   || !(c1 = chanCreate(chanFifoSi, tv, chanFifoSd))
    || conS(c1, &r1)
-   || !(c2 = chanCreate(0, 0, (chanSd_t)free))
+   || !(tv = chanFifoSa(free, Count))
+   || !(c2 = chanCreate(chanFifoSi, tv, chanFifoSd))
    || conS(c2, &r1)
-   || !(c3 = chanCreate(0, 0, (chanSd_t)free))
+   || !(tv = chanFifoSa(free, Count))
+   || !(c3 = chanCreate(chanFifoSi, tv, chanFifoSd))
    || mulS(c3, c1, c2))
     goto exit;
   printf("mulS:"),fflush(stdout);
-  printS(c3, count);
+  printS(c3, Count);
   chanClose(c1);
   chanClose(c2);
   chanClose(c3);
 
   setR(&r1, 1, 1);
-  if (!(c1 = chanCreate(0, 0, (chanSd_t)free))
+  if (!(tv = chanFifoSa(free, Count))
+   || !(c1 = chanCreate(chanFifoSi, tv, chanFifoSd))
    || conS(c1, &r1)
-   || !(c2 = chanCreate(0, 0, (chanSd_t)free))
+   || !(tv = chanFifoSa(free, Count))
+   || !(c2 = chanCreate(chanFifoSi, tv, chanFifoSd))
    || dffS(c2, c1))
     goto exit;
   printf("dffS:"),fflush(stdout);
-  printS(c2, count);
+  printS(c2, Count);
   chanClose(c1);
   chanClose(c2);
 
   setR(&r1, 1, 1);
   setR(&r2, 0, 1);
-  if (!(c1 = chanCreate(0, 0, (chanSd_t)free))
+  if (!(tv = chanFifoSa(free, Count))
+   || !(c1 = chanCreate(chanFifoSi, tv, chanFifoSd))
    || conS(c1, &r1)
-   || !(c2 = chanCreate(0, 0, (chanSd_t)free))
+   || !(tv = chanFifoSa(free, Count))
+   || !(c2 = chanCreate(chanFifoSi, tv, chanFifoSd))
    || ntgS(c2, c1, &r2))
     goto exit;
   printf("ntgS:"),fflush(stdout);
-  printS(c2, count);
+  printS(c2, Count);
   chanClose(c1);
   chanClose(c2);
 
   setR(&r1, 1, 1);
-  if (!(c1 = chanCreate(0, 0, (chanSd_t)free))
+  if (!(tv = chanFifoSa(free, Count))
+   || !(c1 = chanCreate(chanFifoSi, tv, chanFifoSd))
    || conS(c1, &r1)
-   || !(c2 = chanCreate(0, 0, (chanSd_t)free))
+   || !(tv = chanFifoSa(free, Count))
+   || !(c2 = chanCreate(chanFifoSi, tv, chanFifoSd))
    || conS(c2, &r1)
-   || !(c3 = chanCreate(0, 0, (chanSd_t)free))
+   || !(tv = chanFifoSa(free, Count))
+   || !(c3 = chanCreate(chanFifoSi, tv, chanFifoSd))
    || sbtS(c3, c1, c2))
     goto exit;
   printf("sbtS:"),fflush(stdout);
-  printS(c3, count);
+  printS(c3, Count);
   chanClose(c1);
   chanClose(c2);
   chanClose(c3);
 
   setR(&r1, 1, 1);
-  if (!(c1 = chanCreate(0, 0, (chanSd_t)free))
+  if (!(tv = chanFifoSa(free, Count))
+   || !(c1 = chanCreate(chanFifoSi, tv, chanFifoSd))
    || conS(c1, &r1)
-   || !(c2 = chanCreate(0, 0, (chanSd_t)free))
+   || !(tv = chanFifoSa(free, Count))
+   || !(c2 = chanCreate(chanFifoSi, tv, chanFifoSd))
    || expS(c2, c1))
     goto exit;
   printf("expS:"),fflush(stdout);
-  printS(c2, count);
+  printS(c2, Count);
   chanClose(c1);
   chanClose(c2);
 
   setR(&r1, 1, 1);
-  if (!(c1 = chanCreate(0, 0, (chanSd_t)free))
+  if (!(tv = chanFifoSa(free, Count))
+   || !(c1 = chanCreate(chanFifoSi, tv, chanFifoSd))
    || conS(c1, &r1)
-   || !(c2 = chanCreate(0, 0, (chanSd_t)free))
+   || !(tv = chanFifoSa(free, Count))
+   || !(c2 = chanCreate(chanFifoSi, tv, chanFifoSd))
    || rcpS(c2, c1))
     goto exit;
   printf("rcpS:"),fflush(stdout);
-  printS(c2, count);
+  printS(c2, Count);
   chanClose(c1);
   chanClose(c2);
 
   setR(&r1, 1, 1);
-  if (!(c1 = chanCreate(0, 0, (chanSd_t)free))
+  if (!(tv = chanFifoSa(free, Count))
+   || !(c1 = chanCreate(chanFifoSi, tv, chanFifoSd))
    || conS(c1, &r1)
-   || !(c2 = chanCreate(0, 0, (chanSd_t)free))
+   || !(tv = chanFifoSa(free, Count))
+   || !(c2 = chanCreate(chanFifoSi, tv, chanFifoSd))
    || revS(c2, c1))
     goto exit;
   printf("revS:"),fflush(stdout);
-  printS(c2, count);
+  printS(c2, Count);
   chanClose(c1);
   chanClose(c2);
 
   setR(&r1, 1, 1);
   setR(&r2, -1, 1);
-  if (!(c1 = chanCreate(0, 0, (chanSd_t)free))
+  if (!(tv = chanFifoSa(free, Count))
+   || !(c1 = chanCreate(chanFifoSi, tv, chanFifoSd))
    || conS(c1, &r1)
-   || !(c2 = chanCreate(0, 0, (chanSd_t)free))
+   || !(tv = chanFifoSa(free, Count))
+   || !(c2 = chanCreate(chanFifoSi, tv, chanFifoSd))
    || msbtS(c2, c1, &r2, 2))
     goto exit;
   printf("msbtS:"),fflush(stdout);
-  printS(c2, count);
+  printS(c2, Count);
   chanClose(c1);
   chanClose(c2);
 
   setR(&r1, 1, 1);
   setR(&r2, -1, 1);
   setR(&r3, 0, 1);
-  if (!(c1 = chanCreate(0, 0, (chanSd_t)free))
+  if (!(tv = chanFifoSa(free, Count))
+   || !(c1 = chanCreate(chanFifoSi, tv, chanFifoSd))
    || conS(c1, &r1)
-   || !(c2 = chanCreate(0, 0, (chanSd_t)free))
+   || !(tv = chanFifoSa(free, Count))
+   || !(c2 = chanCreate(chanFifoSi, tv, chanFifoSd))
    || msbtS(c2, c1, &r2, 2)
-   || !(c3 = chanCreate(0, 0, (chanSd_t)free))
+   || !(tv = chanFifoSa(free, Count))
+   || !(c3 = chanCreate(chanFifoSi, tv, chanFifoSd))
    || ntgS(c3, c2, &r3))
     goto exit;
   printf("ntg-msbt:"),fflush(stdout);
-  printS(c3, count);
+  printS(c3, Count);
   chanClose(c1);
   chanClose(c2);
   chanClose(c3);
@@ -1671,17 +1711,21 @@ main(
   setR(&r1, 1, 1);
   setR(&r2, -1, 1);
   setR(&r3, 0, 1);
-  if (!(c1 = chanCreate(0, 0, (chanSd_t)free))
+  if (!(tv = chanFifoSa(free, Count))
+   || !(c1 = chanCreate(chanFifoSi, tv, chanFifoSd))
    || conS(c1, &r1)
-   || !(c2 = chanCreate(0, 0, (chanSd_t)free))
+   || !(tv = chanFifoSa(free, Count))
+   || !(c2 = chanCreate(chanFifoSi, tv, chanFifoSd))
    || msbtS(c2, c1, &r2, 2)
-   || !(c3 = chanCreate(0, 0, (chanSd_t)free))
+   || !(tv = chanFifoSa(free, Count))
+   || !(c3 = chanCreate(chanFifoSi, tv, chanFifoSd))
    || ntgS(c3, c2, &r3)
-   || !(c4 = chanCreate(0, 0, (chanSd_t)free))
+   || !(tv = chanFifoSa(free, Count))
+   || !(c4 = chanCreate(chanFifoSi, tv, chanFifoSd))
    || revS(c4, c3))
     goto exit;
   printf("tanS:"),fflush(stdout);
-  printS(c4, count);
+  printS(c4, Count);
   chanClose(c1);
   chanClose(c2);
   chanClose(c3);
