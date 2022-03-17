@@ -13,7 +13,7 @@ A Channel is an anonymous, pthread coordinating, Store of pointer (void *) sized
   * Monitoring of Channel demand is supported. (See [squint](#example) for an example of [lazy evaluation](https://en.wikipedia.org/wiki/Lazy_evaluation).)
 * A pthread can Put/Get on any number of Channels.
   * Unicast (One) and Multicast (All) operations are supported. (See [squint](#example).)
-* The canonical Channel use is a transfer of a pointer to heap. (Delegating locking complexities to a heap management implementation e.g. realloc and free.) (See [primes](#example).)
+* The canonical Channel use is a transfer of a pointer to heap. (Delegating locking complexities to a heap management implementation e.g. realloc and free.)
   * Putting pthread:
     ````C
     m = malloc(...);
@@ -201,9 +201,6 @@ TODO: create examples
 
 ### Example
 
-* primes
-  * Modeled on primes.c from [libtask](https://swtch.com/libtask/).
-(It is a bit more complex because of pthread's API and Channel's features.)
 * sockproxy
   * Modeled on tcpproxy.c from [libtask](https://swtch.com/libtask/).
 Connects two chanBlb()s back-to-back, with Channels reversed.

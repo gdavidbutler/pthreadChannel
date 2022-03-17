@@ -1,12 +1,9 @@
 CFLAGS = -I. -Os -g
 
-all: chan.o chanStr.o chanBlb.o primes sockproxy pipeproxy squint
+all: chan.o chanStr.o chanBlb.o sockproxy pipeproxy squint
 
 clean:
-	rm -f chan.o chanStr.o chanBlb.o primes sockproxy pipeproxy squint
-
-primes: example/primes.c chan.h chanStr.h chan.o chanStr.o
-	$(CC) $(CFLAGS) -o primes example/primes.c chan.o chanStr.o -lpthread
+	rm -f chan.o chanStr.o chanBlb.o sockproxy pipeproxy squint
 
 sockproxy: example/sockproxy.c chan.h chanBlb.h chan.o chanBlb.o
 	$(CC) $(CFLAGS) -o sockproxy example/sockproxy.c chan.o chanBlb.o -lpthread
@@ -28,6 +25,5 @@ chanStr.o: chanStr.c chanStr.h chan.h
 chanBlb.o: chanBlb.c chanBlb.h chan.h
 	$(CC) $(CFLAGS) -c chanBlb.c
 
-check: primes squint
-	./primes 10
+check: squint
 	./squint
