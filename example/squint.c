@@ -143,11 +143,14 @@ addR(
  ,const rat_t *b
 ){
   long g;
+  long t;
 
-  g = gcdI(a->d, b->d);
+  if (!(g = gcdI(a->d, b->d)))
+    return (0);
+  t = b->d / g;
   return (newR(
-   a->n * (b->d / g) + b->n * (a->d / g)
-  ,a->d * (b->d / g)
+   a->n * t + b->n * (a->d / g)
+  ,a->d * t
   ));
 }
 #endif
@@ -158,10 +161,15 @@ addToR(
  ,const rat_t *b
 ){
   long g;
+  long t;
 
-  g = gcdI(a->d, b->d);
-  a->n = a->n * (b->d / g) + b->n * (a->d / g);
-  a->d = a->d * (b->d / g);
+  if (!(g = gcdI(a->d, b->d))) {
+    a->n = a->d = 0;
+    return;
+  }
+  t = b->d / g;
+  a->n = a->n * t + b->n * (a->d / g);
+  a->d = a->d * t;
 }
 
 /* a/b - c/d = (ad - cb) / bd */
@@ -172,11 +180,14 @@ subR(
  ,const rat_t *b
 ){
   long g;
+  long t;
 
-  g = gcdI(a->d, b->d);
+  if (!(g = gcdI(a->d, b->d)))
+    return (0);
+  t = a->d / g;
   return (newR(
-   a->n * (b->d / g) - b->n * (a->d / g)
-  ,b->d * (a->d / g)
+   a->n * (b->d / g) - b->n * t
+  ,b->d * t
   ));
 }
 #endif
@@ -188,10 +199,15 @@ subFromR(
  ,const rat_t *b
 ){
   long g;
+  long t;
 
-  g = gcdI(a->d, b->d);
-  a->n = a->n * (b->d / g) - b->n * (a->d / g);
-  a->d = b->d * (a->d / g);
+  if (!(g = gcdI(a->d, b->d))) {
+    a->n = a->d = 0;
+    return;
+  }
+  t = a->d / g;
+  a->n = a->n * (b->d / g) - b->n * t;
+  a->d = b->d * t;
 }
 #endif
 
@@ -207,8 +223,9 @@ mulR(
   long n;
   long d;
 
-  g1 = gcdI(a->n, b->d);
-  g2 = gcdI(b->n, a->d);
+  if (!(g1 = gcdI(a->n, b->d))
+   || !(g2 = gcdI(b->n, a->d)))
+    return (0);
   n = (a->n / g1) * (b->n / g2);
   d = (a->d / g2) * (b->d / g1);
   g1 = gcdI(n, d);
@@ -229,8 +246,11 @@ mulByR(
   long n;
   long d;
 
-  g1 = gcdI(a->n, b->d);
-  g2 = gcdI(b->n, a->d);
+  if (!(g1 = gcdI(a->n, b->d))
+   || !(g2 = gcdI(b->n, a->d))) {
+    a->n = a->d = 0;
+    return;
+  }
   n = (a->n / g1) * (b->n / g2);
   d = (a->d / g2) * (b->d / g1);
   g1 = gcdI(n, d);
@@ -273,6 +293,8 @@ static rat_t *
 rcpR(
   const rat_t *a
 ){
+  if (!a->n)
+    return (0);
   return (newR(
    a->d
   ,a->n
@@ -286,19 +308,23 @@ rcpOfR(
 ){
   long t;
 
-  t = a->n;
+  if (!(t = a->n)) {
+    a->n = a->d = 0;
+    return;
+  }
   a->n = a->d;
   a->d = t;
 }
 
 /*************************************************************************/
 
-/* constant stream */
+/* constant stream context */
 struct conS_ {
-  chan_t *o;
-  rat_t c;
+  chan_t *o; /* output channel */
+  rat_t c;   /* constant */
 };
 
+/* constant stream thread */
 static void *
 conS_(
 void *v
@@ -319,6 +345,7 @@ void *v
 }
 #undef V
 
+/* launch constant stream thread */
 static int
 conS(
   chan_t *o
@@ -1444,6 +1471,7 @@ oor:
 
 /*************************************************************************/
 
+/* print n rationals from a stream then shut it down */
 static void
 printS(
   chan_t *c
@@ -1463,6 +1491,8 @@ printS(
 
 int
 main(
+ int argc
+,char *argv[]
 ){
   chan_t *c1;
   chan_t *c2;
@@ -1471,7 +1501,14 @@ main(
   rat_t r1;
   rat_t r2;
   rat_t r3;
+  unsigned int count;
 
+  if (argc != 2)
+    count = 12;
+  else if (!(count = atoi(argv[1]))) {
+    fprintf(stderr, "Usage %s: count\n", argv[0]);
+    return (-1);
+  }
   chanInit(realloc, free);
 
   setR(&r1, 1, 1);
@@ -1479,7 +1516,7 @@ main(
    || conS(c1, &r1))
     goto exit;
   printf("conS:"),fflush(stdout);
-  printS(c1, 12);
+  printS(c1, count);
   chanClose(c1);
 
   setR(&r1, 1, 1);
@@ -1490,7 +1527,7 @@ main(
    || multS(c2, c1, &r2))
     goto exit;
   printf("multS:"),fflush(stdout);
-  printS(c2, 12);
+  printS(c2, count);
   chanClose(c1);
   chanClose(c2);
 
@@ -1503,7 +1540,7 @@ main(
    || addS(c3, c1, c2))
     goto exit;
   printf("addS:"),fflush(stdout);
-  printS(c3, 12);
+  printS(c3, count);
   chanClose(c1);
   chanClose(c2);
   chanClose(c3);
@@ -1515,7 +1552,7 @@ main(
    || xnS(c2, c1, 1))
     goto exit;
   printf("xnS:"),fflush(stdout);
-  printS(c2, 12);
+  printS(c2, count);
   chanClose(c1);
   chanClose(c2);
 
@@ -1528,7 +1565,7 @@ main(
    || mulS(c3, c1, c2))
     goto exit;
   printf("mulS:"),fflush(stdout);
-  printS(c3, 12);
+  printS(c3, count);
   chanClose(c1);
   chanClose(c2);
   chanClose(c3);
@@ -1540,7 +1577,7 @@ main(
    || dffS(c2, c1))
     goto exit;
   printf("dffS:"),fflush(stdout);
-  printS(c2, 12);
+  printS(c2, count);
   chanClose(c1);
   chanClose(c2);
 
@@ -1552,7 +1589,7 @@ main(
    || ntgS(c2, c1, &r2))
     goto exit;
   printf("ntgS:"),fflush(stdout);
-  printS(c2, 12);
+  printS(c2, count);
   chanClose(c1);
   chanClose(c2);
 
@@ -1565,7 +1602,7 @@ main(
    || sbtS(c3, c1, c2))
     goto exit;
   printf("sbtS:"),fflush(stdout);
-  printS(c3, 12);
+  printS(c3, count);
   chanClose(c1);
   chanClose(c2);
   chanClose(c3);
@@ -1577,7 +1614,7 @@ main(
    || expS(c2, c1))
     goto exit;
   printf("expS:"),fflush(stdout);
-  printS(c2, 12);
+  printS(c2, count);
   chanClose(c1);
   chanClose(c2);
 
@@ -1588,7 +1625,7 @@ main(
    || rcpS(c2, c1))
     goto exit;
   printf("rcpS:"),fflush(stdout);
-  printS(c2, 12);
+  printS(c2, count);
   chanClose(c1);
   chanClose(c2);
 
@@ -1599,7 +1636,7 @@ main(
    || revS(c2, c1))
     goto exit;
   printf("revS:"),fflush(stdout);
-  printS(c2, 12);
+  printS(c2, count);
   chanClose(c1);
   chanClose(c2);
 
@@ -1611,7 +1648,7 @@ main(
    || msbtS(c2, c1, &r2, 2))
     goto exit;
   printf("msbtS:"),fflush(stdout);
-  printS(c2, 12);
+  printS(c2, count);
   chanClose(c1);
   chanClose(c2);
 
@@ -1626,7 +1663,7 @@ main(
    || ntgS(c3, c2, &r3))
     goto exit;
   printf("ntg-msbt:"),fflush(stdout);
-  printS(c3, 12);
+  printS(c3, count);
   chanClose(c1);
   chanClose(c2);
   chanClose(c3);
@@ -1644,7 +1681,7 @@ main(
    || revS(c4, c3))
     goto exit;
   printf("tanS:"),fflush(stdout);
-  printS(c4, 12);
+  printS(c4, count);
   chanClose(c1);
   chanClose(c2);
   chanClose(c3);
