@@ -3,7 +3,7 @@ CFLAGS = -I. -Os -g
 all: chan.o chanStr.o chanBlb.o sockproxy pipeproxy squint floydWarshall
 
 clean:
-	rm -f chan.o chanStr.o chanBlb.o sockproxy pipeproxy squint
+	rm -f chan.o chanStr.o chanBlb.o sockproxy pipeproxy squint floydWarshall
 
 sockproxy: example/sockproxy.c chan.h chanBlb.h chan.o chanBlb.o
 	$(CC) $(CFLAGS) -o sockproxy example/sockproxy.c chan.o chanBlb.o -lpthread
