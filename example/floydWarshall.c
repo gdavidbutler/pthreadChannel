@@ -360,7 +360,6 @@ fwProcess(
       chanClose(fwt.snk);
       goto exit;
     }
-    pthread_setname_np(t, "fw");
     pthread_detach(t);
   }
   for (i = 0; i < p; ++i) {
