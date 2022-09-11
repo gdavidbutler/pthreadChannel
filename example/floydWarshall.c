@@ -510,17 +510,17 @@ main(
     exit(EXIT_FAILURE);
   }
 
-  scanf("edges\n");
-  while (scanf("%u %u %hd\n", &i, &j, &c) == 3) {
-    if (i >= d || j >= d)
-      continue;
-    *(fw->cst + fw->d * i + j) = c;
+  if (!scanf("edges\n"))
+    while (scanf("%u %u %hd\n", &i, &j, &c) == 3) {
+      if (i >= d || j >= d)
+        continue;
+      *(fw->cst + fw->d * i + j) = c;
 #ifdef FWEQL
-    (fw->nxt + fw->d * i + j)->l = j + 1;
+      (fw->nxt + fw->d * i + j)->l = j + 1;
 #else /* FWEQL */
-    *(fw->nxt + fw->d * i + j) = j + 1;
+      *(fw->nxt + fw->d * i + j) = j + 1;
 #endif /* FWEQL */
-  }
+    }
 
 #ifdef FWBLK
   r = fwProcess(fw, t);
@@ -533,16 +533,17 @@ main(
     exit(EXIT_FAILURE);
   }
 
-  scanf("show\n");
-  while (scanf("%u %u\n", &i, &j) == 2) {
-    char *s;
+  if (!scanf("show\n"))
+    while (scanf("%u %u\n", &i, &j) == 2) {
+      char *s;
 
-    if (i >= d || j >= d)
-      continue;
-    asprintf(&s, "%u:%u", i, j);
-    mprint(s, fw, i, j);
-    free(s);
-  }
+      if (i >= d || j >= d)
+        continue;
+      if (asprintf(&s, "%u:%u", i, j) > 0) {
+        mprint(s, fw, i, j);
+        free(s);
+      }
+    }
 
   fwFree(fw);
   return (0);
