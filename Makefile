@@ -1,6 +1,6 @@
-CFLAGS = -I. -Os -g
+CFLAGS = -std=c89 -pedantic -Wall -Wextra -I. -Os -g
 
-all: chan.o chanStr.o chanBlb.o sockproxy pipeproxy squint
+all: chan.o chanStr.o chanBlb.o sockproxy pipeproxy squint floydWarshall
 
 clean:
 	rm -f chan.o chanStr.o chanBlb.o sockproxy pipeproxy squint
@@ -13,6 +13,9 @@ pipeproxy: example/pipeproxy.c chan.h chanBlb.h chan.o chanBlb.o
 
 squint: example/squint.c chan.h chan.o chanStr.o
 	$(CC) $(CFLAGS) -o squint example/squint.c chan.o chanStr.o -lpthread
+
+floydWarshall: example/floydWarshall.c chan.h chan.o chanStr.o
+	$(CC) $(CFLAGS) -DFWEQL -DFWBLK -o floydWarshall example/floydWarshall.c chan.o -lpthread
 
 # for MacOS change to
 #	$(CC) $(CFLAGS) -D_GNU_SOURCE -c chan.c

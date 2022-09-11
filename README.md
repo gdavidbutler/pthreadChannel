@@ -215,6 +215,8 @@ Connects two chanBlb()s back-to-back, with Channels reversed.
   * Copy stdin to stdout through chanBlb() preserving read boundaries using Netstring framing
 * squint
   * Implementation of [M. Douglas McIlroy's "Squinting at Power Series"](https://swtch.com/~rsc/thread/squint.pdf).
+* floydWarshall
+  * Use a Channel coordinating dynamic thread pool to parallelize the [Floyd-Warshall](https://en.wikipedia.org/wiki/Floyd–Warshall_algorithm) all shortest paths algorithm using [blocking](https://github.com/moorejs/APSP-in-parallel) techniques extended to optionally save all equal next hops.
 
 ### Building
 
