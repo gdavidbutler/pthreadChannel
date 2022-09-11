@@ -1,4 +1,4 @@
-CFLAGS = -std=c89 -pedantic -Wall -Wextra -I. -Os -g
+CFLAGS = -I. -Os -g
 
 all: chan.o chanStr.o chanBlb.o sockproxy pipeproxy squint floydWarshall
 
