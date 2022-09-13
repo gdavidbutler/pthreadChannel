@@ -1,38 +1,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>
+#include "floydWarshall.h"
 
-/* https://en.wikipedia.org/wiki/Floyd–Warshall_algorithm */
-/* https://moorejs.github.io/APSP-in-parallel/ */
-
-/* FWEQL keep equal cost next */
-/* FWBLK use blocks and threads */
-
-/* pick infinite "cost" char:2^7-1 short:2^15-1 int:2^31-1 long,long:2^63-1 */
-typedef short fwCst_t;
-/* pick max "vertices"  char:2^8   short:2^16   int:2^32   long,long:2^64 */
-typedef unsigned int fwNxt_t;
-
-#ifdef FWEQL
-struct fwNxt {
-  fwNxt_t *x;
-  fwNxt_t l; /* if !x, this is the next, otherwise, a count of next */
-};
-#endif /* FWEQL */
-struct fw {
-  fwCst_t *cst;      /* cost matrix */
-#ifdef FWEQL
-  struct fwNxt *nxt; /* next matrix */
-#else /* FWEQL */
-  fwNxt_t *nxt;      /* next matrix */
-#endif /* FWEQL */
-  fwNxt_t d;         /* matrix dimension */
-#ifdef FWBLK
-  fwNxt_t b;         /* blocking factor */
-#endif /* FWBLK */
-};
-
-static void
+void
 fwFree(
   struct fw *v
 ){
@@ -52,7 +23,7 @@ fwFree(
   }
 }
 
-static struct fw *
+struct fw *
 fwAlloc(
   unsigned long d
 #ifdef FWBLK
@@ -188,13 +159,12 @@ fwProcess0(
 
   for (k = 0; k < b; ++k)
     for (i = 0; i < b; ++i)
-      for (j = 0; j < b; ++j) {
-        if (i == j && *(cc + d * i + j) < 0)
-          return (1);
+      for (j = 0; j < b; ++j)
         if (*(cc + d * i + j) > *(ac + d * i + k)
          && *(cc + d * i + j) > *(bc + d * k + j)) {
           if (*(cc + d * i + j) > (c = *(ac + d * i + k) + *(bc + d * k + j))) {
-            *(cc + d * i + j) = c;
+            if ((*(cc + d * i + j) = c) < 0 && i == j)
+              return (1);
 #ifdef FWEQL
             if ((cn + d * i + j)->x)
               free((cn + d * i + j)->x);
@@ -216,7 +186,6 @@ fwProcess0(
             return (1);
 #endif /* FWEQL */
         }
-      }
   return (0);
 }
 
@@ -320,7 +289,7 @@ fwThread(
 #undef V
 }
 
-static int
+int
 fwProcess(
  struct fw *v
 ,fwNxt_t p
@@ -420,13 +389,15 @@ exit:
 
 #else /* FWBLK */
 
-static int
+int
 fwProcess(
   struct fw *v
 ){
   return (fwProcess0(v->cst, v->cst, v->cst, v->nxt, v->nxt, v->d, v->d));
 }
 #endif /* FWBLK */
+
+#ifdef FWMAIN
 
 static void
 mprint(
@@ -548,3 +519,5 @@ main(
   fwFree(fw);
   return (0);
 }
+
+#endif /* FWMAIN */

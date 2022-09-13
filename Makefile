@@ -15,7 +15,7 @@ squint: example/squint.c chan.h chan.o chanStr.o
 	$(CC) $(CFLAGS) -o squint example/squint.c chan.o chanStr.o -lpthread
 
 floydWarshall: example/floydWarshall.c chan.h chan.o chanStr.o
-	$(CC) $(CFLAGS) -D_GNU_SOURCE -DFWEQL -DFWBLK -o floydWarshall example/floydWarshall.c chan.o -lpthread
+	$(CC) $(CFLAGS) -Iexample -D_GNU_SOURCE -DFWMAIN -DFWEQL -DFWBLK -o floydWarshall example/floydWarshall.c chan.o -lpthread
 
 # for MacOS change to
 #	$(CC) $(CFLAGS) -D_GNU_SOURCE -c chan.c
