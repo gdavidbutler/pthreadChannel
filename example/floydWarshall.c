@@ -133,7 +133,7 @@ fwNxtAdd(
 }
 #endif /* FWEQL */
 
-static int
+static inline int
 fwProcess0(
   fwCst_t *cc
  ,fwCst_t *ac
@@ -285,6 +285,7 @@ fwThread(
   }
   chanClose(V->src);
   chanClose(V->snk);
+  free(v);
   return (0);
 #undef V
 }
@@ -305,28 +306,31 @@ fwProcess(
   if (v->d <= v->b)
     return (fwProcess0(v->cst, v->cst, v->cst, v->nxt, v->nxt, v->d, v->d));
   r = 1;
-  if (p > 1) {
-    if (v->d < 128) /* multi-thread break */
-      p = 1;
-    else if (!(fwt.snk = chanCreate(0,0,0))
-     || !(fwt.src = chanCreate(0,0,0))) {
-      chanClose(fwt.snk);
-      return (r);
-    }
-  }
   if ((c = v->d / v->b) < p)
     p = c;
   c = v->b * (c / p);
+  if (p > 1) {
+    if (!(fwt.snk = chanCreate(0,0,0)) || !(fwt.src = chanCreate(0,0,0))) {
+      chanClose(fwt.snk);
+      return (r);
+    }
+  } else
+    fwt.snk = fwt.src = 0;
   if (!(fwp = malloc(p * sizeof (*fwp))))
     goto exit;
   for (i = 0; i < p - 1; ++i) {
+    struct fwThread *c;
     pthread_t t;
 
-    chanOpen(fwt.snk);
-    chanOpen(fwt.src);
-    if (pthread_create(&t, 0, fwThread, &fwt)) {
-      chanClose(fwt.src);
-      chanClose(fwt.snk);
+    if (!(c = malloc(sizeof (*c)))
+     || !(c->snk = chanOpen(fwt.snk))
+     || !(c->src = chanOpen(fwt.src))
+     || pthread_create(&t, 0, fwThread, c)) {
+      if (c) {
+        chanClose(c->src);
+        chanClose(c->snk);
+        free(c);
+      }
       goto exit;
     }
     pthread_detach(t);
@@ -468,10 +472,11 @@ main(
   }
 
 #ifdef FWBLK
+  /* blocking size should fit Process0 in processor cache */
 # ifdef FWEQL
-  fw = fwAlloc(d, 16); /* blocking size by experimentation */
+  fw = fwAlloc(d, 16);
 # else /* FWEQL */
-  fw = fwAlloc(d, 32); /* blocking size by experimentation */
+  fw = fwAlloc(d, 32);
 # endif /* FWEQL */
 #else /* FWBLK */
   fw = fwAlloc(d);
