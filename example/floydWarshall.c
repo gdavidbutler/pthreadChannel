@@ -151,7 +151,15 @@ fwNxtAdd(
 }
 #endif /* FWEQL */
 
-static inline int
+static
+#ifdef __STDC__
+# ifdef __STDC_VERSION__
+#  if __STDC_VERSION__ >= 199901L
+inline
+#  endif
+# endif
+#endif
+int
 fwProcess0(
   fwCst_t *cc
  ,fwCst_t *ac
