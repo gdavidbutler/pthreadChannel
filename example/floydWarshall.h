@@ -19,13 +19,24 @@
 /* https://en.wikipedia.org/wiki/Floyd–Warshall_algorithm */
 /* https://moorejs.github.io/APSP-in-parallel/ */
 
+/* FWCST signed type to use for cost */
+/* FWNXT unsigned type to use for next */
 /* FWEQL keep equal cost next */
 /* FWBLK use blocks and threads */
 
 /* pick infinite "cost" char:2^7-1 short:2^15-1 int:2^31-1 long,long:2^63-1 */
-typedef short fwCst_t;
+#ifdef FWCST
+typedef FWCST fwCst_t;
+#else
+typedef int fwCst_t;
+#endif
+
 /* pick max "vertices"  char:2^8   short:2^16   int:2^32   long,long:2^64 */
+#ifdef FWNXT
+typedef unsigned FWNXT fwNxt_t;
+#else
 typedef unsigned int fwNxt_t;
+#endif
 
 #ifdef FWEQL
 struct fwNxt {

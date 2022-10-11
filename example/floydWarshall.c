@@ -513,7 +513,7 @@ main(
   }
 
   if (!scanf("edges\n"))
-    while (scanf("%u %u %hd\n", &i, &j, &c) == 3) {
+    while (scanf("%u %u %d\n", &i, &j, &c) == 3) {
       if (i >= d || j >= d)
         continue;
       *(fw->cst + fw->d * i + j) = c;
