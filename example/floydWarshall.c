@@ -176,11 +176,11 @@ fwProcess0(
 ){
 #ifdef FWEQL
   void *tv;
+  fwNxt_t l;
 #endif /* FWEQL */
   fwNxt_t k;
   fwNxt_t i;
   fwNxt_t j;
-  fwNxt_t l;
   fwCst_t c;
 
   for (k = 0; k < b; ++k)
