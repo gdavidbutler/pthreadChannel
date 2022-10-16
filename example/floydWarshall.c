@@ -175,7 +175,6 @@ fwProcess0(
  ,fwNxt_t b
 ){
 #ifdef FWEQL
-  void *tv;
   fwNxt_t l;
 #endif /* FWEQL */
   fwNxt_t k;
@@ -195,9 +194,8 @@ fwProcess0(
             if ((cn + d * i + j)->x)
               free((cn + d * i + j)->x);
             if ((an + d * i + k)->x) {
-              if (!(tv = malloc((an + d * i + k)->l * sizeof (*cn->x))))
+              if (!((cn + d * i + j)->x = malloc((an + d * i + k)->l * sizeof (*cn->x))))
                 return (1);
-              (cn + d * i + j)->x = tv;
               for (l = (an + d * i + k)->l; l--; )
                 *((cn + d * i + j)->x + l) = *((an + d * i + k)->x + l);
             } else
