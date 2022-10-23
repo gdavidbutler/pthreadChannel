@@ -77,3 +77,13 @@ fwProcess(
 ,fwNxt_t p
 #endif /* FWBLK */
 );
+
+/* FWSQLITE virtual table read acces to next array */
+/* sqlite3_create_module(sqlite3 *, "fw", &fwMod, 0) */
+/* sqlite3_prepare_v2(sqlite3 *, "SELECT f AS \"from\", t AS \"to\", o AS \"ordinal\", n AS \"nextHop\" FROM Fw(?1)", -1, sqlite3_stmt *, 0) */
+/* sqlite3_bind_pointer(sqlite3_stmt *, 1, struct fw *, "fw", 0) */
+
+#ifdef FWSQLITE
+extern sqlite3_module
+fwMod;
+#endif

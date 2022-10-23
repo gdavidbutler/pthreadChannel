@@ -19,6 +19,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>
+#ifdef FWSQLITE
+#include "sqlite3.h"
+#endif
 #include "floydWarshall.h"
 
 void
@@ -424,6 +427,341 @@ fwProcess(
   return (fwProcess0(v->cst, v->cst, v->cst, v->nxt, v->nxt, v->d, v->d));
 }
 #endif /* FWBLK */
+
+#ifdef FWSQLITE
+
+static int
+fwCon(
+  sqlite3 *d
+ ,void *u1
+ ,int u2
+ ,const char *const *u3
+ ,sqlite3_vtab **v
+ ,char **u4
+){
+  int i;
+
+  if ((i = sqlite3_declare_vtab(d, "CREATE TABLE FWT(f INTEGER, t INTEGER, o INTEGER, n INTEGER, p HIDDEN)")))
+    return (i);
+  if (!(*v = sqlite3_malloc(sizeof (**v))))
+    return (SQLITE_NOMEM);
+  sqlite3_vtab_config(d, SQLITE_VTAB_DIRECTONLY);
+  return (SQLITE_OK);
+  (void)u1;
+  (void)u2;
+  (void)u3;
+  (void)u4;
+}
+
+static int
+fwDis(
+  sqlite3_vtab *v
+){
+  sqlite3_free(v);
+  return (SQLITE_OK);
+}
+
+struct fwCsr {
+  sqlite3_vtab_cursor c;
+  struct fw *p;
+  fwNxt_t f;
+  fwNxt_t t;
+  fwNxt_t o;
+  fwNxt_t fs;
+  fwNxt_t fe;
+  fwNxt_t ts;
+  fwNxt_t te;
+  fwNxt_t os;
+};
+
+static int
+fwOpn(
+  sqlite3_vtab *u1
+ ,sqlite3_vtab_cursor **c
+){
+  struct fwCsr *xc;
+
+  if (!(xc = sqlite3_malloc(sizeof (*xc))))
+    return (SQLITE_NOMEM);
+  xc->p = 0;
+  xc->f = xc->t = xc->o = xc->fs = xc->fe = xc->ts = xc->te = xc->os = 0;
+  *c = &xc->c;
+  return (SQLITE_OK);
+  (void)u1;
+}
+
+static int
+fwCls(
+  sqlite3_vtab_cursor *c
+){
+  sqlite3_free(c);
+  return (SQLITE_OK);
+}
+
+static int
+fwBst(
+  sqlite3_vtab *u1,
+  sqlite3_index_info *i
+){
+  int n;
+  int f;
+  int t;
+  int o;
+  int p;
+
+  f = t = o = p = -1;
+  for (n = 0; n < i->nConstraint; ++n) {
+    if (!(i->aConstraint + n)->usable)
+      continue;
+    switch ((i->aConstraint + n)->iColumn) {
+    case 0: /* f */
+      if ((i->aConstraint + n)->op != SQLITE_INDEX_CONSTRAINT_EQ)
+        continue;
+      f = n;
+      break;
+    case 1: /* t */
+      if ((i->aConstraint + n)->op != SQLITE_INDEX_CONSTRAINT_EQ)
+        continue;
+      t = n;
+      break;
+    case 2: /* o */
+      if ((i->aConstraint + n)->op != SQLITE_INDEX_CONSTRAINT_GE)
+        continue;
+      o = n;
+      break;
+#if 0
+    case 3: /* n */
+      break;
+#endif
+    case 4: /* p */
+      p = n;
+      break;
+    default:
+      break;
+    }
+  }
+  n = 0;
+  if (p >= 0) {
+    (i->aConstraintUsage + p)->argvIndex = ++n;
+    (i->aConstraintUsage + p)->omit = 1;
+    i->idxNum |= 1;
+    if (f >= 0) {
+      (i->aConstraintUsage + f)->argvIndex = ++n;
+      (i->aConstraintUsage + f)->omit = 1;
+      i->idxNum |= 2;
+    }
+    if (t >= 0) {
+      (i->aConstraintUsage + t)->argvIndex = ++n;
+      (i->aConstraintUsage + t)->omit = 1;
+      i->idxNum |= 4;
+    }
+    if (o >= 0) {
+      (i->aConstraintUsage + o)->argvIndex = ++n;
+      (i->aConstraintUsage + o)->omit = 1;
+      i->idxNum |= 8;
+    }
+  }
+  if (i->idxNum & 1) {
+    if (i->idxNum & 2 && i->idxNum & 4 && i->idxNum & 8) {
+      i->estimatedCost = 0.1;
+      i->estimatedRows = 1;
+    } else if (i->idxNum & 2 && i->idxNum & 4) {
+      i->estimatedCost = 1.0;
+      i->estimatedRows = 10;
+    } else if (i->idxNum & 2 || i->idxNum & 4) {
+      i->estimatedCost = 10.0;
+      i->estimatedRows = 100;
+    } else if (i->idxNum & 8) {
+      i->estimatedCost = 100.0;
+      i->estimatedRows = 1000;
+    } else {
+      i->estimatedCost = 1000.0;
+      i->estimatedRows = 1000000;
+    }
+  }
+  if (!i->idxNum)
+    return (SQLITE_ERROR);
+  if (i->nOrderBy == 3
+   && (i->aOrderBy + 0)->iColumn == 0 && !(i->aOrderBy + 0)->desc
+   && (i->aOrderBy + 1)->iColumn == 1 && !(i->aOrderBy + 1)->desc
+   && (i->aOrderBy + 2)->iColumn == 2 && !(i->aOrderBy + 2)->desc)
+    i->orderByConsumed = 1;
+  else if (i->nOrderBy == 2
+   && (i->aOrderBy + 0)->iColumn == 0 && !(i->aOrderBy + 0)->desc
+   && (i->aOrderBy + 1)->iColumn == 1 && !(i->aOrderBy + 1)->desc)
+    i->orderByConsumed = 1;
+  else if (i->nOrderBy == 1
+   && (i->aOrderBy + 0)->iColumn == 0 && !(i->aOrderBy + 0)->desc)
+    i->orderByConsumed = 1;
+  return (SQLITE_OK);
+  (void)u1;
+}
+
+static int
+fwFlt(
+  sqlite3_vtab_cursor *c
+ ,int x
+ ,const char *u1
+ ,int n
+ ,sqlite3_value **a
+){
+  sqlite3_int64 i;
+
+  if (n && x & 1) {
+    ((struct fwCsr *)c)->p = sqlite3_value_pointer(*a, "fw");
+    --n, ++a;
+  }
+  if (n && x & 2) {
+    if ((i = sqlite3_value_int64(*a)) >= 1
+     && i <= ((struct fwCsr *)c)->p->d)
+      ((struct fwCsr *)c)->fe = i;
+    else
+      ((struct fwCsr *)c)->fe = ((struct fwCsr *)c)->p->d;
+    ((struct fwCsr *)c)->f =((struct fwCsr *)c)->fs = ((struct fwCsr *)c)->fe - 1;
+    --n, ++a;
+  } else
+    ((struct fwCsr *)c)->fe = ((struct fwCsr *)c)->p->d;
+  if (n && x & 4) {
+    if ((i = sqlite3_value_int64(*a)) >= 1
+     && i <= ((struct fwCsr *)c)->p->d)
+      ((struct fwCsr *)c)->te = i;
+    else
+      ((struct fwCsr *)c)->te = ((struct fwCsr *)c)->p->d;
+    ((struct fwCsr *)c)->t =((struct fwCsr *)c)->ts = ((struct fwCsr *)c)->te - 1;
+    --n, ++a;
+  } else
+    ((struct fwCsr *)c)->te = ((struct fwCsr *)c)->p->d;
+  if (n && x & 8) {
+    if ((i = sqlite3_value_int64(*a)) >= 0)
+      ((struct fwCsr *)c)->o = ((struct fwCsr *)c)->os = i;
+    --n, ++a;
+  }
+  if (n || !(((struct fwCsr *)c)->p))
+    return (SQLITE_ERROR);
+  return (SQLITE_OK);
+  (void)u1;
+}
+
+static int
+fwNxt(
+  sqlite3_vtab_cursor *c
+){
+  if (++((struct fwCsr *)c)->o
+#ifdef FWEQL
+   && (!(((struct fwCsr *)c)->p->nxt + ((struct fwCsr *)c)->p->d * ((struct fwCsr *)c)->f + ((struct fwCsr *)c)->t)->x
+   || ((((struct fwCsr *)c)->p->nxt + ((struct fwCsr *)c)->p->d * ((struct fwCsr *)c)->f + ((struct fwCsr *)c)->t)->l <= ((struct fwCsr *)c)->o))
+#endif
+  ) {
+    ((struct fwCsr *)c)->o = ((struct fwCsr *)c)->os;
+    if (++((struct fwCsr *)c)->t >= ((struct fwCsr *)c)->te) {
+      if (++((struct fwCsr *)c)->f >= ((struct fwCsr *)c)->fe)
+        return (SQLITE_OK);
+      else
+        ((struct fwCsr *)c)->t = ((struct fwCsr *)c)->ts;
+    }
+  }
+  return (SQLITE_OK);
+}
+
+static int
+fwEof(
+  sqlite3_vtab_cursor *c
+){
+  if (((struct fwCsr *)c)->f >= ((struct fwCsr *)c)->fe)
+    return (1); 
+  else
+    return (0); 
+}
+
+static int
+fwRid(
+  sqlite3_vtab_cursor *c
+ ,sqlite3_int64 *i
+){
+  fwNxt_t f;
+  fwNxt_t t;
+
+  *i = 1;
+  for (f = 0; f < ((struct fwCsr *)c)->f; ++f)
+    for (t = 0; t < ((struct fwCsr *)c)->p->d; ++t)
+#ifdef FWEQL
+      if ((((struct fwCsr *)c)->p->nxt + ((struct fwCsr *)c)->p->d * f + t)->x)
+        *i += (((struct fwCsr *)c)->p->nxt + ((struct fwCsr *)c)->p->d * f + t)->l;
+      else
+#endif
+        ++*i;
+  for (t = 0; t < ((struct fwCsr *)c)->t; ++t)
+#ifdef FWEQL
+    if ((((struct fwCsr *)c)->p->nxt + ((struct fwCsr *)c)->p->d * f + t)->x)
+      *i += (((struct fwCsr *)c)->p->nxt + ((struct fwCsr *)c)->p->d * f + t)->l;
+    else
+#endif
+      ++*i;
+  *i += ((struct fwCsr *)c)->o;
+  return (SQLITE_OK);
+}
+
+static int
+fwClm(
+  sqlite3_vtab_cursor *c
+ ,sqlite3_context *x
+ ,int i
+){
+  switch (i) {
+  case 0: /* f */
+    sqlite3_result_int64(x, ((struct fwCsr *)c)->f + 1);
+    break;
+  case 1: /* t */
+    sqlite3_result_int64(x, ((struct fwCsr *)c)->t + 1);
+    break;
+  case 2: /* o */
+    sqlite3_result_int64(x, ((struct fwCsr *)c)->o);
+    break;
+  case 3: /* n */
+#ifdef FWEQL
+    if ((((struct fwCsr *)c)->p->nxt + ((struct fwCsr *)c)->p->d * ((struct fwCsr *)c)->f + ((struct fwCsr *)c)->t)->x)
+      sqlite3_result_int64(x, *((((struct fwCsr *)c)->p->nxt + ((struct fwCsr *)c)->p->d * ((struct fwCsr *)c)->f + ((struct fwCsr *)c)->t)->x + ((struct fwCsr *)c)->o));
+    else
+      sqlite3_result_int64(x, (((struct fwCsr *)c)->p->nxt + ((struct fwCsr *)c)->p->d * ((struct fwCsr *)c)->f + ((struct fwCsr *)c)->t)->l);
+#else
+    sqlite3_result_int64(x, *((((struct fwCsr *)c)->p->nxt + ((struct fwCsr *)c)->p->d * ((struct fwCsr *)c)->f + ((struct fwCsr *)c)->t)));
+#endif
+    break;
+  default:
+    break;
+  }
+  return (SQLITE_OK);
+}
+
+sqlite3_module
+fwMod = {
+  0,     /* iVersion */
+  0,     /* xCreate */
+  fwCon, /* xConnect */
+  fwBst, /* xBestIndex */
+  fwDis, /* xDisconnect */
+  0,     /* xDestroy */
+  fwOpn, /* xOpen */
+  fwCls, /* xClose */
+  fwFlt, /* xFilter */
+  fwNxt, /* xNext */
+  fwEof, /* xEof */
+  fwClm, /* xColumn */
+  fwRid, /* xRowid */
+  0,     /* xUpdate */
+  0,     /* xBegin */
+  0,     /* xSync */
+  0,     /* xCommit */
+  0,     /* xRollback */
+  0,     /* xFindMethod */
+  0,     /* xRename */
+  0,     /* xSavepoint */
+  0,     /* xRelease */
+  0,     /* xRollbackTo */
+  0      /* xShadowName */
+};
+
+#endif /* FWSQLITE */
 
 #ifdef FWMAIN
 
