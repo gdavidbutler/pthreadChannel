@@ -441,7 +441,7 @@ fwCon(
 ){
   int i;
 
-  if ((i = sqlite3_declare_vtab(d, "CREATE TABLE FWT(f INTEGER, t INTEGER, o INTEGER, n INTEGER, p HIDDEN)")))
+  if ((i = sqlite3_declare_vtab(d, "CREATE TABLE FW(f INTEGER, t INTEGER, o INTEGER, n INTEGER, p HIDDEN)")))
     return (i);
   if (!(*v = sqlite3_malloc(sizeof (**v))))
     return (SQLITE_NOMEM);
