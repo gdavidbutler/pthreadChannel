@@ -77,10 +77,7 @@ fwAlloc(
   fw->d = i;
   for (i = 0; i < fw->d; ++i)
     for (j = 0; j < fw->d; ++j)
-      if (i == j)
-        *(fw->cst + fw->d * i + j) = 0;
-      else
-        *(fw->cst + fw->d * i + j) = (1U << (sizeof (fwCst_t) * 8 - 1)) - 1;
+      *(fw->cst + fw->d * i + j) = (1U << (sizeof (fwCst_t) * 8 - 1)) - 1;
 #ifdef FWBLK
   fw->b = b;
 #endif /* FWBLK */
@@ -617,7 +614,7 @@ fwFlt(
       ((struct fwCsr *)c)->fe = i;
     else
       ((struct fwCsr *)c)->fe = ((struct fwCsr *)c)->p->d;
-    ((struct fwCsr *)c)->f =((struct fwCsr *)c)->fs = ((struct fwCsr *)c)->fe - 1;
+    ((struct fwCsr *)c)->f = ((struct fwCsr *)c)->fs = ((struct fwCsr *)c)->fe - 1;
     --n, ++a;
   } else
     ((struct fwCsr *)c)->fe = ((struct fwCsr *)c)->p->d;
@@ -627,7 +624,7 @@ fwFlt(
       ((struct fwCsr *)c)->te = i;
     else
       ((struct fwCsr *)c)->te = ((struct fwCsr *)c)->p->d;
-    ((struct fwCsr *)c)->t =((struct fwCsr *)c)->ts = ((struct fwCsr *)c)->te - 1;
+    ((struct fwCsr *)c)->t = ((struct fwCsr *)c)->ts = ((struct fwCsr *)c)->te - 1;
     --n, ++a;
   } else
     ((struct fwCsr *)c)->te = ((struct fwCsr *)c)->p->d;
@@ -779,14 +776,12 @@ mprint(
   for (;;) {
     char *s2;
 
-    if (asprintf(&s2, "%s,%u", s1, i) < 0) {
+    if (asprintf(&s2, "%s,%u|%d", s1, i, *(f->cst + f->d * i + j)) < 0) {
       free(s1);
       return;
     }
     free(s1);
     s1 = s2;
-    if (i == j)
-      break;
 #ifdef FWEQL
     if ((f->nxt + f->d * i + j)->x) {
       fwNxt_t l;
@@ -796,10 +791,12 @@ mprint(
       free(s1);
       return;
     }
-    i = (f->nxt + f->d * i + j)->l - 1;
+    i = (f->nxt + f->d * i + j)->l;
 #else /* FWEQL */
-    i = *(f->nxt + f->d * i + j) - 1;
+    i = *(f->nxt + f->d * i + j);
 #endif /* FWEQL */
+    if (!i || --i == j)
+      break;
   }
   printf("%s\n", s1);
   free(s1);

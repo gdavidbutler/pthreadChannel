@@ -62,6 +62,7 @@ fwFree(
   struct fw *v
 );
 
+/* cost inialized to infinite and next inialized to 0 */
 struct fw *
 fwAlloc(
   unsigned long d
