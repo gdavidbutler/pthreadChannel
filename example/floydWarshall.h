@@ -79,12 +79,21 @@ fwProcess(
 #endif /* FWBLK */
 );
 
-/* FWSQLITE virtual table read acces to next array */
-/* sqlite3_create_module(sqlite3 *, "fw", &fwMod, 0) */
-/* sqlite3_prepare_v2(sqlite3 *, "SELECT f AS \"from\", t AS \"to\", o AS \"ordinal\", n AS \"nextHop\" FROM Fw(?1)", -1, sqlite3_stmt *, 0) */
+#ifdef FWSQLITE
+
+/* SQLITE virtual table read acces to cost array */
+/* sqlite3_create_module(sqlite3 *, "fwc", &fwcMod, 0) */
+/* sqlite3_prepare_v2(sqlite3 *, "SELECT f AS \"from\", t AS \"to\", c AS \"cost\" FROM Fwc(?1)", -1, sqlite3_stmt *, 0) */
 /* sqlite3_bind_pointer(sqlite3_stmt *, 1, struct fw *, "fw", 0) */
 
-#ifdef FWSQLITE
+/* SQLITE virtual table read acces to next array */
+/* sqlite3_create_module(sqlite3 *, "fwn", &fwnMod, 0) */
+/* sqlite3_prepare_v2(sqlite3 *, "SELECT f AS \"from\", t AS \"to\", o AS \"ordinal\", n AS \"nextHop\" FROM Fwn(?1)", -1, sqlite3_stmt *, 0) */
+/* sqlite3_bind_pointer(sqlite3_stmt *, 1, struct fw *, "fw", 0) */
+
 extern sqlite3_module
-fwMod;
-#endif
+fwcMod;
+extern sqlite3_module
+fwnMod;
+
+#endif /* FWSQLITE */
