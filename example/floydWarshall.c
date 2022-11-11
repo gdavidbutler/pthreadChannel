@@ -61,7 +61,7 @@ fwAlloc(
   else if ((i = d % b))
     d += b - i;
 #endif /* FWBLK */
-  if (d > 1U << (sizeof (fwNxt_t) * 8 - 1)) /* problem too big for next element size */
+  if (d > 1LU << (sizeof (fwNxt_t) * 8 - 1)) /* problem too big for next element size */
     return (0);
   i = d;
   d *= d;
@@ -77,7 +77,7 @@ fwAlloc(
   fw->d = i;
   for (i = 0; i < fw->d; ++i)
     for (j = 0; j < fw->d; ++j)
-      *(fw->cst + fw->d * i + j) = (1U << (sizeof (fwCst_t) * 8 - 1)) - 1;
+      *(fw->cst + fw->d * i + j) = (1LU << (sizeof (fwCst_t) * 8 - 1)) - 1;
 #ifdef FWBLK
   fw->b = b;
 #endif /* FWBLK */
@@ -634,18 +634,6 @@ fwcEof(
 }
 
 static int
-fwcRid(
-  sqlite3_vtab_cursor *c
- ,sqlite3_int64 *i
-){
-  fwNxt_t f;
-  fwNxt_t t;
-
-  *i = 1 + ((struct fwcCsr *)c)->p->d * ((struct fwcCsr *)c)->f + ((struct fwcCsr *)c)->t;
-  return (SQLITE_OK);
-}
-
-static int
 fwcClm(
   sqlite3_vtab_cursor *c
  ,sqlite3_context *x
@@ -667,6 +655,54 @@ fwcClm(
   return (SQLITE_OK);
 }
 
+static int
+fwcRid(
+  sqlite3_vtab_cursor *c
+ ,sqlite3_int64 *i
+){
+  *i = 1 + ((struct fwcCsr *)c)->p->d * ((struct fwcCsr *)c)->f + ((struct fwcCsr *)c)->t;
+  return (SQLITE_OK);
+}
+
+static int
+fwcUpd(
+  sqlite3_vtab *v
+ ,int n
+ ,sqlite3_value **a
+ ,sqlite3_int64 *i
+){
+  struct fw *p;
+  sqlite3_int64 f;
+  sqlite3_int64 t;
+  sqlite3_int64 c;
+
+  if (n == 1                                                         /* delete not allowed */
+   || n < 7                                                          /* need all columns */
+   || sqlite3_value_type(*(a + 0)) == SQLITE_NULL                    /* insert not allowed */
+   || sqlite3_value_int64(*(a + 1)) != sqlite3_value_int64(*(a + 2)) /* can't update the ROWID */
+   || !sqlite3_value_nochange(*(a + 3))                              /* f is READONLY */
+   || !sqlite3_value_nochange(*(a + 4))                              /* t is READONLY */
+   || !sqlite3_value_nochange(*(a + 6))                              /* p is READONLY */
+  )
+    return (SQLITE_CONSTRAINT);
+  if (sqlite3_value_type(*(a + 3)) != SQLITE_INTEGER
+   || sqlite3_value_type(*(a + 4)) != SQLITE_INTEGER
+   || sqlite3_value_type(*(a + 5)) != SQLITE_INTEGER
+   || !(p = sqlite3_value_pointer(*(a + 6), "fw"))
+  )
+    return (SQLITE_MISMATCH);
+  if ((f = sqlite3_value_int64(*(a + 3))) < 1 || f > p->d
+   || (t = sqlite3_value_int64(*(a + 4))) < 1 || t > p->d
+   || (c = sqlite3_value_int64(*(a + 5))) < (fwCst_t)(1LU << (sizeof (fwCst_t) * 8 - 1)) || c > (fwCst_t)((1LU << (sizeof (fwCst_t) * 8 - 1)) - 1)
+  )
+    return (SQLITE_CONSTRAINT);
+  *(p->cst + p->d * f + t) = c;
+  (p->nxt + p->d * f + t)->l = t;
+  return (SQLITE_OK);
+  (void)v;
+  (void)i;
+}
+
 sqlite3_module
 fwcMod = {
   0,      /* iVersion */
@@ -682,7 +718,7 @@ fwcMod = {
   fwcEof, /* xEof */
   fwcClm, /* xColumn */
   fwcRid, /* xRowid */
-  0,      /* xUpdate */
+  fwcUpd, /* xUpdate */
   0,      /* xBegin */
   0,      /* xSync */
   0,      /* xCommit */
@@ -939,34 +975,6 @@ fwnEof(
 }
 
 static int
-fwnRid(
-  sqlite3_vtab_cursor *c
- ,sqlite3_int64 *i
-){
-  fwNxt_t f;
-  fwNxt_t t;
-
-  *i = 1;
-  for (f = 0; f < ((struct fwnCsr *)c)->f; ++f)
-    for (t = 0; t < ((struct fwnCsr *)c)->p->d; ++t)
-#ifdef FWEQL
-      if ((((struct fwnCsr *)c)->p->nxt + ((struct fwnCsr *)c)->p->d * f + t)->x)
-        *i += (((struct fwnCsr *)c)->p->nxt + ((struct fwnCsr *)c)->p->d * f + t)->l;
-      else
-#endif
-        ++*i;
-  for (t = 0; t < ((struct fwnCsr *)c)->t; ++t)
-#ifdef FWEQL
-    if ((((struct fwnCsr *)c)->p->nxt + ((struct fwnCsr *)c)->p->d * f + t)->x)
-      *i += (((struct fwnCsr *)c)->p->nxt + ((struct fwnCsr *)c)->p->d * f + t)->l;
-    else
-#endif
-      ++*i;
-  *i += ((struct fwnCsr *)c)->o;
-  return (SQLITE_OK);
-}
-
-static int
 fwnClm(
   sqlite3_vtab_cursor *c
  ,sqlite3_context *x
@@ -995,6 +1003,34 @@ fwnClm(
   default:
     break;
   }
+  return (SQLITE_OK);
+}
+
+static int
+fwnRid(
+  sqlite3_vtab_cursor *c
+ ,sqlite3_int64 *i
+){
+  fwNxt_t f;
+  fwNxt_t t;
+
+  *i = 1;
+  for (f = 0; f < ((struct fwnCsr *)c)->f; ++f)
+    for (t = 0; t < ((struct fwnCsr *)c)->p->d; ++t)
+#ifdef FWEQL
+      if ((((struct fwnCsr *)c)->p->nxt + ((struct fwnCsr *)c)->p->d * f + t)->x)
+        *i += (((struct fwnCsr *)c)->p->nxt + ((struct fwnCsr *)c)->p->d * f + t)->l;
+      else
+#endif
+        ++*i;
+  for (t = 0; t < ((struct fwnCsr *)c)->t; ++t)
+#ifdef FWEQL
+    if ((((struct fwnCsr *)c)->p->nxt + ((struct fwnCsr *)c)->p->d * f + t)->x)
+      *i += (((struct fwnCsr *)c)->p->nxt + ((struct fwnCsr *)c)->p->d * f + t)->l;
+    else
+#endif
+      ++*i;
+  *i += ((struct fwnCsr *)c)->o;
   return (SQLITE_OK);
 }
 
