@@ -427,6 +427,11 @@ fwProcess(
 
 #ifdef FWSQLITE
 
+struct fwcTab {
+  sqlite3_vtab t;
+  struct fw *p;
+};
+
 static int
 fwcCon(
   sqlite3 *d
@@ -436,12 +441,15 @@ fwcCon(
  ,sqlite3_vtab **v
  ,char **u4
 ){
+  struct fwcTab *xt;
   int i;
 
   if ((i = sqlite3_declare_vtab(d, "CREATE TABLE Fwc(f INTEGER, t INTEGER, c NUMERIC, p HIDDEN)")))
     return (i);
-  if (!(*v = sqlite3_malloc(sizeof (**v))))
+  if (!(xt = sqlite3_malloc(sizeof (*xt))))
     return (SQLITE_NOMEM);
+  xt->p = 0;
+  *v = &xt->t;
   sqlite3_vtab_config(d, SQLITE_VTAB_DIRECTONLY);
   return (SQLITE_OK);
   (void)u1;
@@ -581,7 +589,7 @@ fwcFlt(
   sqlite3_int64 i;
 
   if (n && x & 1) {
-    ((struct fwcCsr *)c)->p = sqlite3_value_pointer(*a, "fw");
+    ((struct fwcTab *)c->pVtab)->p = ((struct fwcCsr *)c)->p = sqlite3_value_pointer(*a, "fw");
     --n, ++a;
   }
   if (n && x & 2) {
@@ -649,9 +657,6 @@ fwcClm(
   case 2: /* c */
     sqlite3_result_int64(x, *(((struct fwcCsr *)c)->p->cst + ((struct fwcCsr *)c)->p->d * ((struct fwcCsr *)c)->f + ((struct fwcCsr *)c)->t));
     break;
-  case 3: /* p */
-    sqlite3_result_pointer(x, ((struct fwcCsr *)c)->p, "fw", 0);
-    break;
   default:
     break;
   }
@@ -674,7 +679,6 @@ fwcUpd(
  ,sqlite3_value **a
  ,sqlite3_int64 *i
 ){
-  struct fw *p;
   sqlite3_int64 f;
   sqlite3_int64 t;
   sqlite3_int64 c;
@@ -683,18 +687,17 @@ fwcUpd(
    || sqlite3_value_type(*(a + 0)) == SQLITE_NULL
    || sqlite3_value_int64(*(a + 0)) != sqlite3_value_int64(*(a + 1))
    || (f = sqlite3_value_int64(*(a + 2)) - 1) < 0
+   || f >= ((struct fwcTab *)v)->p->d
    || (t = sqlite3_value_int64(*(a + 3)) - 1) < 0
+   || t >= ((struct fwcTab *)v)->p->d
    || (c = sqlite3_value_int64(*(a + 4))) < (fwCst_t)(1LU << (sizeof (fwCst_t) * 8 - 1))
    || c > (fwCst_t)((1LU << (sizeof (fwCst_t) * 8 - 1)) - 1)
-   || !(p = sqlite3_value_pointer(*(a + 5), "fw"))
-   || f >= p->d
-   || t >= p->d
+   || (((struct fwcTab *)v)->p->nxt + ((struct fwcTab *)v)->p->d * f + t)->x
   )
     return (SQLITE_CONSTRAINT);
-  *(p->cst + p->d * f + t) = c;
-  (p->nxt + p->d * f + t)->l = t;
+  *(((struct fwcTab *)v)->p->cst + ((struct fwcTab *)v)->p->d * f + t) = c;
+  (((struct fwcTab *)v)->p->nxt + ((struct fwcTab *)v)->p->d * f + t)->l = t + 1;
   return (SQLITE_OK);
-  (void)v;
   (void)i;
 }
 
@@ -994,9 +997,6 @@ fwnClm(
 #else
     sqlite3_result_int64(x, *(((struct fwnCsr *)c)->p->nxt + ((struct fwnCsr *)c)->p->d * ((struct fwnCsr *)c)->f + ((struct fwnCsr *)c)->t));
 #endif
-    break;
-  case 4: /* p */
-    sqlite3_result_pointer(x, ((struct fwnCsr *)c)->p, "fw", 0);
     break;
   default:
     break;
