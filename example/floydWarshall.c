@@ -649,6 +649,9 @@ fwcClm(
   case 2: /* c */
     sqlite3_result_int64(x, *(((struct fwcCsr *)c)->p->cst + ((struct fwcCsr *)c)->p->d * ((struct fwcCsr *)c)->f + ((struct fwcCsr *)c)->t));
     break;
+  case 3: /* p */
+    sqlite3_result_pointer(x, ((struct fwcCsr *)c)->p, "fw", 0);
+    break;
   default:
     break;
   }
@@ -676,24 +679,16 @@ fwcUpd(
   sqlite3_int64 t;
   sqlite3_int64 c;
 
-  if (n == 1                                                         /* delete not allowed */
-   || n < 7                                                          /* need all columns */
-   || sqlite3_value_type(*(a + 0)) == SQLITE_NULL                    /* insert not allowed */
-   || sqlite3_value_int64(*(a + 1)) != sqlite3_value_int64(*(a + 2)) /* can't update the ROWID */
-   || !sqlite3_value_nochange(*(a + 3))                              /* f is READONLY */
-   || !sqlite3_value_nochange(*(a + 4))                              /* t is READONLY */
-   || !sqlite3_value_nochange(*(a + 6))                              /* p is READONLY */
-  )
-    return (SQLITE_CONSTRAINT);
-  if (sqlite3_value_type(*(a + 3)) != SQLITE_INTEGER
-   || sqlite3_value_type(*(a + 4)) != SQLITE_INTEGER
-   || sqlite3_value_type(*(a + 5)) != SQLITE_INTEGER
-   || !(p = sqlite3_value_pointer(*(a + 6), "fw"))
-  )
-    return (SQLITE_MISMATCH);
-  if ((f = sqlite3_value_int64(*(a + 3))) < 1 || f > p->d
-   || (t = sqlite3_value_int64(*(a + 4))) < 1 || t > p->d
-   || (c = sqlite3_value_int64(*(a + 5))) < (fwCst_t)(1LU << (sizeof (fwCst_t) * 8 - 1)) || c > (fwCst_t)((1LU << (sizeof (fwCst_t) * 8 - 1)) - 1)
+  if (n != 6
+   || sqlite3_value_type(*(a + 0)) == SQLITE_NULL
+   || sqlite3_value_int64(*(a + 0)) != sqlite3_value_int64(*(a + 1))
+   || (f = sqlite3_value_int64(*(a + 2)) - 1) < 0
+   || (t = sqlite3_value_int64(*(a + 3)) - 1) < 0
+   || (c = sqlite3_value_int64(*(a + 4))) < (fwCst_t)(1LU << (sizeof (fwCst_t) * 8 - 1))
+   || c > (fwCst_t)((1LU << (sizeof (fwCst_t) * 8 - 1)) - 1)
+   || !(p = sqlite3_value_pointer(*(a + 5), "fw"))
+   || f >= p->d
+   || t >= p->d
   )
     return (SQLITE_CONSTRAINT);
   *(p->cst + p->d * f + t) = c;
@@ -705,7 +700,7 @@ fwcUpd(
 
 sqlite3_module
 fwcMod = {
-  0,      /* iVersion */
+  1,      /* iVersion */
   0,      /* xCreate */
   fwcCon, /* xConnect */
   fwcBst, /* xBestIndex */
@@ -1000,6 +995,9 @@ fwnClm(
     sqlite3_result_int64(x, *(((struct fwnCsr *)c)->p->nxt + ((struct fwnCsr *)c)->p->d * ((struct fwnCsr *)c)->f + ((struct fwnCsr *)c)->t));
 #endif
     break;
+  case 4: /* p */
+    sqlite3_result_pointer(x, ((struct fwnCsr *)c)->p, "fw", 0);
+    break;
   default:
     break;
   }
@@ -1036,7 +1034,7 @@ fwnRid(
 
 sqlite3_module
 fwnMod = {
-  0,      /* iVersion */
+  1,      /* iVersion */
   0,      /* xCreate */
   fwnCon, /* xConnect */
   fwnBst, /* xBestIndex */
