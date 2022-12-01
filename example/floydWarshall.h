@@ -71,6 +71,19 @@ fwAlloc(
 #endif /* FWBLK */
 );
 
+/* duplicate content */
+struct fw *
+fwDup(
+  const struct fw *v
+);
+
+/* compare content */
+int
+fwCmp(
+  const struct fw *v1
+ ,const struct fw *v2
+);
+
 int
 fwProcess(
  struct fw *v

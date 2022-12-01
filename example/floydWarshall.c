@@ -63,25 +63,119 @@ fwAlloc(
 #endif /* FWBLK */
   if (d > 1LU << (sizeof (fwNxt_t) * 8 - 1)) /* problem too big for next element size */
     return (0);
-  i = d;
-  d *= d;
   if (!(fw = calloc(1, sizeof (*fw)))
-   || !(fw->cst = malloc(d * sizeof (*fw->cst)))
-   || !(fw->nxt = calloc(d, sizeof (*fw->nxt)))) {
+   || !(fw->cst = malloc(d * d * sizeof (*fw->cst)))
+   || !(fw->nxt = calloc(d * d, sizeof (*fw->nxt)))) {
     if (fw) {
       free(fw->cst);
       free(fw);
     }
     return (0);
   }
-  fw->d = i;
-  for (i = 0; i < fw->d; ++i)
-    for (j = 0; j < fw->d; ++j)
-      *(fw->cst + fw->d * i + j) = (1LU << (sizeof (fwCst_t) * 8 - 1)) - 1;
+  fw->d = d;
+  for (i = 0; i < d; ++i)
+    for (j = 0; j < d; ++j)
+      *(fw->cst + d * i + j) = (1LU << (sizeof (fwCst_t) * 8 - 1)) - 1;
 #ifdef FWBLK
   fw->b = b;
 #endif /* FWBLK */
   return (fw);
+}
+
+struct fw *
+fwDup(
+  const struct fw *v
+){
+  struct fw *fw;
+  fwNxt_t d;
+  fwNxt_t i;
+  fwNxt_t j;
+#ifdef FWEQL
+  fwNxt_t l;
+  fwNxt_t k;
+#endif
+
+  if (!v)
+    return (0);
+  d = v->d;
+  if (!(fw = calloc(1, sizeof (*fw)))
+   || !(fw->cst = malloc(d * d * sizeof (*fw->cst)))
+   || !(fw->nxt = calloc(d * d, sizeof (*fw->nxt)))) {
+    if (fw) {
+      free(fw->cst);
+      free(fw);
+    }
+    return (0);
+  }
+  fw->d = d;
+  for (i = 0; i < d; ++i) {
+    for (j = 0; j < d; ++j) {
+      *(fw->cst + d * i + j) = *(v->cst + d * i + j);
+#ifdef FWEQL
+      l = (fw->nxt + d * i + j)->l = (v->nxt + d * i + j)->l;
+      if (!(v->nxt + d * i + j)->x)
+        continue;
+      if (!((fw->nxt + d * i + j)->x = malloc(l * sizeof (*fw->nxt->x)))) {
+        fwFree(fw);
+        return (0);
+      } else {
+        for (k = 0; k < l; ++k)
+          *((fw->nxt + d * i + j)->x + k) = *((v->nxt + d * i + j)->x + k);
+      }
+#else
+      *(fw->nxt + d * i + j) = *(v->nxt + d * i + j);
+#endif
+    }
+  }
+#ifdef FWBLK
+  fw->b = v->b;
+#endif /* FWBLK */
+  return (fw);
+}
+
+int
+fwCmp(
+  const struct fw *v1
+ ,const struct fw *v2
+){
+  fwNxt_t d;
+  fwNxt_t i;
+  fwNxt_t j;
+#ifdef FWEQL
+  fwNxt_t l;
+  fwNxt_t k;
+#endif
+
+  if (!v1 && !v2)
+    return (0);
+  if (!v1 || !v2)
+    return (1);
+  if (v1->d != v2->d)
+    return (1);
+  d = v1->d;
+  for (i = 0; i < d; ++i) {
+    for (j = 0; j < d; ++j) {
+      if (*(v1->cst + d * i + j) != *(v2->cst + d * i + j)
+#ifdef FWEQL
+       || (v1->nxt + d * i + j)->l != (v2->nxt + d * i + j)->l
+#else
+       || *(v1->nxt + d * i + j) != *(v2->nxt + d * i + j)
+#endif
+      )
+        return (1);
+#ifdef FWEQL
+      if (!(v1->nxt + d * i + j)->x && !(v2->nxt + d * i + j)->x)
+        continue;
+      if (!(v1->nxt + d * i + j)->x || !(v2->nxt + d * i + j)->x)
+        return (1);
+      l = (v1->nxt + d * i + j)->l;
+      for (k = 0; k < l; ++k)
+        if (*((v1->nxt + d * i + j)->x + k) != *((v2->nxt + d * i + j)->x + k))
+          return (1);
+#endif
+    }
+  }
+  return (0);
 }
 
 #ifdef FWEQL
