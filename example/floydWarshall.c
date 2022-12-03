@@ -421,6 +421,8 @@ fwProcess(
   fwNxt_t i;
   int r;
 
+  if (!v)
+    return (1);
   if (v->d <= v->b)
     return (fwProcess0(v->cst, v->cst, v->cst, v->nxt, v->nxt, v->d, v->d));
   r = 1;
@@ -515,6 +517,8 @@ int
 fwProcess(
   struct fw *v
 ){
+  if (!v)
+    return (1);
   return (fwProcess0(v->cst, v->cst, v->cst, v->nxt, v->nxt, v->d, v->d));
 }
 #endif /* FWBLK */
@@ -686,6 +690,8 @@ fwcFlt(
     ((struct fwcTab *)c->pVtab)->p = ((struct fwcCsr *)c)->p = sqlite3_value_pointer(*a, "fw");
     --n, ++a;
   }
+  if (!((struct fwcCsr *)c)->p)
+    return (SQLITE_OK);
   if (n && x & 2) {
     if ((i = sqlite3_value_int64(*a)) >= 1
      && i <= ((struct fwcCsr *)c)->p->d)
