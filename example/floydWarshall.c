@@ -712,7 +712,7 @@ fwcFlt(
     --n, ++a;
   } else
     ((struct fwcCsr *)c)->te = ((struct fwcCsr *)c)->p->d;
-  if (n || !(((struct fwcCsr *)c)->p))
+  if (n)
     return (SQLITE_ERROR);
   return (SQLITE_OK);
   (void)u1;
@@ -784,6 +784,7 @@ fwcUpd(
   sqlite3_int64 c;
 
   if (n != 6
+   || !((struct fwcTab *)v)->p
    || sqlite3_value_type(*(a + 0)) == SQLITE_NULL
    || sqlite3_value_int64(*(a + 0)) != sqlite3_value_int64(*(a + 1))
    || (f = sqlite3_value_int64(*(a + 2)) - 1) < 0
@@ -1010,6 +1011,8 @@ fwnFlt(
     ((struct fwnCsr *)c)->p = sqlite3_value_pointer(*a, "fw");
     --n, ++a;
   }
+  if (!((struct fwnCsr *)c)->p)
+    return (SQLITE_OK);
   if (n && x & 2) {
     if ((i = sqlite3_value_int64(*a)) >= 1
      && i <= ((struct fwnCsr *)c)->p->d)
@@ -1035,7 +1038,7 @@ fwnFlt(
       ((struct fwnCsr *)c)->o = ((struct fwnCsr *)c)->os = i;
     --n, ++a;
   }
-  if (n || !(((struct fwnCsr *)c)->p))
+  if (n)
     return (SQLITE_ERROR);
   return (SQLITE_OK);
   (void)u1;
