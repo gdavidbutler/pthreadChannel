@@ -106,11 +106,11 @@ servT(
     goto exit2;
   }
   pthread_cleanup_push((void(*)(void*))chanClose, p[1].c);
-  if (!chanBlb(p[0].c, (void *)(long)s[0], input, icls, p[1].c, (void *)(long)s[0], output, ocls, (void *)(long)s[0], cls, chanBlbFrmNf, 65535, 0)) {
+  if (!chanBlb(p[0].c, (void *)(long)s[0], input, icls, p[1].c, (void *)(long)s[0], output, ocls, (void *)(long)s[0], cls, 0, chanBlbFrmNf, 65535, 0)) {
     perror("chanSock");
     goto exit3;
   }
-  if (!chanBlb(p[1].c, (void *)(long)s[1], input, icls, p[0].c, (void *)(long)s[1], output, ocls, (void *)(long)s[1], cls, chanBlbFrmNf, 65535, 0)) {
+  if (!chanBlb(p[1].c, (void *)(long)s[1], input, icls, p[0].c, (void *)(long)s[1], output, ocls, (void *)(long)s[1], cls, 0, chanBlbFrmNf, 65535, 0)) {
     perror("chanSock");
     goto exit3;
   }

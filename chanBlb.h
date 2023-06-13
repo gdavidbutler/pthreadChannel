@@ -32,11 +32,11 @@ chanBlb_tSize(
 );
 
 typedef enum {
-  chanBlbFrmNf /* no framing, argument is readSize */
- ,chanBlbFrmNs /* NetString read and write framing, non-zero argument is read Blob maxSize, otherwise no arbitrary max */
- ,chanBlbFrmN0 /* NETCONF/1.0 read and write framing, non-zero argument is read Blob maxSize, otherwise no arbitrary max */
- ,chanBlbFrmN1 /* NETCONF/1.1 read and write framing, non-zero argument is read Blob maxSize, otherwise no arbitrary max */
- ,chanBlbFrmH1 /* HTTP/1.1 read framing and no write framing, non-zero argument is read Blob maxSize, otherwise no arbitrary max */
+  chanBlbFrmNf /* no framing, argument is inputSize */
+ ,chanBlbFrmNs /* NetString input and output framing, non-zero argument is input Blob maxSize, otherwise no arbitrary max */
+ ,chanBlbFrmN0 /* NETCONF/1.0 input and output framing, non-zero argument is input Blob maxSize, otherwise no arbitrary max */
+ ,chanBlbFrmN1 /* NETCONF/1.1 input and output framing, non-zero argument is input Blob maxSize, otherwise no arbitrary max */
+ ,chanBlbFrmH1 /* HTTP/1.1 input framing and no output framing, non-zero argument is input Blob maxSize, otherwise no arbitrary max */
 } chanBlbFrm_t;
 
 /* Channel Blob
@@ -46,7 +46,7 @@ typedef enum {
  * Provide an optional ingress chan_t: (if not provided, in parameters are not used)
  *  Otherwise, input() is required, inClose() is optional.
  * Provide an optional egress chan_t: (if not provided, out parameters are not used)
- *  Otherwise, output() is required, outShut() is optional.
+ *  Otherwise, output() is required, outClose() is optional.
  *
  * A chanOpPut of chanBlb_t items on the egress channel does output():
  *  A chanOpGet or output() failure will chanShut(egress) and outClose(out).
@@ -56,7 +56,8 @@ typedef enum {
  *
  * After all chanShut(), if provided, finClose(fin) is invoked
  *
- * Provide an optional initialIngress; previous read bytes from protocol start
+ * Provide an optional pthread_create attribute
+ * Provide an optional initialIngress; previous input bytes from protocol start
  */
 int
 chanBlb(
@@ -70,6 +71,7 @@ chanBlb(
  ,void (*outClose)(void *out)
  ,void *fin
  ,void (*finClose)(void *out)
+ ,pthread_attr_t *attr
  ,chanBlbFrm_t framing
  ,unsigned int argument
  ,chanBlb_t *initialIngress

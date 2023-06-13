@@ -1046,6 +1046,7 @@ chanBlb(
  ,void (*otc)(void *)
  ,void *f
  ,void (*fc)(void *)
+ ,pthread_attr_t *a
  ,chanBlbFrm_t m
  ,unsigned int g
  ,chanBlb_t *b
@@ -1087,7 +1088,7 @@ chanBlb(
     x->xc = otc;
     x->f = f;
     x->fc = fc;
-    if (pthread_create(&t, 0
+    if (pthread_create(&t, a
      ,m == chanBlbFrmNs ? chanNsE
      :m == chanBlbFrmH1 ? chanNfE
      :m == chanBlbFrmN0 ? chanN0E
@@ -1125,7 +1126,7 @@ chanBlb(
     x->l = g;
     x->b = b;
     b = 0;
-    if (pthread_create(&t, 0
+    if (pthread_create(&t, a
      ,m == chanBlbFrmNs ? chanNsI
      :m == chanBlbFrmH1 ? chanH1I
      :m == chanBlbFrmN0 ? chanN0I
