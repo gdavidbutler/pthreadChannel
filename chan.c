@@ -332,6 +332,20 @@ chanClose(
   ChanF(c);
 }
 
+unsigned int
+chanOpenCnt(
+  chan_t *c
+){
+  unsigned int r;
+
+  if (!c)
+    return (0);
+  pthread_mutex_lock(&c->m);
+  r = c->c;
+  pthread_mutex_unlock(&c->m);
+  return (r);
+}
+
 chanOs_t
 chanOp(
   long w

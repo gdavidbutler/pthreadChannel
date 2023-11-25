@@ -7,12 +7,12 @@ Yet another implementation of a "Channel" construct for POSIX threads (pthreads)
 This library provides a [Channel](https://en.wikipedia.org/wiki/Channel_(programming)) style programming environment for C.
 A Channel is an anonymous, pthread coordinating, Store of pointer (void *) sized items.
 
-* Channels, by default, store a single item. (For more, see [store](#store).)
-* Channels only support intra-process exchanges. (For inter-process, see [blob](#blob).)
+* Channels, by default, store a single item. (For more, see [Store](#Store).)
+* Channels only support intra-process exchanges. (For inter-process, see [Blob](#Blob).)
 * Any number of pthreads can Put/Get on a Channel.
-  * Monitoring of Channel demand is supported. (See [squint](#example) for an example of [lazy evaluation](https://en.wikipedia.org/wiki/Lazy_evaluation).)
+  * Testing for Channel demand is supported. (See [squint](#Example) for an example of [lazy evaluation](https://en.wikipedia.org/wiki/Lazy_evaluation).)
 * A pthread can Put/Get on any number of Channels.
-  * Unicast (One) and Multicast (All) operations are supported. (See [squint](#example).)
+  * Unicast (One) and Multicast (All) operations are supported. (See [squint](#Example).)
 * The canonical Channel use is a transfer of a pointer to heap. (Delegating locking complexities to a heap management implementation e.g. realloc and free.)
   * Putting pthread:
     ````C
@@ -53,13 +53,15 @@ Find the API in chan.h:
 * chanInit(...)
   * Each process must call this before using Channels.
 * chanCreate(...)
-  * Allocate an Open chan_t (initialize reference count at 1, pair with chanClose).
+  * Allocate an Open chan_t (pair with chanClose).
 * chanOpen(...)
-  * Open a chan_t (increment reference count, pair with chanClose).
+  * Open a chan_t (pair with chanClose).
 * chanShut(...)
   * Shutdown a chan_t (afterwards chanOpPut fails and chanOpGet is always non-blocking).
 * chanClose(...)
-  * Close a chan_t (decrement reference count, deallocate at 0).
+  * Close a chan_t (deallocate at final).
+* chanOpenCnt(...)
+  * return number of chanOpen not yet chanClose (chanClose at zero deallocates)
 * chanOp(...)
   * perform an operation on a Channel
 * chanOne(...)
@@ -107,15 +109,15 @@ TODO: Priority Store
 
 Find the API in chanStr.h:
 
-* allocate a store context
+* allocate a Store context
   * chanFifoSa(...) FIFO
   * chanFlsoSa(...) FI-latency-sensitive-FO
   * chanLifoSa(...) LIFO
-* deallocate a store context
+* deallocate a Store context
   * chanFifoSd(...) FIFO
   * chanFlsoSd(...) FI-latency-sensitive-FO
   * chanLifoSd(...) LIFO
-* implement a store (chanSi_t)
+* implement a Store (chanSi_t)
   * chanFifoSi(...) FIFO
   * chanFlsoSi(...) FI-latency-sensitive-FO
   * chanLifoSi(...) LIFO

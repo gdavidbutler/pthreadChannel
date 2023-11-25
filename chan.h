@@ -25,32 +25,32 @@
  * Channel Store
  */
 
-/* channel store operation */
+/* Channel Store operation */
 typedef enum chanSo {
   chanSoGet
  ,chanSoPut
 } chanSo_t;
 
-/* channel store wait */
+/* Channel Store wait */
 typedef enum chanSw { /* bit map */
   chanSwNoGet = 1 /* no waiting Gets */
  ,chanSwNoPut = 2 /* no waiting Puts */
 } chanSw_t;
 
-/* channel store state */
+/* Channel Store state */
 typedef enum chanSs { /* bit map */
-  chanSsCanPut = 1 /* has room */
- ,chanSsCanGet = 2 /* has content */
+  chanSsCanPut = 1 /* not full */
+ ,chanSsCanGet = 2 /* not empty */
 } chanSs_t;
 
-/* channel store implementation
+/* Channel Store implementation
  *
- * A channel store takes a pointer to a context,
- *  the operation the channel wants to perform on the store
+ * A Channel Store takes a pointer to a context,
+ *  the operation the Channel wants to perform on the Store
  *  indication of waiting Gets and Puts
  *  and a value pointer
- * Return the state of the store as it relates to Get and Put.
- * The store is called under protection of a channel operation mutex.
+ * Return the state of the Store as it relates to Get and Put.
+ * The Store is called under protection of a Channel operation mutex.
  */
 typedef chanSs_t
 (*chanSi_t)(
@@ -60,7 +60,7 @@ typedef chanSs_t
  ,void **val
 );
 
-/* channel store context done, called during last (deallocating) chanClose */
+/* Channel Store context done, called during last (deallocating) chanClose */
 typedef void
 (*chanSd_t)(
   void *cntx
@@ -84,19 +84,19 @@ chanInit(
 typedef struct chan chan_t;
 
 /*
- * A store can be provided at channel allocation.
- *  If none is provided, a channel stores a single item.
+ * A Store can be provided at Channel allocation.
+ *  If none is provided, a Channel stores a single item.
  *  This works best (providing low latency) when threads work more and talk less.
  *
- * When allocating the channel, supply:
- *  a store implementation function (0 if none)
- *  a store context (0 if none)
- *  a store done function (0 if none)
+ * When allocating the Channel, supply:
+ *  a Store implementation function (0 if none)
+ *  a Store context (0 if none)
+ *  a Store done function (0 if none)
  *   when the impl function is 0 the done function
- *   is called, if needed, with the single item
+ *   is called, if needed, with the Channel's single item
  *
  * Return 0 on error (memory allocation)
- * Returned channel is Open.
+ * Returned Channel is Open.
  */
 chan_t *
 chanCreate(
@@ -105,7 +105,7 @@ chanCreate(
  ,chanSd_t done
 );
 
-/* Channel (re)Open, to keep a channel from being deallocated till chanClose */
+/* Channel (re)Open, to keep a Channel from being deallocated till chanClose */
 /* Calling with 0 is a harmless no-op */
 /* Return chn as a convience to allow: chanDup = chanOpen(chan) */
 chan_t *
@@ -121,22 +121,28 @@ chanShut(
   chan_t *chn
 );
 
-/* channel close, on last close, deallocate */
+/* Channel close, on last close, deallocate */
 /* calling with 0 is a harmless no-op */
 void
 chanClose(
   chan_t *chn
 );
 
-/* channel operation */
+/* Channel number of chanOpen not yet chanClose (chanClose at zero deallocates) */
+unsigned int
+chanOpenCnt(
+  chan_t *chn
+);
+
+/* Channel operation */
 typedef enum chanOp {
   chanOpNop = 0 /* no operation, skip */
  ,chanOpSht     /* monitor for Shutdown */
- ,chanOpGet     /* Get or monitor for demand (queued Puts on full store) */
- ,chanOpPut     /* Put or monitor for demand (queued Gets on empty store) */
+ ,chanOpGet     /* Get or Get demand (queued Puts on full store) */
+ ,chanOpPut     /* Put or Put demand (queued Gets on empty store) */
 } chanOp_t;
 
-/* channel operation status */
+/* Channel operation status */
 typedef enum chanOs {
   chanOsNop = 0 /* None of the below */
  ,chanOsSht     /* Shutdown */
@@ -160,7 +166,7 @@ chanOp(
  ,chanOp_t op
 );
 
-/* channel array */
+/* Channel array */
 typedef struct chanArr {
   chan_t *c;  /* channel to operate on, 0 == chanOpNop */
   void **v;   /* where to get/put or 0 for monitor */
