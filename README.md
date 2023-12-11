@@ -65,9 +65,9 @@ Find the API in chan.h:
 * chanOp(...)
   * perform an operation on a Channel
 * chanOne(...)
-  * Perform one operation (the first available) on an array of Channels.
+  * Perform one operation (the first available in array order) on an array of Channels.
 * chanAll(...)
-  * Perform all operations on an array of Channels. (See [atomic broadcast](https://en.wikipedia.org/wiki/Atomic_broadcast).)
+  * Perform all (or no) operations on an array of Channels. (See [atomic broadcast](https://en.wikipedia.org/wiki/Atomic_broadcast).)
 
 ### Store
 
@@ -104,8 +104,6 @@ To balance latency and efficiency size is adjusted by:
 
 A maximum sized Channel LIFO Store implementation is provided.
 When a context is created, a size is allocated.
-
-TODO: Priority Store
 
 Find the API in chanStr.h:
 
@@ -181,7 +179,7 @@ Find the API in chanBlb.h:
     * pthread_condattr_init()
     * pthread_condattr_setclock()
     * pthread_condattr_destroy()
-    * pthread_yield() - MacOS pthread_yield_np()
+    * pthread_yield()
 * chanStr.c:
   * chan.h
   * chanStr.h
@@ -193,13 +191,6 @@ Find the API in chanBlb.h:
     * pthread_detach()
     * pthread_cleanup_push()
     * pthread_cleanup_pop()
-
-### Serialize
-
-TODO: create examples
-
-* [XML parser](https://github.com/gdavidbutler/xmlTrivialCallbackParser) and [XML dom](https://github.com/gdavidbutler/xmlTrivialDom)
-* [JSON parser](https://github.com/gdavidbutler/jsonTrivialCallbackParser) and [JSON dom](https://github.com/gdavidbutler/jsonTrivialDom)
 
 ### Example
 
