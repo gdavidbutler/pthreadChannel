@@ -79,6 +79,7 @@ cls(
 
 int
 main(
+  void
 ){
   chanBlb_t *m;
   chan_t *c[2];
