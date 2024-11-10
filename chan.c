@@ -48,8 +48,6 @@ typedef struct {
   pthread_cond_t r;
 } cpr_t;
 
-static pthread_key_t Cpr;
-
 static void
 dCpr(
   cpr_t *p
@@ -71,9 +69,11 @@ cdCpr(
   void *v
 ){
   pthread_mutex_lock(&((cpr_t *)v)->m);
-  ((cpr_t *)v)->e = ((cpr_t *)v)->w = 0;
+  ((cpr_t *)v)->e = 0;
   dCpr((cpr_t *)v);
 }
+
+static pthread_key_t Cpr;
 
 static void
 cCpr(
@@ -165,7 +165,7 @@ static const unsigned int chanPe = 0x02; /* is empty to differentiate h==t */
 static const unsigned int chanEe = 0x04; /* is empty to differentiate h==t */
 static const unsigned int chanUe = 0x08; /* is empty to differentiate h==t */
 static const unsigned int chanHe = 0x10; /* is empty to differentiate h==t */
-static const unsigned int chanSu = 0x20; /* is shutdown */
+static const unsigned int chanSu = 0x80; /* is shutdown */
 
 /* find "me" in a queue else make room if needed and ... */
 #define FIND_ELSE(F,V,G) do {\
@@ -320,10 +320,15 @@ chanClose(
     pthread_mutex_unlock(&c->m);
     return;
   }
-  ChanF(c->p);
+  while (!(c->l & chanGe) || !(c->l & chanPe) || !(c->l & chanEe) || !(c->l & chanUe) || !(c->l & chanHe)) {
+    pthread_mutex_unlock(&c->m);
+    sched_yield();
+    pthread_mutex_lock(&c->m);
+  }
   ChanF(c->g);
-  ChanF(c->u);
+  ChanF(c->p);
   ChanF(c->e);
+  ChanF(c->u);
   ChanF(c->h);
   if (c->d && (c->s || c->t & chanSsCanGet))
     c->d(c->v, c->t);
