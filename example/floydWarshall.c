@@ -1,6 +1,6 @@
 /*
  * pthreadChannel - an implementation of channels for pthreads
- * Copyright (C) 2016-2023 G. David Butler <gdb@dbSystems.com>
+ * Copyright (C) 2016-2024 G. David Butler <gdb@dbSystems.com>
  *
  * This file is part of pthreadChannel
  *
@@ -432,7 +432,7 @@ fwProcess(
     p = c;
   c = v->b * (c / p);
   if (p > 1) {
-    if (!(fwt.snk = chanCreate(0,0,0)) || !(fwt.src = chanCreate(0,0,0))) {
+    if (!(fwt.snk = chanCreate(0, 0, 0, 0)) || !(fwt.src = chanCreate(0, 0, 0, 0))) {
       chanClose(fwt.snk);
       return (r);
     }

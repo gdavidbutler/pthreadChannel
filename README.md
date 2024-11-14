@@ -7,9 +7,9 @@ Yet another implementation of a "Channel" construct for POSIX threads (pthreads)
 This library provides a [Channel](https://en.wikipedia.org/wiki/Channel_(programming)) style programming environment in C.
 A Channel is an anonymous, pthread coordinating, [Store](#Store) of pointer (void *) sized items.
 
-* Channels, by default, can store a single item. (For more, see [Store](#Store).)
 * Channels facilitate pthread based [SMP](https://en.wikipedia.org/wiki/Symmetric_multiprocessing).
 (For [messaging passing](https://en.wikipedia.org/wiki/Message_passing) see [Blob](#Blob).)
+* Channels, by default, can store a single item. (For more, see [Store](#Store).)
 * Any number of pthreads can Put/Get on a Channel.
   * Testing for Channel demand is supported.
 (See [squint](#Examples) for an example of [lazy evaluation](https://en.wikipedia.org/wiki/Lazy_evaluation).)
@@ -96,8 +96,18 @@ NOTE: These implementations preallocate heap with a maximum size to provide "bac
 
 A maximum sized Channel FIFO Store implementation is provided.
 When a context is created, a size is allocated.
+(See [pipeproxy](#Examples) for an example.)
 
-A maximum sized, latency sensitive, Channel FIFO Store implementation is provided.
+Find the API in chanStrFIFO.h:
+
+* chanStrFIFOa
+  * Allocate a chanStrFIFOc_t of size using supplied realloc, free and item dequeue routines
+* chanStrFIFOd
+  * Implement a chanSd_t to deallocate a chanStrFIFOc_t
+* chanStrFIFOi
+  * Implement chanSi_t that starts in chanCreate() chanSsCanPut state
+
+A maximum sized, latency sensitive, Channel FIFO Store (FLSO) implementation is provided.
 When a context is created, a maximum is allocated and starts at initial.
 To balance latency and efficiency size is adjusted by:
 * Before a Put, if the Store is empty and there are no waiting Gets, the size is decremented.
@@ -105,29 +115,34 @@ To balance latency and efficiency size is adjusted by:
 * After a Get, if the Store is empty and there are no waiting Puts, the size is decremented.
 * Before a Get, if the Store is full and there are waiting Puts, the size is incremented.
 
+Find the API in chanStrFLSO.h:
+
+* chanStrFLSOa
+  * Allocate a chanStrFLSOc_t of max and initial size using supplied realloc, free and item dequeue routines
+* chanStrFLSOd
+  * Implement a chanSd_t to deallocate a chanStrFLSOc_t
+* chanStrFLSOi
+  * Implement chanSi_t that starts in chanCreate() chanSsCanPut state
+
 A maximum sized Channel LIFO Store implementation is provided.
 When a context is created, a size is allocated.
 
-Find the API in chanStr.h:
+Find the API in chanStrLIFO.h:
 
-* allocate a Store context
-  * chanFifoSa FIFO
-  * chanFlsoSa FI-latency-sensitive-FO
-  * chanLifoSa LIFO
-* deallocate a Store context
-  * chanFifoSd FIFO
-  * chanFlsoSd FI-latency-sensitive-FO
-  * chanLifoSd LIFO
-* implement a Store (chanSi_t)
-  * chanFifoSi FIFO
-  * chanFlsoSi FI-latency-sensitive-FO
-  * chanLifoSi LIFO
+* chanStrLIFOa
+  * Allocate a chanStrLIFOc_t of size using supplied realloc, free and item dequeue routines
+* chanStrLIFOd
+  * Implement a chanSd_t to deallocate a chanStrLIFOc_t
+* chanStrLIFOi
+  * Implement chanSi_t that starts in chanCreate() chanSsCanPut state
 
 ### Blob
 
 A Blob is a length specified collection of octets used as a discrete unit of communication, i.e. a message.
 
-Blobs are tranported via networking routines.
+Blob Channel Stores can exist independent of Channels, including persistent semantics (See [chanStrSql](#Examples)).
+
+Blobs can be tranported via networking routines.
 [Since a pthread can't both wait in a pthread_cond_wait and a poll/select/etc., a pair of blocking reader and writer pthreads are used.]
 
 When applying the API to socket and pipe like intefaces:
@@ -210,7 +225,9 @@ Connects two chanBlbs back-to-back, with Channels reversed.
     1. ./sockproxy -T 1 -F 2 -S 2222 -t 1 -f 2 -h localhost -s ssh &
     1. ssh -p 2222 user@localhost
 * pipeproxy
-  * Copy stdin to stdout through chanBlb preserving read boundaries using Netstring framing
+  * Copy stdin to stdout through chanBlb preserving read boundaries using a FIFO Store and Netstring framing
+* chanStrSql
+  * Demonstrate a SQLite based Channel Blob FIFO Store
 * squint
   * Implementation of [M. Douglas McIlroy's "Squinting at Power Series"](https://swtch.com/~rsc/thread/squint.pdf).
 * floydWarshall

@@ -1,6 +1,6 @@
 /*
  * pthreadChannel - an implementation of channels for pthreads
- * Copyright (C) 2016-2023 G. David Butler <gdb@dbSystems.com>
+ * Copyright (C) 2016-2024 G. David Butler <gdb@dbSystems.com>
  *
  * This file is part of pthreadChannel
  *
@@ -98,12 +98,12 @@ servT(
     perror("connect");
     goto exit1;
   }
-  if (!(p[0].c = chanCreate(0,0,(chanSd_t)free))) {
+  if (!(p[0].c = chanCreate(0, (chanSd_t)free, 0, 0))) {
     perror("chanCreate");
     goto exit1;
   }
   pthread_cleanup_push((void(*)(void*))chanClose, p[0].c);
-  if (!(p[1].c = chanCreate(0,0,(chanSd_t)free))) {
+  if (!(p[1].c = chanCreate(0, (chanSd_t)free, 0, 0))) {
     perror("chanCreate");
     goto exit2;
   }

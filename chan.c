@@ -1,6 +1,6 @@
 /*
  * pthreadChannel - an implementation of channels for pthreads
- * Copyright (C) 2016-2023 G. David Butler <gdb@dbSystems.com>
+ * Copyright (C) 2016-2024 G. David Butler <gdb@dbSystems.com>
  *
  * This file is part of pthreadChannel
  *
@@ -236,13 +236,14 @@ static const unsigned int chanSu = 0x80; /* is shutdown */
 
 chan_t *
 chanCreate(
-  chanSi_t s
- ,void *v
+  void *v
  ,chanSd_t d
+ ,chanSi_t s
+ ,chanSs_t t
 ){
   chan_t *c;
 
-  if (!ChanA || !ChanF || !(c = ChanA(0, sizeof (*c))))
+  if (!ChanA || !ChanF || (s && !t) || !(c = ChanA(0, sizeof (*c))))
     return (0);
   c->p = c->e = c->u = c->h = 0;
   if (!(c->g = ChanA(0, sizeof (*c->g)))
@@ -259,15 +260,17 @@ chanCreate(
     ChanF(c);
     return (0);
   }
-  c->s = s;
-  c->d = d;
   c->v = v;
+  c->d = d;
+  if ((c->s = s))
+    c->t = t;
+  else
+    c->t = chanSsCanPut;
   c->gs = c->ps = c->es = c->us = c->hs = 1;
   c->gh = c->ph = c->eh = c->uh = c->hh = 0;
   c->gt = c->pt = c->et = c->ut = c->ht = 0;
   c->c = 0;
   c->l = chanGe | chanPe | chanEe | chanUe | chanHe;
-  c->t = chanSsCanPut;
   return (c);
 }
 
@@ -435,6 +438,8 @@ get1:
           WAKE(chanUe, u, 1, break;);
 get2:
         pthread_mutex_unlock(&c->m);
+        if (!c->t)
+          chanShut(c);
         (a + i)->s = chanOsGet;
         return (i + 1);
       } else if (!(c->t & chanSsCanGet) && c->l & chanSu)
@@ -469,6 +474,8 @@ put1:
           WAKE(chanEe, e, 1, break;);
 put2:
         pthread_mutex_unlock(&c->m);
+        if (!c->t)
+          chanShut(c);
         (a + i)->s = chanOsPut;
         return (i + 1);
       }
@@ -1146,6 +1153,8 @@ unlock1:
 get1:
         (a + i)->s = chanOsNop;
       pthread_mutex_unlock(&c->m);
+      if (!c->t)
+        chanShut(c);
       break;
 
     case chanOpPut:
@@ -1169,6 +1178,8 @@ get1:
 put1:
         (a + i)->s = chanOsNop;
       pthread_mutex_unlock(&c->m);
+      if (!c->t)
+        chanShut(c);
       break;
     }
     return (chanAlOp);
@@ -1459,6 +1470,8 @@ unlock2:
           (a + i)->s = chanOsNop;
         }
         pthread_mutex_unlock(&c->m);
+        if (!c->t)
+          chanShut(c);
         break;
 
       case chanOpPut:
@@ -1487,6 +1500,8 @@ unlock2:
           (a + i)->s = chanOsNop;
         }
         pthread_mutex_unlock(&c->m);
+        if (!c->t)
+          chanShut(c);
         break;
       }
       return (chanAlOp);

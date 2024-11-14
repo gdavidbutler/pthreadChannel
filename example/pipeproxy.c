@@ -1,6 +1,6 @@
 /*
  * pthreadChannel - an implementation of channels for pthreads
- * Copyright (C) 2016-2023 G. David Butler <gdb@dbSystems.com>
+ * Copyright (C) 2016-2024 G. David Butler <gdb@dbSystems.com>
  *
  * This file is part of pthreadChannel
  *
@@ -25,6 +25,7 @@
 #include <pthread.h>
 #include "chan.h"
 #include "chanBlb.h"
+#include "chanStrFIFO.h"
 
 static void *
 outT(
@@ -83,26 +84,45 @@ main(
 ){
   chanBlb_t *m;
   chan_t *c[2];
+  void *v;
   int p[2];
   pthread_t t;
   int i;
 
   chanInit(realloc, free);
-  if (!(c[0] = chanCreate(0,0,(chanSd_t)free))
-   || !(c[1] = chanCreate(0,0,(chanSd_t)free))) {
+  if (!(v = chanStrFIFOa(realloc, free, free, 16))
+   || !(c[0] = chanCreate(v, (chanSd_t)chanStrFIFOd, (chanSi_t)chanStrFIFOi, chanSsCanPut))) {
+    if (v)
+      chanStrFIFOd(v, 0);
+    perror("chanCreate");
+    return (1);
+  }
+  if (!(v = chanStrFIFOa(realloc, free, free, 16))
+   || !(c[1] = chanCreate(v, (chanSd_t)chanStrFIFOd, (chanSi_t)chanStrFIFOi, chanSsCanPut))) {
+    if (v)
+      chanStrFIFOd(v, 0);
+    chanClose(c[0]);
     perror("chanCreate");
     return (1);
   }
   if (pipe(p)) {
+    chanClose(c[1]);
+    chanClose(c[0]);
     perror("pipe");
     return (1);
   }
   if (!chanBlb(c[0], (void *)(long)p[0], input, cls, c[1], (void *)(long)p[1], output, cls, 0, 0, 0, chanBlbFrmNs, 0, 0)) {
+    close(p[1]);
+    close(p[0]);
+    chanClose(c[1]);
+    chanClose(c[0]);
     perror("chanPipe");
     return (1);
   }
-  chanOpen(c[0]);
   if (pthread_create(&t, 0, outT, c[0])) {
+    chanShut(c[1]);
+    chanClose(c[1]);
+    chanOp(0, c[0], 0, chanOpSht);
     chanClose(c[0]);
     perror("pthread_create");
     return (1);
@@ -119,7 +139,9 @@ main(
       return (1);
     }
   }
+  free(m);
   chanShut(c[1]);
+  chanClose(c[1]);
   pthread_join(t, 0);
   return (0);
 }

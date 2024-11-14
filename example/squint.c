@@ -1,6 +1,6 @@
 /*
  * pthreadChannel - an implementation of channels for pthreads
- * Copyright (C) 2016-2023 G. David Butler <gdb@dbSystems.com>
+ * Copyright (C) 2016-2024 G. David Butler <gdb@dbSystems.com>
  *
  * This file is part of pthreadChannel
  *
@@ -657,7 +657,7 @@ void *v
   ga1[F].c = V->f;
   ga1[G].c = V->g;
   for (i = 0; i < chCnt; ++i) {
-    if (!ga1[i].c && !(ga1[i].c = chanCreate(0, 0, (chanSd_t)free))) {
+    if (!ga1[i].c && !(ga1[i].c = chanCreate(0, (chanSd_t)free, 0, 0))) {
       fprintf(stderr, "mulS_ OoR\n");
       goto exit;
     }
@@ -965,7 +965,7 @@ void *v
   ga1[F].c = V->f;
   ga1[G].c = V->g;
   for (i = 0; i < chCnt; ++i) {
-    if (!ga1[i].c && !(ga1[i].c = chanCreate(0, 0, (chanSd_t)free))) {
+    if (!ga1[i].c && !(ga1[i].c = chanCreate(0, (chanSd_t)free, 0, 0))) {
       fprintf(stderr, "sbtS_ OoR\n");
       goto exit;
     }
@@ -1075,7 +1075,7 @@ void *v
   ga1[F].c = V->f;
   ga1[X0].c = V->e;
   for (i = 0; i < chCnt; ++i) {
-    if (!ga1[i].c && !(ga1[i].c = chanCreate(0, 0, (chanSd_t)free))) {
+    if (!ga1[i].c && !(ga1[i].c = chanCreate(0, (chanSd_t)free, 0, 0))) {
       fprintf(stderr, "expS_ OoR\n");
       goto exit;
     }
@@ -1166,7 +1166,7 @@ void *v
   ga1[R].c = V->r;
   ga1[F].c = V->f;
   for (i = 0; i < chCnt; ++i) {
-    if (!ga1[i].c && !(ga1[i].c = chanCreate(0, 0, (chanSd_t)free))) {
+    if (!ga1[i].c && !(ga1[i].c = chanCreate(0, (chanSd_t)free, 0, 0))) {
       fprintf(stderr, "rcpS_ OoR\n");
       goto exit;
     }
@@ -1276,7 +1276,7 @@ void *v
   ga1[R0].c = V->r;
   ga1[F].c = V->f;
   for (i = 0; i < chCnt; ++i) {
-    if (!ga1[i].c && !(ga1[i].c = chanCreate(0, 0, (chanSd_t)free))) {
+    if (!ga1[i].c && !(ga1[i].c = chanCreate(0, (chanSd_t)free, 0, 0))) {
       fprintf(stderr, "revS_ OoR\n");
       goto exit;
     }
@@ -1504,7 +1504,7 @@ main(
   chanInit(realloc, free);
 
   setR(&r1, 1, 1);
-  if (!(c1 = chanCreate(0, 0, (chanSd_t)free))
+  if (!(c1 = chanCreate(0, (chanSd_t)free, 0, 0))
    || conS(c1, &r1))
     goto exit;
   printf("conS:"),fflush(stdout);
@@ -1513,9 +1513,9 @@ main(
 
   setR(&r1, 1, 1);
   setR(&r2, -1, 1);
-  if (!(c1 = chanCreate(0, 0, (chanSd_t)free))
+  if (!(c1 = chanCreate(0, (chanSd_t)free, 0, 0))
    || conS(c1, &r1)
-   || !(c2 = chanCreate(0, 0, (chanSd_t)free))
+   || !(c2 = chanCreate(0, (chanSd_t)free, 0, 0))
    || multS(c2, c1, &r2))
     goto exit;
   printf("multS:"),fflush(stdout);
@@ -1524,11 +1524,11 @@ main(
   chanClose(c2);
 
   setR(&r1, 1, 1);
-  if (!(c1 = chanCreate(0, 0, (chanSd_t)free))
+  if (!(c1 = chanCreate(0, (chanSd_t)free, 0, 0))
    || conS(c1, &r1)
-   || !(c2 = chanCreate(0, 0, (chanSd_t)free))
+   || !(c2 = chanCreate(0, (chanSd_t)free, 0, 0))
    || conS(c2, &r1)
-   || !(c3 = chanCreate(0, 0, (chanSd_t)free))
+   || !(c3 = chanCreate(0, (chanSd_t)free, 0, 0))
    || addS(c3, c1, c2))
     goto exit;
   printf("addS:"),fflush(stdout);
@@ -1538,9 +1538,9 @@ main(
   chanClose(c3);
 
   setR(&r1, 1, 1);
-  if (!(c1 = chanCreate(0, 0, (chanSd_t)free))
+  if (!(c1 = chanCreate(0, (chanSd_t)free, 0, 0))
    || conS(c1, &r1)
-   || !(c2 = chanCreate(0, 0, (chanSd_t)free))
+   || !(c2 = chanCreate(0, (chanSd_t)free, 0, 0))
    || xnS(c2, c1, 1))
     goto exit;
   printf("xnS:"),fflush(stdout);
@@ -1549,11 +1549,11 @@ main(
   chanClose(c2);
 
   setR(&r1, 1, 1);
-  if (!(c1 = chanCreate(0, 0, (chanSd_t)free))
+  if (!(c1 = chanCreate(0, (chanSd_t)free, 0, 0))
    || conS(c1, &r1)
-   || !(c2 = chanCreate(0, 0, (chanSd_t)free))
+   || !(c2 = chanCreate(0, (chanSd_t)free, 0, 0))
    || conS(c2, &r1)
-   || !(c3 = chanCreate(0, 0, (chanSd_t)free))
+   || !(c3 = chanCreate(0, (chanSd_t)free, 0, 0))
    || mulS(c3, c1, c2))
     goto exit;
   printf("mulS:"),fflush(stdout);
@@ -1563,9 +1563,9 @@ main(
   chanClose(c3);
 
   setR(&r1, 1, 1);
-  if (!(c1 = chanCreate(0, 0, (chanSd_t)free))
+  if (!(c1 = chanCreate(0, (chanSd_t)free, 0, 0))
    || conS(c1, &r1)
-   || !(c2 = chanCreate(0, 0, (chanSd_t)free))
+   || !(c2 = chanCreate(0, (chanSd_t)free, 0, 0))
    || dffS(c2, c1))
     goto exit;
   printf("dffS:"),fflush(stdout);
@@ -1575,9 +1575,9 @@ main(
 
   setR(&r1, 1, 1);
   setR(&r2, 0, 1);
-  if (!(c1 = chanCreate(0, 0, (chanSd_t)free))
+  if (!(c1 = chanCreate(0, (chanSd_t)free, 0, 0))
    || conS(c1, &r1)
-   || !(c2 = chanCreate(0, 0, (chanSd_t)free))
+   || !(c2 = chanCreate(0, (chanSd_t)free, 0, 0))
    || ntgS(c2, c1, &r2))
     goto exit;
   printf("ntgS:"),fflush(stdout);
@@ -1586,11 +1586,11 @@ main(
   chanClose(c2);
 
   setR(&r1, 1, 1);
-  if (!(c1 = chanCreate(0, 0, (chanSd_t)free))
+  if (!(c1 = chanCreate(0, (chanSd_t)free, 0, 0))
    || conS(c1, &r1)
-   || !(c2 = chanCreate(0, 0, (chanSd_t)free))
+   || !(c2 = chanCreate(0, (chanSd_t)free, 0, 0))
    || conS(c2, &r1)
-   || !(c3 = chanCreate(0, 0, (chanSd_t)free))
+   || !(c3 = chanCreate(0, (chanSd_t)free, 0, 0))
    || sbtS(c3, c1, c2))
     goto exit;
   printf("sbtS:"),fflush(stdout);
@@ -1600,9 +1600,9 @@ main(
   chanClose(c3);
 
   setR(&r1, 1, 1);
-  if (!(c1 = chanCreate(0, 0, (chanSd_t)free))
+  if (!(c1 = chanCreate(0, (chanSd_t)free, 0, 0))
    || conS(c1, &r1)
-   || !(c2 = chanCreate(0, 0, (chanSd_t)free))
+   || !(c2 = chanCreate(0, (chanSd_t)free, 0, 0))
    || expS(c2, c1))
     goto exit;
   printf("expS:"),fflush(stdout);
@@ -1611,9 +1611,9 @@ main(
   chanClose(c2);
 
   setR(&r1, 1, 1);
-  if (!(c1 = chanCreate(0, 0, (chanSd_t)free))
+  if (!(c1 = chanCreate(0, (chanSd_t)free, 0, 0))
    || conS(c1, &r1)
-   || !(c2 = chanCreate(0, 0, (chanSd_t)free))
+   || !(c2 = chanCreate(0, (chanSd_t)free, 0, 0))
    || rcpS(c2, c1))
     goto exit;
   printf("rcpS:"),fflush(stdout);
@@ -1622,9 +1622,9 @@ main(
   chanClose(c2);
 
   setR(&r1, 1, 1);
-  if (!(c1 = chanCreate(0, 0, (chanSd_t)free))
+  if (!(c1 = chanCreate(0, (chanSd_t)free, 0, 0))
    || conS(c1, &r1)
-   || !(c2 = chanCreate(0, 0, (chanSd_t)free))
+   || !(c2 = chanCreate(0, (chanSd_t)free, 0, 0))
    || revS(c2, c1))
     goto exit;
   printf("revS:"),fflush(stdout);
@@ -1634,9 +1634,9 @@ main(
 
   setR(&r1, 1, 1);
   setR(&r2, -1, 1);
-  if (!(c1 = chanCreate(0, 0, (chanSd_t)free))
+  if (!(c1 = chanCreate(0, (chanSd_t)free, 0, 0))
    || conS(c1, &r1)
-   || !(c2 = chanCreate(0, 0, (chanSd_t)free))
+   || !(c2 = chanCreate(0, (chanSd_t)free, 0, 0))
    || msbtS(c2, c1, &r2, 2))
     goto exit;
   printf("msbtS:"),fflush(stdout);
@@ -1647,11 +1647,11 @@ main(
   setR(&r1, 1, 1);
   setR(&r2, -1, 1);
   setR(&r3, 0, 1);
-  if (!(c1 = chanCreate(0, 0, (chanSd_t)free))
+  if (!(c1 = chanCreate(0, (chanSd_t)free, 0, 0))
    || conS(c1, &r1)
-   || !(c2 = chanCreate(0, 0, (chanSd_t)free))
+   || !(c2 = chanCreate(0, (chanSd_t)free, 0, 0))
    || msbtS(c2, c1, &r2, 2)
-   || !(c3 = chanCreate(0, 0, (chanSd_t)free))
+   || !(c3 = chanCreate(0, (chanSd_t)free, 0, 0))
    || ntgS(c3, c2, &r3))
     goto exit;
   printf("ntg-msbt:"),fflush(stdout);
@@ -1663,13 +1663,13 @@ main(
   setR(&r1, 1, 1);
   setR(&r2, -1, 1);
   setR(&r3, 0, 1);
-  if (!(c1 = chanCreate(0, 0, (chanSd_t)free))
+  if (!(c1 = chanCreate(0, (chanSd_t)free, 0, 0))
    || conS(c1, &r1)
-   || !(c2 = chanCreate(0, 0, (chanSd_t)free))
+   || !(c2 = chanCreate(0, (chanSd_t)free, 0, 0))
    || msbtS(c2, c1, &r2, 2)
-   || !(c3 = chanCreate(0, 0, (chanSd_t)free))
+   || !(c3 = chanCreate(0, (chanSd_t)free, 0, 0))
    || ntgS(c3, c2, &r3)
-   || !(c4 = chanCreate(0, 0, (chanSd_t)free))
+   || !(c4 = chanCreate(0, (chanSd_t)free, 0, 0))
    || revS(c4, c3))
     goto exit;
   printf("tanS:"),fflush(stdout);
