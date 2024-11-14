@@ -86,6 +86,7 @@ sqlSd(
   sqlite3_finalize(c->delB);
   sqlite3_finalize(c->updH);
   sqlite3_finalize(c->rstH);
+  sqlite3_exec(c->d, "PRAGMA journal_mode=DELETE;", 0, 0, 0);
   sqlite3_close(c->d);
   sqlite3_free(c);
   return;
@@ -168,9 +169,9 @@ sqlSa(
   if (!(*c = sqlite3_malloc(sizeof (**c))))
     return (0);
   memset(*c, 0, sizeof (**c));
-  if (sqlite3_open_v2(p, &(*c)->d, SQLITE_OPEN_READWRITE, "unix-excl")) {
+  if (sqlite3_open_v2(p, &(*c)->d, SQLITE_OPEN_READWRITE, 0)) {
     sqlite3_close((*c)->d);
-    if (sqlite3_open_v2(p, &(*c)->d, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, "unix-excl"))
+    if (sqlite3_open_v2(p, &(*c)->d, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, 0))
       return (0);
     if (sqlite3_exec((*c)->d
      ,"BEGIN;"
@@ -197,8 +198,9 @@ sqlSa(
     sqlite3_finalize(s);
   }
   if (sqlite3_exec((*c)->d
-   ,"PRAGMA journal_mode=TRUNCATE;"
-    "PRAGMA synchronous=NORMAL;"
+   ,"PRAGMA locking_mode=EXCLUSIVE;"
+    "PRAGMA journal_mode=PERSIST;"
+    "PRAGMA synchronous=NORMAL;" /* no directory changes with PERSIST */
    ,0, 0, 0))
     goto err;
   if (sqlite3_prepare_v3((*c)->d
@@ -214,13 +216,13 @@ sqlSa(
    ,"INSERT INTO \"B\" VALUES((SELECT \"t\" FROM \"H\" WHERE \"i\"=1),?1)"
    ,-1, SQLITE_PREPARE_PERSISTENT, &(*c)->insB, 0)
    || sqlite3_prepare_v3((*c)->d
-   ,"UPDATE \"H\" SET \"t\"=CASE WHEN \"l\" AND \"t\"=\"l\" THEN 1 ELSE \"t\"+1 END WHERE \"i\"=1 RETURNING \"t\"=\"h\""
+   ,"UPDATE \"H\" SET \"t\"=CASE WHEN \"t\"=\"l\" THEN 1 ELSE \"t\"+1 END WHERE \"i\"=1 RETURNING \"t\"=\"h\""
    ,-1, SQLITE_PREPARE_PERSISTENT, &(*c)->updT, 0)
    || sqlite3_prepare_v3((*c)->d
    ,"DELETE FROM \"B\" WHERE \"i\"=(SELECT \"h\" FROM \"H\" WHERE \"i\"=1) RETURNING \"b\""
    ,-1, SQLITE_PREPARE_PERSISTENT, &(*c)->delB, 0)
    || sqlite3_prepare_v3((*c)->d
-   ,"UPDATE \"H\" SET \"h\"=CASE WHEN \"l\" AND \"h\"=\"l\" THEN 1 ELSE \"h\"+1 END WHERE \"i\"=1 RETURNING \"h\"=\"t\""
+   ,"UPDATE \"H\" SET \"h\"=CASE WHEN \"h\"=\"l\" THEN 1 ELSE \"h\"+1 END WHERE \"i\"=1 RETURNING \"h\"=\"t\""
    ,-1, SQLITE_PREPARE_PERSISTENT, &(*c)->updH, 0)
    || sqlite3_prepare_v3((*c)->d
    ,"UPDATE \"H\" SET \"h\"=1, \"t\"=1 WHERE \"i\"=1"
