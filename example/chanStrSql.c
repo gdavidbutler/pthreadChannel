@@ -154,15 +154,22 @@ static chanSs_t
 sqlSa(
   struct sqlSc **c
  ,const char *p
- ,int z
+ ,sqlite3_int64 z
 ){
   sqlite3_stmt *s;
   int i;
 
+  if (!c)
+    return (0);
+  if (!p || !z) {
+    *c = 0;
+    return (0);
+  }
   if (!(*c = sqlite3_malloc(sizeof (**c))))
     return (0);
   memset(*c, 0, sizeof (**c));
   if (sqlite3_open_v2(p, &(*c)->d, SQLITE_OPEN_READWRITE, "unix-excl")) {
+    sqlite3_close((*c)->d);
     if (sqlite3_open_v2(p, &(*c)->d, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, "unix-excl"))
       return (0);
     if (sqlite3_exec((*c)->d
@@ -184,7 +191,7 @@ sqlSa(
      ,"INSERT INTO \"H\" VALUES (1,?1,1,1);"
      ,-1, &s, 0))
       goto err;
-    sqlite3_bind_int(s, 1, z); /* biggest signed 64bit = 9223372036854775807 */
+    sqlite3_bind_int64(s, 1, z); /* largest signed 64bit = 9223372036854775807 */
     if (sqlite3_step(s) != SQLITE_DONE)
       goto err;
     sqlite3_finalize(s);
@@ -290,17 +297,18 @@ main(
   chan_t *c;
   pthread_t in;
   pthread_t out;
+  sqlite3_int64 sz;
   int i;
 
   if (argc < 4
    || (*argv[1] != 'g' && *argv[1] != 'p' && *argv[1] != 'b')
    || !*argv[2]
-   || (i = atoi(argv[3])) <= 0) {
+   || (sz = atoll(argv[3])) <= 0) {
     fprintf(stderr, "Usage: %s g|p|b file messages\n", argv[0]);
     return (1);
   }
   sqlite3_initialize();
-  if (!(i = sqlSa(&sqlSc, argv[2], i))) {
+  if (!(i = sqlSa(&sqlSc, argv[2], sz))) {
     perror("sqlSa");
     return (1);
   }

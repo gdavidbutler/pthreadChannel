@@ -84,21 +84,21 @@ main(
 ){
   chanBlb_t *m;
   chan_t *c[2];
-  void *v;
+  chanStrFIFOc_t *v;
   int p[2];
   pthread_t t;
   int i;
 
   chanInit(realloc, free);
-  if (!(v = chanStrFIFOa(realloc, free, free, 16))
-   || !(c[0] = chanCreate(v, (chanSd_t)chanStrFIFOd, (chanSi_t)chanStrFIFOi, chanSsCanPut))) {
+  if (!(i = chanStrFIFOa(&v, realloc, free, free, 16))
+   || !(c[0] = chanCreate(v, (chanSd_t)chanStrFIFOd, (chanSi_t)chanStrFIFOi, i))) {
     if (v)
       chanStrFIFOd(v, 0);
     perror("chanCreate");
     return (1);
   }
-  if (!(v = chanStrFIFOa(realloc, free, free, 16))
-   || !(c[1] = chanCreate(v, (chanSd_t)chanStrFIFOd, (chanSi_t)chanStrFIFOi, chanSsCanPut))) {
+  if (!(i = chanStrFIFOa(&v, realloc, free, free, 16))
+   || !(c[1] = chanCreate(v, (chanSd_t)chanStrFIFOd, (chanSi_t)chanStrFIFOi, i))) {
     if (v)
       chanStrFIFOd(v, 0);
     chanClose(c[0]);

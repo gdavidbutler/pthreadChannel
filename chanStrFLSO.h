@@ -24,10 +24,10 @@
 /* chan store context */
 typedef struct chanStrFLSOc chanStrFLSOc_t;
 
-/* store must be started in chanSsCanPut status */
-chanStrFLSOc_t *
+chanSs_t
 chanStrFLSOa(
-  void *(*realloc)(void *, unsigned long)
+  chanStrFLSOc_t **context
+ ,void *(*realloc)(void *, unsigned long)
  ,void (*free)(void *)
  ,void (*dequeue)(void *)
  ,unsigned int max

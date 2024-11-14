@@ -30,27 +30,31 @@ struct chanStrFIFOc {
   unsigned int t;    /* store tail */
 };
 
-chanStrFIFOc_t *
+chanSs_t
 chanStrFIFOa(
-  void *(*a)(void *, unsigned long)
+  chanStrFIFOc_t **c
+ ,void *(*a)(void *, unsigned long)
  ,void (*f)(void *)
  ,void (*d)(void *)
  ,unsigned int s
 ){
-  chanStrFIFOc_t *c;
-
-  if (!a || !f || !s)
+  if (!c)
     return (0);
-  if (!(c = a(0, sizeof (*c)))
-   || !(c->q = a(0, s * sizeof (*c->q)))) {
-    f(c);
+  if (!a || !f || !s) {
+    *c = 0;
     return (0);
   }
-  c->f = f;
-  c->d = d;
-  c->s = s;
-  c->h = c->t = 0;
-  return (c);
+  if (!(*c = a(0, sizeof (**c)))
+   || !((*c)->q = a(0, s * sizeof (*(*c)->q)))) {
+    f(*c);
+    *c = 0;
+    return (0);
+  }
+  (*c)->f = f;
+  (*c)->d = d;
+  (*c)->s = s;
+  (*c)->h = (*c)->t = 0;
+  return (chanSsCanPut);
 }
 
 void

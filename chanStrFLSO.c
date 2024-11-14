@@ -31,29 +31,33 @@ struct chanStrFLSOc {
   unsigned int t;    /* store tail */
 };
 
-chanStrFLSOc_t *
+chanSs_t
 chanStrFLSOa(
-  void *(*a)(void *, unsigned long)
+  chanStrFLSOc_t **c
+ ,void *(*a)(void *, unsigned long)
  ,void (*f)(void *)
  ,void (*d)(void *)
  ,unsigned int m
  ,unsigned int s
 ){
-  chanStrFLSOc_t *c;
-
-  if (!a || !f || !s || m < s)
+  if (!c)
     return (0);
-  if (!(c = a(0, sizeof (*c)))
-   || !(c->q = a(0, m * sizeof (*c->q)))) {
-    f(c);
+  if (!a || !f || !s || m < s) {
+    *c = 0;
     return (0);
   }
-  c->f = f;
-  c->d = d;
-  c->m = m;
-  c->s = s;
-  c->h = c->t = 0;
-  return (c);
+  if (!(*c = a(0, sizeof (**c)))
+   || !((*c)->q = a(0, m * sizeof (*(*c)->q)))) {
+    f(*c);
+    *c = 0;
+    return (0);
+  }
+  (*c)->f = f;
+  (*c)->d = d;
+  (*c)->m = m;
+  (*c)->s = s;
+  (*c)->h = (*c)->t = 0;
+  return (chanSsCanPut);
 }
 
 void

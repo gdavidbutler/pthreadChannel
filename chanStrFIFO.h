@@ -24,10 +24,10 @@
 /* chan store context */
 typedef struct chanStrFIFOc chanStrFIFOc_t;
 
-/* store must be started in chanSsCanPut status */
-chanStrFIFOc_t *
+chanSs_t
 chanStrFIFOa(
-  void *(*realloc)(void *, unsigned long)
+  chanStrFIFOc_t **context
+ ,void *(*realloc)(void *, unsigned long)
  ,void (*free)(void *)
  ,void (*dequeue)(void *)
  ,unsigned int size
