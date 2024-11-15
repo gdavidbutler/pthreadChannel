@@ -172,35 +172,34 @@ sqlSa(
   if (sqlite3_open_v2(p, &(*c)->d, SQLITE_OPEN_READWRITE, 0)) {
     sqlite3_close((*c)->d);
     if (sqlite3_open_v2(p, &(*c)->d, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, 0))
-      return (0);
-    if (sqlite3_exec((*c)->d
-     ,"BEGIN;"
-      "CREATE TABLE \"H\"("
-      "\"i\" INTEGER PRIMARY KEY"
-      ",\"l\" INTEGER" /* limit */
-      ",\"h\" INTEGER" /* head */
-      ",\"t\" INTEGER" /* tail */
-      ");"
-      "CREATE TABLE \"B\"("
-      "\"i\" INTEGER PRIMARY KEY"
-      ",\"b\" BLOB"
-      ");"
-      "COMMIT;"
-     ,0, 0, 0))
       goto err;
-    if (sqlite3_prepare_v2((*c)->d
-     ,"INSERT INTO \"H\" VALUES (1,?1,1,1);"
-     ,-1, &s, 0))
-      goto err;
-    sqlite3_bind_int64(s, 1, z); /* largest signed 64bit = 9223372036854775807 */
-    if (sqlite3_step(s) != SQLITE_DONE)
-      goto err;
-    sqlite3_finalize(s);
   }
+  if (sqlite3_exec((*c)->d
+   ,"BEGIN;"
+    "CREATE TABLE IF NOT EXISTS \"H\"("
+    "\"i\" INTEGER PRIMARY KEY"
+    ",\"l\" INTEGER" /* limit */
+    ",\"h\" INTEGER" /* head */
+    ",\"t\" INTEGER" /* tail */
+    ");"
+    "CREATE TABLE IF NOT EXISTS \"B\"("
+    "\"i\" INTEGER PRIMARY KEY"
+    ",\"b\" BLOB"
+    ");"
+    "COMMIT;"
+   ,0, 0, 0))
+    goto err;
+  if (sqlite3_prepare_v2((*c)->d
+   ,"INSERT OR IGNORE INTO \"H\" VALUES (1,?1,1,1);"
+   ,-1, &s, 0))
+    goto err;
+  sqlite3_bind_int64(s, 1, z); /* largest signed 64bit = 9223372036854775807 */
+  if (sqlite3_step(s) != SQLITE_DONE)
+    goto err;
+  sqlite3_finalize(s);
   if (sqlite3_exec((*c)->d
    ,"PRAGMA locking_mode=EXCLUSIVE;"
     "PRAGMA journal_mode=PERSIST;"
-    "PRAGMA synchronous=NORMAL;" /* no directory changes with PERSIST */
    ,0, 0, 0))
     goto err;
   if (sqlite3_prepare_v3((*c)->d
