@@ -140,7 +140,7 @@ Find the API in chanStrLIFO.h:
 
 A Blob is a length specified collection of octets used as a discrete unit of communication, i.e. a message.
 
-Blob Channel Stores can exist independent of Channels, including persistent semantics (See [chanStrSql](#Examples)).
+Blob Channel Stores can exist independent of Channels, including persistent semantics (See [chanStrBlbSQL](#Examples)).
 
 Blobs can be tranported via networking routines.
 [Since a pthread can't both wait in a pthread_cond_wait and a poll/select/etc., a pair of blocking reader and writer pthreads are used.]
@@ -226,7 +226,7 @@ Connects two chanBlbs back-to-back, with Channels reversed.
     1. ssh -p 2222 user@localhost
 * pipeproxy
   * Copy stdin to stdout through chanBlb preserving read boundaries using a FIFO Store and Netstring framing
-* chanStrSql
+* chanStrBlbSQL
   * Demonstrate a SQLite based Channel Blob FIFO Store
 * squint
   * Implementation of [M. Douglas McIlroy's "Squinting at Power Series"](https://swtch.com/~rsc/thread/squint.pdf).
