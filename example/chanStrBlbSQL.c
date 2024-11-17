@@ -82,7 +82,7 @@ chanStrBlbSQLa(
    || sqlite3_exec((*c)->d, syn[y], 0, 0, 0))
     goto err;
   if (sqlite3_exec((*c)->d
-   ,"BEGIN;"
+   ,"BEGIN IMMEDIATE;"
     "CREATE TABLE IF NOT EXISTS \"H\"("
     "\"i\" INTEGER PRIMARY KEY"
     ",\"l\" INTEGER" /* limit */
@@ -105,7 +105,7 @@ chanStrBlbSQLa(
     goto err;
   sqlite3_finalize(s);
   if (sqlite3_prepare_v3((*c)->d
-   ,"BEGIN"
+   ,"BEGIN IMMEDIATE"
    ,-1, SQLITE_PREPARE_PERSISTENT, &(*c)->bgn, 0)
    || sqlite3_prepare_v3((*c)->d
    ,"COMMIT"

@@ -20,18 +20,16 @@
 
 /*
  * compile SQLite with something like:
- *  cc -std=c99 -I. -Isqlite-amalgamation-3470000 -Os -g -c -DSQLITE_OMIT_DEPRECATED
- *   -DSQLITE_OMIT_AUTOINIT -DSQLITE_OMIT_AUTORESET -DSQLITE_OMIT_PROGRESS_CALLBACK
- *   -DSQLITE_LIKE_DOESNT_MATCH_BLOBS -DSQLITE_TEMP_STORE=2 -DSQLITE_DEFAULT_MEMSTATUS=0
- *   -DSQLITE_DEFAULT_DEFENSIVE=1 -DSQLITE_DQS=0 -DSQLITE_TRUSTED_SCHEMA=0
- *   -DSQLITE_THREADSAFE=2 sqlite-amalgamation-3470000/sqlite3.c
+ * (SQLITE_THREADSAFE isn't critical because access to the connection is protected by a channel mutex.)
+ *
+ *  cc -std=c99 -I. -Isqlite-amalgamation-3470000 -Os -g -c sqlite-amalgamation-3470000/sqlite3.c
  *
  * complile this program with something like:
  *  cc -std=c99 -I. -Iexample -Isqlite-amalgamation-3470000 -Os -g -c example/chanStrBlbSQL.c
  *  cc -std=c99 -I. -Iexample -Isqlite-amalgamation-3470000 -Os -g -c example/chanStrBlbSQLtest.c
  *
  * then link it all together with the channel objects like:
- *  cc -Os -g -o chanStrBlbSQLtest chanStrBlbSQLtest.o chanStrBlbSQL.o chan.o chanBlb.o sqlite3.o -lpthread
+ *  cc -Os -g -o chanStrBlbSQLtest chanStrBlbSQLtest.o chanStrBlbSQL.o chan.o chanStrFIFO.o chanBlb.o sqlite3.o -lpthread
  *
  * run it like:
  *  (file for SQLite, :memory: is fast but much more expensive than chanStrFIFO)
@@ -49,6 +47,7 @@
  *  cmp README.md README.out
  *
  * or both:
+ *  (for comparison, when the file name is zero length, chanStrFIFO is used)
  *
  *  ./chanStrBlbSQL chanStrBlbSQL.db 2 0 100 b < README.md > README.out
  *   chanStrBlbSQL.db is empty
@@ -63,6 +62,7 @@
 #include "chan.h"
 #include "chanBlb.h"
 #include "sqlite3.h"
+#include "chanStrFIFO.h"
 #include "chanStrBlbSQL.h"
 
 /* input thread for get */
@@ -114,7 +114,7 @@ main(
   int argc
  ,char *argv[]
 ){
-  chanStrBlbSQLc_t *x;
+  void *x;
   chan_t *c;
   pthread_t in;
   pthread_t out;
@@ -123,22 +123,32 @@ main(
   int s;
 
   if (argc < 6
-   || !*argv[1]
    || ((j = atoi(argv[2])) < 0 || j > 3)
    || ((s = atoi(argv[3])) < 0 || s > 2)
    || (z = atoll(argv[4])) <= 0
-   || (*argv[5] != 'g' && *argv[5] != 'p' && *argv[5] != 'b')) {
+   || (*argv[5] != 'g' && *argv[5] != 'p' && *argv[5] != 'b')
+   || (!*argv[1] && *argv[5] != 'b')) {
     fprintf(stderr, "Usage: %s file synchronous messages g|p|b\n", argv[0]);
     return (1);
   }
+  chanInit(realloc, free);
   sqlite3_initialize();
-  if (!(j = chanStrBlbSQLa(&x, argv[1], j, s, z))) {
-    perror("chanStrBlbSQLa");
+  if (*argv[1])
+    j = chanStrBlbSQLa((chanStrBlbSQLc_t **)&x, argv[1], j, s, z);
+  else
+    j = chanStrFIFOa((chanStrFIFOc_t **)&x, realloc, free, free, z);
+  if (!j) {
+    perror("chanStra");
     return (1);
   }
-  chanInit(realloc, free);
-  if (!(c = chanCreate(x, (chanSd_t)chanStrBlbSQLd, (chanSi_t)chanStrBlbSQLi, j))) {
-    chanStrBlbSQLd(x, 0);
+  if (*argv[1]) {
+    if (!(c = chanCreate(x, (chanSd_t)chanStrBlbSQLd, (chanSi_t)chanStrBlbSQLi, j)))
+      chanStrBlbSQLd(x, 0);
+  } else {
+    if (!(c = chanCreate(x, (chanSd_t)chanStrFIFOd, (chanSi_t)chanStrFIFOi, j)))
+      chanStrFIFOd(x, 0);
+  }
+  if (!c) {
     perror("chanCreate");
     return (1);
   }
