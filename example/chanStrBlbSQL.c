@@ -35,7 +35,6 @@ struct chanStrBlbSQLc {
   sqlite3_stmt *updT;
   sqlite3_stmt *delB;
   sqlite3_stmt *updH;
-  sqlite3_stmt *rstH;
 };
 
 chanSs_t
@@ -125,11 +124,8 @@ chanStrBlbSQLa(
    || sqlite3_prepare_v3((*c)->d
    ,"UPDATE \"H\" SET \"h\"=CASE WHEN \"h\"=\"l\" THEN 1 ELSE \"h\"+1 END WHERE \"i\"=1 RETURNING \"h\"=\"t\""
    ,-1, SQLITE_PREPARE_PERSISTENT, &(*c)->updH, 0)
-   || sqlite3_prepare_v3((*c)->d
-   ,"UPDATE \"H\" SET \"h\"=1, \"t\"=1 WHERE \"i\"=1"
-   ,-1, SQLITE_PREPARE_PERSISTENT, &(*c)->rstH, 0)
    || sqlite3_prepare_v2((*c)->d
-   ,"SELECT (SELECT COUNT(*) FROM \"B\")>0, \"h\"=\"t\" FROM \"H\" WHERE \"i\"=1"
+   ,"WITH \"T\"(\"c\")AS(SELECT COUNT(*) FROM \"B\")SELECT \"T\".\"c\">0,\"T\".\"c\"<\"H\".\"l\" FROM \"H\",\"T\" WHERE \"H\".\"i\"=1"
    ,-1, &s, 0)
   )
     goto err;
@@ -138,7 +134,7 @@ chanStrBlbSQLa(
   i = 0;
   if (sqlite3_column_int(s, 0)) /* not empty */
     i |= chanSsCanGet;
-  if (!sqlite3_column_int(s, 0) || !sqlite3_column_int(s, 1)) /* not full */
+  if (sqlite3_column_int(s, 1)) /* not full */
     i |= chanSsCanPut;
   sqlite3_finalize(s);
   return (i);
@@ -162,7 +158,6 @@ chanStrBlbSQLd(
   sqlite3_finalize(c->updT);
   sqlite3_finalize(c->delB);
   sqlite3_finalize(c->updH);
-  sqlite3_finalize(c->rstH);
   sqlite3_exec(c->d, "PRAGMA journal_mode=DELETE;", 0, 0, 0);
   sqlite3_close(c->d);
   sqlite3_free(c);
@@ -210,14 +205,9 @@ chanStrBlbSQLi(
       goto err;
     i = sqlite3_column_int(c->updH, 0);
     sqlite3_reset(c->updH);
-    if (i) {
-      if (sqlite3_step(c->rstH) != SQLITE_DONE)
-        goto err;
-      sqlite3_reset(c->rstH);
-      sqlite3_step(c->cmt), sqlite3_reset(c->cmt);
+    sqlite3_step(c->cmt), sqlite3_reset(c->cmt);
+    if (i)
       return (chanSsCanPut);
-    } else
-      sqlite3_step(c->cmt), sqlite3_reset(c->cmt);
   }
   return (chanSsCanGet | chanSsCanPut);
 err:

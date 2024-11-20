@@ -38,19 +38,19 @@
  *  (SQLite PRAGMA synchronous, 0=OFF, 1=NORMAL, 2=FULL, 3=EXTRA)
  *  (g: get or p: put or b: both get and put)
  *
- *  ./chanStrBlbSQL chanStrBlbSQL.db 2 0 100 p < README.md
- *   chanStrBlbSQL.db is full of README.md blobs
+ *  ./chanStrBlbSQL test.db 2 1 100 p < README.md
+ *   test.db is full of README.md blobs
  *
- *  ./chanStrBlbSQL chanStrBlbSQL.db 2 0 1 g > README.out
- *   chanStrBlbSQL.db is empty
+ *  ./chanStrBlbSQL test.db 2 1 1 g > README.out
+ *   test.db is empty
  *
  *  cmp README.md README.out
  *
  * or both:
  *  (for comparison, when the file name is zero length, chanStrFIFO is used)
  *
- *  ./chanStrBlbSQL chanStrBlbSQL.db 2 0 100 b < README.md > README.out
- *   chanStrBlbSQL.db is empty
+ *  ./chanStrBlbSQL test.db 2 1 100 b < README.md > README.out
+ *   test.db is empty
  *
  *  cmp README.md README.out
  */
@@ -123,12 +123,12 @@ main(
   int s;
 
   if (argc < 6
-   || ((j = atoi(argv[2])) < 0 || j > 3)
-   || ((s = atoi(argv[3])) < 0 || s > 2)
+   || ((j = atoi(argv[2])) < 0 || j > 2)
+   || ((s = atoi(argv[3])) < 0 || s > 3)
    || (z = atoll(argv[4])) <= 0
    || (*argv[5] != 'g' && *argv[5] != 'p' && *argv[5] != 'b')
    || (!*argv[1] && *argv[5] != 'b')) {
-    fprintf(stderr, "Usage: %s file synchronous messages g|p|b\n", argv[0]);
+    fprintf(stderr, "Usage: %s file journal(0:DELETE,1:TRUNCATE,2:PERSIST) synchronous(0:OFF,1:NORMAL,2:FULL,3:EXTRA) messages g|p|b\n", argv[0]);
     return (1);
   }
   chanInit(realloc, free);
@@ -138,7 +138,7 @@ main(
   else
     j = chanStrFIFOa((chanStrFIFOc_t **)&x, realloc, free, free, z);
   if (!j) {
-    perror("chanStra");
+    perror("chanStrBlbSQLa");
     return (1);
   }
   if (*argv[1]) {
