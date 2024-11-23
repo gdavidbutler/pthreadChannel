@@ -92,7 +92,6 @@ chanStrBlbSQLa(
     "\"i\" INTEGER PRIMARY KEY"
     ",\"b\" BLOB"
     ");"
-    "COMMIT;"
    ,0, 0, 0))
     goto err;
   if (sqlite3_prepare_v2((*c)->d
@@ -137,6 +136,7 @@ chanStrBlbSQLa(
   if (sqlite3_column_int(s, 1)) /* not full */
     i |= chanSsCanPut;
   sqlite3_finalize(s);
+  sqlite3_step((*c)->cmt), sqlite3_reset((*c)->cmt);
   return (i);
 err:
 /*fprintf(stderr, "SQLite error %s\n", sqlite3_errmsg((*c)->d));*/
