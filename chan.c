@@ -22,8 +22,8 @@
 #include <sched.h>
 #include "chan.h"
 
-void *(*ChanA)(void *, unsigned long);
-void (*ChanF)(void *);
+static void *(*ChanA)(void *, unsigned long);
+static void (*ChanF)(void *);
 
 void
 chanInit(

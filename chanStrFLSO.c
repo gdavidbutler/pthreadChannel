@@ -46,6 +46,7 @@ chanStrFLSOa(
     *c = 0;
     return (0);
   }
+  f(a(0,1)); /* force exception here and now */
   if (!(*c = a(0, sizeof (**c)))
    || !((*c)->q = a(0, m * sizeof (*(*c)->q)))) {
     f(*c);

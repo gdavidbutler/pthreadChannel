@@ -159,10 +159,10 @@ Several "framing" methods are provided (useful with streaming protocols):
 * chanBlbNs
   * Read and write framed using [Netstring](https://en.wikipedia.org/wiki/Netstring).
 * chanBlbN0
-  * Read and write framed using [NETCONF](https://en.wikipedia.org/wiki/NETCONF)1.0.
+  * Read and write framed using [NETCONF](https://en.wikipedia.org/wiki/NETCONF) 1.0.
 (This flawed, XML specific, framer is only useful for NETCONF before a transition to NETCONF 1.1.)
 * chanBlbN1
-  * Read and write framed using [NETCONF](https://en.wikipedia.org/wiki/NETCONF)1.1.
+  * Read and write framed using [NETCONF](https://en.wikipedia.org/wiki/NETCONF) 1.1.
 * chanBlbH1
   * Read framed using [HTTP/1.x](https://en.wikipedia.org/wiki/Hypertext_Transfer_Protocol) on headers Transfer-Encoding (chunked) and Content-Length.
 Blob flow (repeats):

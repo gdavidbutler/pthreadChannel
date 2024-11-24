@@ -44,6 +44,7 @@ chanStrFIFOa(
     *c = 0;
     return (0);
   }
+  f(a(0,1)); /* force exception here and now */
   if (!(*c = a(0, sizeof (**c)))
    || !((*c)->q = a(0, s * sizeof (*(*c)->q)))) {
     f(*c);

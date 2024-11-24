@@ -45,6 +45,8 @@ typedef enum {
  *
  * Support input/output via ingress and egress channels.
  *
+ * Provide realloc and free routines to use.
+ *
  * Provide an optional ingress chan_t: (if not provided, in parameters are not used)
  *  Otherwise, input() is required, inClose() is optional.
  * Provide an optional egress chan_t: (if not provided, out parameters are not used)
@@ -63,7 +65,9 @@ typedef enum {
  */
 int
 chanBlb(
-  chan_t *ingress
+  void *(*realloc)(void *, unsigned long)
+ ,void (*free)(void *)
+ ,chan_t *ingress
  ,void *in
  ,unsigned int (*input)(void *in, void *buffer, unsigned int size) /* return 0 on failure */
  ,void (*inClose)(void *in)
