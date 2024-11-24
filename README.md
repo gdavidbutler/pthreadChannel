@@ -9,13 +9,13 @@ A Channel is an anonymous, pthread coordinating, [Store](#Store) of pointer (voi
 
 * Channels facilitate pthread based [SMP](https://en.wikipedia.org/wiki/Symmetric_multiprocessing).
 (For [messaging passing](https://en.wikipedia.org/wiki/Message_passing) see [Blob](#Blob).)
-* Channels, by default, can store a single item. (For more, see [Store](#Store).)
+* Channels, by default, can store a single item.
+(For more, see [Store](#Store).)
 * Any number of pthreads can Put/Get on a Channel.
-  * Testing for Channel demand is supported.
-(See [squint](#Examples) for an example of [lazy evaluation](https://en.wikipedia.org/wiki/Lazy_evaluation).)
+  * Awareness of Channel demand is supported.
+(See an example of [lazy evaluation](https://en.wikipedia.org/wiki/Lazy_evaluation) in [squint](#Examples).)
 * A pthread can Put/Get on any number of Channels.
-  * Including either one or all of an array of operations.
-(See [squint](#Examples).)
+  * Including either one, or all ([atomic broadcast](https://en.wikipedia.org/wiki/Atomic_broadcast)), of an array of operations.
 * The canonical Channel use case is a transfer of a pointer to heap.
   * Putting pthread:
     ````C
@@ -70,7 +70,7 @@ Find the API in chan.h:
 * chanOne
   * Perform one operation (the first available, in array order) on an array of Channels.
 * chanAll
-  * Perform all (or no) operations on an array of Channels. (See [atomic broadcast](https://en.wikipedia.org/wiki/Atomic_broadcast).)
+  * Perform all (or no) operations on an array of Channels. (See [squint](#Examples).)
 
 ### Store
 
@@ -92,6 +92,10 @@ But as the processing cost decreases toward a context switch cost, Stores can dr
 Therefore, a Store's size depends on how much latency can be tolerated in the quest for efficiency.
 (See [queueing theory](https://en.wikipedia.org/wiki/Queueing_theory).)
 
+A Store's initial chanSs_t state is determined at allocation and provided to chanCreate.
+Once handed to chanCreate, a Store's chanSs_t state must not change between calls to it's chanSi_t callback.
+(See [chanStrBlbSQL](#Examples)).
+
 NOTE: These implementations preallocate heap with a maximum size to provide "back pressure" propagation semantics.
 
 A maximum sized Channel FIFO Store implementation is provided.
@@ -105,7 +109,7 @@ Find the API in chanStrFIFO.h:
 * chanStrFIFOd
   * Implement a chanSd_t to deallocate a chanStrFIFOc_t
 * chanStrFIFOi
-  * Implement chanSi_t that starts in chanCreate() chanSsCanPut state
+  * Implement chanSi_t for chanCreate()
 
 A maximum sized, latency sensitive, Channel FIFO Store (FLSO) implementation is provided.
 When a context is created, a maximum is allocated and starts at initial.
@@ -122,7 +126,7 @@ Find the API in chanStrFLSO.h:
 * chanStrFLSOd
   * Implement a chanSd_t to deallocate a chanStrFLSOc_t
 * chanStrFLSOi
-  * Implement chanSi_t that starts in chanCreate() chanSsCanPut state
+  * Implement chanSi_t for chanCreate()
 
 A maximum sized Channel LIFO Store implementation is provided.
 When a context is created, a size is allocated.
@@ -134,13 +138,11 @@ Find the API in chanStrLIFO.h:
 * chanStrLIFOd
   * Implement a chanSd_t to deallocate a chanStrLIFOc_t
 * chanStrLIFOi
-  * Implement chanSi_t that starts in chanCreate() chanSsCanPut state
+  * Implement chanSi_t for chanCreate()
 
 ### Blob
 
 A Blob is a length specified collection of octets used as a discrete unit of communication, i.e. a message.
-
-Blob Channel Stores can exist independent of Channels, including persistent semantics (See [chanStrBlbSQL](#Examples)).
 
 Blobs can be tranported via networking routines.
 [Since a pthread can't both wait in a pthread_cond_wait and a poll/select/etc., a pair of blocking reader and writer pthreads are used.]
