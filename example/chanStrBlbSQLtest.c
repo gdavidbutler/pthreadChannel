@@ -20,16 +20,16 @@
 
 /*
  * compile SQLite with something like:
- * (SQLITE_THREADSAFE isn't critical because access to the connection is protected by a channel mutex.)
+ * (SQLITE_THREADSAFE can be anything because access to the connection is protected by a channel mutex.)
  *
- *  cc -std=c99 -I. -Isqlite-amalgamation-3470000 -Os -g -c sqlite-amalgamation-3470000/sqlite3.c
+ *  cc -std=c99 -I. -Isqlite-amalgamation-3470000 -DSQLITE_THREADSAFE=0 -Os -g -c sqlite-amalgamation-3470000/sqlite3.c
  *
- * complile this program with something like:
- *  cc -std=c99 -I. -Iexample -Isqlite-amalgamation-3470000 -Os -g -c example/chanStrBlbSQL.c
- *  cc -std=c99 -I. -Iexample -Isqlite-amalgamation-3470000 -Os -g -c example/chanStrBlbSQLtest.c
+ * complile source with something like:
+ *  cc -std=c99 -I. -Iexample -Isqlite-amalgamation-3470000 -DSQLITE_THREADSAFE=0 -Os -g -c example/chanStrBlbSQL.c
+ *  cc -std=c99 -I. -Iexample -Isqlite-amalgamation-3470000 -DSQLITE_THREADSAFE=0 -Os -g -c example/chanStrBlbSQLtest.c
  *
- * then link it all together with the channel objects like:
- *  cc -Os -g -o chanStrBlbSQLtest chanStrBlbSQLtest.o chanStrBlbSQL.o chan.o chanStrFIFO.o chanBlb.o sqlite3.o -lpthread
+ * then link it all together with channel objects like:
+ *  cc -g -o chanStrBlbSQLtest chanStrBlbSQLtest.o chanStrBlbSQL.o chan.o chanStrFIFO.o chanBlb.o sqlite3.o -lpthread
  *
  * run it like:
  *  (file for SQLite, :memory: is fast but much more expensive than chanStrFIFO)
@@ -38,10 +38,10 @@
  *  (SQLite PRAGMA synchronous, 0=OFF, 1=NORMAL, 2=FULL, 3=EXTRA)
  *  (g: get or p: put or b: both get and put)
  *
- *  ./chanStrBlbSQL test.db 2 1 100 p < README.md
+ *  ./chanStrBlbSQLtest test.db 2 1 100 p < README.md
  *   test.db is full of README.md blobs
  *
- *  ./chanStrBlbSQL test.db 2 1 1 g > README.out
+ *  ./chanStrBlbSQLtest test.db 2 1 1 g > README.out
  *   test.db is empty
  *
  *  cmp README.md README.out
@@ -49,7 +49,7 @@
  * or both:
  *  (for comparison, when the file name is zero length, chanStrFIFO is used)
  *
- *  ./chanStrBlbSQL test.db 2 1 100 b < README.md > README.out
+ *  ./chanStrBlbSQLtest test.db 2 1 100 b < README.md > README.out
  *   test.db is empty
  *
  *  cmp README.md README.out
