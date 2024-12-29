@@ -18,6 +18,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include <stdarg.h>
 #include "chan.h"
 #include "chanStrFLSO.h"
 
@@ -31,56 +32,28 @@ struct chanStrFLSOc {
   unsigned int t;    /* store tail */
 };
 
-chanSs_t
-chanStrFLSOa(
-  chanStrFLSOc_t **c
- ,void *(*a)(void *, unsigned long)
- ,void (*f)(void *)
- ,void (*d)(void *)
- ,unsigned int m
- ,unsigned int s
-){
-  if (!c)
-    return (0);
-  if (!a || !f || !s || m < s) {
-    *c = 0;
-    return (0);
-  }
-  f(a(0,1)); /* force exception here and now */
-  if (!(*c = a(0, sizeof (**c)))
-   || !((*c)->q = a(0, m * sizeof (*(*c)->q)))) {
-    f(*c);
-    *c = 0;
-    return (0);
-  }
-  (*c)->f = f;
-  (*c)->d = d;
-  (*c)->m = m;
-  (*c)->s = s;
-  (*c)->h = (*c)->t = 0;
-  return (chanSsCanPut);
-}
+#define C ((struct chanStrFLSOc *)c)
 
 void
 chanStrFLSOd(
-  chanStrFLSOc_t *c
+  void *c
  ,chanSs_t s
 ){
   if (!c)
     return;
-  if (s & chanSsCanGet && c->d)
+  if (s & chanSsCanGet && C->d)
     do {
-      c->d(c->q[c->h]);
-      if (++c->h == c->s)
-        c->h = 0;
-    } while (c->h != c->t);
-  c->f(c->q);
-  c->f(c);
+      C->d(C->q[C->h]);
+      if (++C->h == C->s)
+        C->h = 0;
+    } while (C->h != C->t);
+  C->f(C->q);
+  C->f(c);
 }
 
 chanSs_t
 chanStrFLSOi(
-  chanStrFLSOc_t *c
+  void *c
  ,chanSo_t o
  ,chanSw_t w
  ,void **v
@@ -90,45 +63,86 @@ chanStrFLSOi(
   if (!c)
     return (0);
   if (o == chanSoPut) {
-    if (c->t == c->h
+    if (C->t == C->h
      && (w & chanSwNoGet)
-     && c->s > 2) {
-      --c->s;
-      c->h = c->t = 0;
+     && C->s > 2) {
+      --C->s;
+      C->h = C->t = 0;
     }
-    c->q[c->t] = *v;
-    if (++c->t == c->s)
-      c->t = 0;
-    if (c->t == c->h) {
+    C->q[C->t] = *v;
+    if (++C->t == C->s)
+      C->t = 0;
+    if (C->t == C->h) {
       if (!(w & chanSwNoGet)
-       && c->s < c->m) {
-        for (i = c->s; i > c->t; --i)
-          c->q[i] = c->q[i - 1];
-        ++c->s;
-        ++c->h;
+       && C->s < C->m) {
+        for (i = C->s; i > C->t; --i)
+          C->q[i] = C->q[i - 1];
+        ++C->s;
+        ++C->h;
       } else
         return (chanSsCanGet);
     }
   } else {
-    if (c->t == c->h
+    if (C->t == C->h
      && !(w & chanSwNoPut)
-     && c->s < c->m) {
-      for (i = c->s; i > c->t; --i)
-        c->q[i] = c->q[i - 1];
-      ++c->s;
-      ++c->h;
+     && C->s < C->m) {
+      for (i = C->s; i > C->t; --i)
+        C->q[i] = C->q[i - 1];
+      ++C->s;
+      ++C->h;
     }
-    *v = c->q[c->h];
-    if (++c->h == c->s)
-      c->h = 0;
-    if (c->h == c->t) {
+    *v = C->q[C->h];
+    if (++C->h == C->s)
+      C->h = 0;
+    if (C->h == C->t) {
       if ((w & chanSwNoPut)
-       && c->s > 2) {
-        --c->s;
-        c->h = c->t = 0;
+       && C->s > 2) {
+        --C->s;
+        C->h = C->t = 0;
       }
       return (chanSsCanPut);
     }
   }
   return (chanSsCanGet | chanSsCanPut);
+}
+
+#undef C
+
+chanSs_t
+chanStrFLSOa(
+  void *(*a)(void *, unsigned long)
+ ,void (*f)(void *)
+ ,void (*d)(void *)
+ ,void *x
+ ,int (*w)(void *, chanSs_t)
+ ,void **v
+ ,va_list l
+){
+  struct chanStrFLSOc *c;
+  unsigned int m;
+  unsigned int s;
+
+  if (!v)
+    return (0);
+  m = va_arg(l, unsigned int);
+  s = va_arg(l, unsigned int);
+  if (!a || !f || !s || m < s) {
+    *v = 0;
+    return (0);
+  }
+  if (!(c = a(0, sizeof (*c)))
+   || !(c->q = a(0, m * sizeof (*c->q)))) {
+    f(c);
+    *v = 0;
+    return (0);
+  }
+  c->f = f;
+  c->d = d;
+  c->m = m;
+  c->s = s;
+  c->h = c->t = 0;
+  *v = c;
+  return (chanSsCanPut);
+  (void)x;
+  (void)w;
 }

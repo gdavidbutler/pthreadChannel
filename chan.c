@@ -18,6 +18,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include <stdarg.h>
 #include <pthread.h>
 #include <sched.h>
 #include "chan.h"
@@ -129,8 +130,8 @@ gCpr(
 
 /* chan */
 struct chan {
-  chanSi_t s;      /* store implementation function */
   chanSd_t d;      /* store done function */
+  chanSi_t i;      /* store implementation function */
   void *v;         /* if s, store context else value */
   cpr_t **g;       /* get circular queue */
   cpr_t **p;       /* put circular queue */
@@ -234,16 +235,56 @@ static const unsigned int chanSu = 0x80; /* is shutdown */
   }\
 } while (0)
 
+/* Store callback to change chanSs_t outside of chanSi_t call */
+static int
+chanWake(
+  chan_t *c
+ ,chanSs_t s
+){
+  cpr_t *m;
+  cpr_t *p;
+  unsigned int l;
+
+  if (!c)
+    return (1);
+  pthread_mutex_lock(&c->m);
+  if (!c->i || c->l & chanSu) {
+    pthread_mutex_unlock(&c->m);
+    return (1);
+  }
+  m = 0;
+  if (!s) {
+    c->l |= chanSu;
+    WAKE(chanGe, g, 1, ;);
+    WAKE(chanPe, p, 1, ;);
+    WAKE(chanEe, e, 1, ;);
+    WAKE(chanUe, u, 1, ;);
+    WAKE(chanHe, h, 1, ;);
+  } else {
+    if (s & chanSsCanGet && !(c->t & chanSsCanGet)) {
+      c->t |= chanSsCanGet;
+      WAKE(chanGe, g, c->t & chanSsCanGet, break;);
+    }
+    if (s & chanSsCanPut && !(c->t & chanSsCanPut)) {
+      c->t |= chanSsCanPut;
+      WAKE(chanPe, p, c->t & chanSsCanPut, break;);
+    }
+  }
+  pthread_mutex_unlock(&c->m);
+  return (0);
+}
+
 chan_t *
 chanCreate(
-  void *v
+  void (*q)(void*)
  ,chanSd_t d
- ,chanSi_t s
- ,chanSs_t t
+ ,chanSi_t i
+ ,chanSa_t a
+ ,...
 ){
   chan_t *c;
 
-  if (!ChanA || !ChanF || (s && !t) || !(c = ChanA(0, sizeof (*c))))
+  if (!ChanA || !ChanF || (i && !a) || (!i && a) || !(c = ChanA(0, sizeof (*c))))
     return (0);
   c->p = c->e = c->u = c->h = 0;
   if (!(c->g = ChanA(0, sizeof (*c->g)))
@@ -252,6 +293,7 @@ chanCreate(
    || !(c->u = ChanA(0, sizeof (*c->u)))
    || !(c->h = ChanA(0, sizeof (*c->h)))
    || pthread_mutex_init(&c->m, 0)) {
+error:
     ChanF(c->h);
     ChanF(c->u);
     ChanF(c->e);
@@ -260,17 +302,28 @@ chanCreate(
     ChanF(c);
     return (0);
   }
-  c->v = v;
-  c->d = d;
-  if ((c->s = s))
-    c->t = t;
-  else
-    c->t = chanSsCanPut;
   c->gs = c->ps = c->es = c->us = c->hs = 1;
   c->gh = c->ph = c->eh = c->uh = c->hh = 0;
   c->gt = c->pt = c->et = c->ut = c->ht = 0;
   c->c = 0;
   c->l = chanGe | chanPe | chanEe | chanUe | chanHe;
+  if (a) {
+    va_list l;
+
+    c->d = d;
+    c->i = i;
+    va_start(l, a);
+    c->t = a(ChanA, ChanF, q, c, (int(*)(void*,chanSs_t))chanWake, &c->v, l);
+    va_end(l);
+    if (!c->t) {
+      pthread_mutex_destroy(&c->m);
+      goto error;
+    }
+  } else {
+    c->d = (chanSd_t)q;
+    c->i = 0;
+    c->t = chanSsCanPut;
+  }
   return (c);
 }
 
@@ -323,6 +376,7 @@ chanClose(
     pthread_mutex_unlock(&c->m);
     return;
   }
+  c->l |= chanSu;
   while ((c->l & (chanGe | chanPe | chanEe | chanUe | chanHe)) != (chanGe | chanPe | chanEe | chanUe | chanHe)) {
     pthread_mutex_unlock(&c->m);
     sched_yield();
@@ -333,9 +387,9 @@ chanClose(
   ChanF(c->e);
   ChanF(c->u);
   ChanF(c->h);
-  if (c->d && (c->s || c->t & chanSsCanGet))
-    c->d(c->v, c->t);
   pthread_mutex_unlock(&c->m);
+  if (c->d && (c->i || c->t & chanSsCanGet))
+    c->d(c->v, c->t);
   pthread_mutex_destroy(&c->m);
   ChanF(c);
 }
@@ -426,8 +480,8 @@ sht1:
     } else {
       if (c->t & chanSsCanGet && (c->l & chanGe || !(c->l & chanPe))) {
 get1:
-        if (c->s)
-          c->t = c->s(c->v, chanSoGet, c->l & (chanGe | chanPe), (a + i)->v);
+        if (c->i)
+          c->t = c->i(c->v, chanSoGet, c->l & (chanGe | chanPe), (a + i)->v);
         else {
           *((a + i)->v) = c->v;
           c->t = chanSsCanPut;
@@ -462,8 +516,8 @@ get2:
     } else {
       if (c->t & chanSsCanPut && (c->l & chanPe || !(c->l & chanGe))) {
 put1:
-        if (c->s)
-          c->t = c->s(c->v, chanSoPut, c->l & (chanGe | chanPe), (a + i)->v);
+        if (c->i)
+          c->t = c->i(c->v, chanSoPut, c->l & (chanGe | chanPe), (a + i)->v);
         else {
           c->v = *((a + i)->v);
           c->t = chanSsCanGet;
@@ -1138,16 +1192,20 @@ unlock1:
       if (!(a + i)->v)
         goto get1;
       else if (c->t & chanSsCanGet && (c->l & chanGe || !(c->l & chanPe))) {
-        if (c->s)
-          c->t = c->s(c->v, chanSoGet, c->l & (chanGe | chanPe), (a + i)->v);
+        if (c->i)
+          c->t = c->i(c->v, chanSoGet, c->l & (chanGe | chanPe), (a + i)->v);
         else {
           *((a + i)->v) = c->v;
           c->t = chanSsCanPut;
         }
         k = 0;
         WAKE(chanPe, p, c->t & chanSsCanPut, k=1;break;);
-        if (!k && !(c->l & chanGe))
-          WAKE(chanUe, u, 1, break;);
+        if (!k && !(c->l & chanGe)) {
+          if (c->t & chanSsCanGet)
+            WAKE(chanGe, g, c->t & chanSsCanGet, break;);
+          else
+            WAKE(chanUe, u, 1, break;);
+        }
         (a + i)->s = chanOsGet;
       } else
 get1:
@@ -1163,16 +1221,20 @@ get1:
       if (!(a + i)->v)
         goto put1;
       else if (c->t & chanSsCanPut && (c->l & chanPe || !(c->l & chanGe))) {
-        if (c->s)
-          c->t = c->s(c->v, chanSoPut, c->l & (chanGe | chanPe), (a + i)->v);
+        if (c->i)
+          c->t = c->i(c->v, chanSoPut, c->l & (chanGe | chanPe), (a + i)->v);
         else {
           c->v = *((a + i)->v);
           c->t = chanSsCanGet;
         }
         k = 0;
         WAKE(chanGe, g, c->t & chanSsCanGet, k=1;break;);
-        if (!k && !(c->l & chanPe))
-          WAKE(chanEe, e, 1, break;);
+        if (!k && !(c->l & chanPe)) {
+          if (c->t & chanSsCanPut)
+            WAKE(chanPe, p, c->t & chanSsCanPut, break;);
+          else
+            WAKE(chanEe, e, 1, break;);
+        }
         (a + i)->s = chanOsPut;
       } else
 put1:
@@ -1448,16 +1510,20 @@ unlock2:
         if (!(c = (a + i)->c))
           break;
         if (c->t & chanSsCanGet && (a + i)->v) {
-          if (c->s)
-            c->t = c->s(c->v, chanSoGet, c->l & (chanGe | chanPe), (a + i)->v);
+          if (c->i)
+            c->t = c->i(c->v, chanSoGet, c->l & (chanGe | chanPe), (a + i)->v);
           else {
             *((a + i)->v) = c->v;
             c->t = chanSsCanPut;
           }
           k = 0;
           WAKE(chanPe, p, c->t & chanSsCanPut, k=1;break;);
-          if (!k && !(c->l & chanGe))
-            WAKE(chanUe, u, 1, break;);
+          if (!k && !(c->l & chanGe)) {
+            if (c->t & chanSsCanGet)
+              WAKE(chanGe, g, c->t & chanSsCanGet, break;);
+            else
+              WAKE(chanUe, u, 1, break;);
+          }
           (a + i)->s = chanOsGet;
         } else {
           for (k = 0; k < m->st && *(m->s + k) != c; ++k);
@@ -1478,16 +1544,20 @@ unlock2:
         if (!(c = (a + i)->c))
           break;
         if (c->t & chanSsCanPut && (a + i)->v) {
-          if (c->s)
-            c->t = c->s(c->v, chanSoPut, c->l & (chanGe | chanPe), (a + i)->v);
+          if (c->i)
+            c->t = c->i(c->v, chanSoPut, c->l & (chanGe | chanPe), (a + i)->v);
           else {
             c->v = *((a + i)->v);
             c->t = chanSsCanGet;
           }
           k = 0;
           WAKE(chanGe, g, c->t & chanSsCanGet, k=1;break;);
-          if (!k && !(c->l & chanPe))
-            WAKE(chanEe, e, 1, break;);
+          if (!k && !(c->l & chanPe)) {
+            if (c->t & chanSsCanPut)
+              WAKE(chanPe, p, c->t & chanSsCanPut, break;);
+            else
+              WAKE(chanEe, e, 1, break;);
+          }
           (a + i)->s = chanOsPut;
         } else {
           for (k = 0; k < m->st && *(m->s + k) != c; ++k);

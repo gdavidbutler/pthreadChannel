@@ -21,31 +21,31 @@
 #ifndef __CHANSTRFLSO_H__
 #define __CHANSTRFLSO_H__
 
-/* chan store context */
-typedef struct chanStrFLSOc chanStrFLSOc_t;
-
-chanSs_t
-chanStrFLSOa(
-  chanStrFLSOc_t **context
- ,void *(*realloc)(void *, unsigned long)
- ,void (*free)(void *)
- ,void (*dequeue)(void *)
- ,unsigned int max
- ,unsigned int size
-);
-
 void
 chanStrFLSOd(
-  chanStrFLSOc_t *context
+  void *context
  ,chanSs_t state
 );
 
 chanSs_t
 chanStrFLSOi(
-  chanStrFLSOc_t *context
+  void *context
  ,chanSo_t operation
  ,chanSw_t waiting
  ,void **value
+);
+
+chanSs_t
+chanStrFLSOa(
+  void *(*realloc)(void *, unsigned long)
+ ,void (*free)(void *)
+ ,void (*dequeue)(void *)
+ ,void *wakeContext
+ ,int (*wake)(void *, chanSs_t)
+ ,void **storeContext
+ ,va_list list
+/* unsigned int max */
+/* unsigned int size */
 );
 
 #endif /* __CHANSTRFLSO_H__ */

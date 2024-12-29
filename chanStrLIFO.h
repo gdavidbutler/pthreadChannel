@@ -21,30 +21,30 @@
 #ifndef __CHANSTRLIFO_H__
 #define __CHANSTRLIFO_H__
 
-/* chan store context */
-typedef struct chanStrLIFOc chanStrLIFOc_t;
-
-chanSs_t
-chanStrLIFOa(
-  chanStrLIFOc_t **context
- ,void *(*realloc)(void *, unsigned long)
- ,void (*free)(void *)
- ,void (*dequeue)(void *)
- ,unsigned int size
-);
-
 void
 chanStrLIFOd(
-  chanStrLIFOc_t *context
+  void *context
  ,chanSs_t state
 );
 
 chanSs_t
 chanStrLIFOi(
-  chanStrLIFOc_t *context
+  void *context
  ,chanSo_t operation
  ,chanSw_t waiting
  ,void **value
+);
+
+chanSs_t
+chanStrLIFOa(
+  void *(*realloc)(void *, unsigned long)
+ ,void (*free)(void *)
+ ,void (*dequeue)(void *)
+ ,void *wakeContext
+ ,int (*wake)(void *, chanSs_t)
+ ,void **storeContext
+ ,va_list list
+/* unsigned int size */
 );
 
 #endif /* __CHANSTRLIFO_H__ */

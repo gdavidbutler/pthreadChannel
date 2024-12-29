@@ -18,8 +18,11 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include <stdarg.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <pthread.h>
 #include "chan.h"
 #include "chanBlb.h"
@@ -27,7 +30,10 @@
 #include "chanStrBlbSQL.h"
 
 struct chanStrBlbSQLc {
-  sqlite3 *d;
+  void (*f)(void *);          /* infrastructure free routine */
+  void (*d)(void *);          /* blob free blob routine */
+  void *(*n)(unsigned long);  /* blob new routine */
+  sqlite3 *b;                 /* connection */
   sqlite3_stmt *bgn;
   sqlite3_stmt *cmt;
   sqlite3_stmt *rlb;
@@ -35,20 +41,148 @@ struct chanStrBlbSQLc {
   sqlite3_stmt *updT;
   sqlite3_stmt *delB;
   sqlite3_stmt *updH;
+  sqlite3_stmt *sel;
+  void *x;                    /* wake callback context */
+  int (*w)(void *, chanSs_t); /* wake callback routine */
+  pthread_mutex_t m;          /* mutext to cover use of the connection */
+  pthread_t t;                /* monitor thread */
 };
+
+#define C ((struct chanStrBlbSQLc *)c)
+
+void
+chanStrBlbSQLd(
+  void *c
+ ,chanSs_t s
+){
+  if (!c)
+    return;
+  pthread_join(C->t, 0); /* wait for monitor thread */
+  sqlite3_finalize(C->bgn);
+  sqlite3_finalize(C->cmt);
+  sqlite3_finalize(C->rlb);
+  sqlite3_finalize(C->insB);
+  sqlite3_finalize(C->updT);
+  sqlite3_finalize(C->delB);
+  sqlite3_finalize(C->updH);
+  sqlite3_finalize(C->sel);
+  sqlite3_close(C->b);
+  pthread_mutex_destroy(&C->m);
+  C->f(c);
+  return;
+  (void)s; /* leaving blobs in store */
+}
+
+#define V ((chanBlb_t **)v)
+chanSs_t
+chanStrBlbSQLi(
+  void *c
+ ,chanSo_t o
+ ,chanSw_t w
+ ,void **v
+){
+  const void *t;
+  int i;
+
+  if (!c)
+    return (0);
+  pthread_mutex_lock(&C->m);
+  sqlite3_step(C->bgn), sqlite3_reset(C->bgn);
+  if (o == chanSoPut) {
+    sqlite3_bind_blob(C->insB, 1, (*V)->b, (*V)->l, SQLITE_STATIC);
+    if (sqlite3_step(C->insB) != SQLITE_DONE)
+      goto err;
+    sqlite3_reset(C->insB);
+    C->d(*v);
+    if (sqlite3_step(C->updT) != SQLITE_ROW)
+      goto err;
+    i = sqlite3_column_int(C->updT, 0);
+    sqlite3_reset(C->updT);
+    sqlite3_step(C->cmt), sqlite3_reset(C->cmt);
+    if (i) {
+      pthread_mutex_unlock(&C->m);
+      /* TODO full and (w & chanSwNoGet) and someone is listening, tell them? */
+      return (chanSsCanGet);
+    }
+  } else {
+    if (sqlite3_step(C->delB) != SQLITE_ROW
+     || !(t = sqlite3_column_blob(C->delB, 0))
+     || (i = sqlite3_column_bytes(C->delB, 0)) < 0
+     || !(*v = C->n(chanBlb_tSize(i)))
+    )
+      goto err;
+    (*V)->l = i;
+    memcpy((*V)->b, t, i);
+    sqlite3_reset(C->delB);
+    if (sqlite3_step(C->updH) != SQLITE_ROW)
+      goto err;
+    i = sqlite3_column_int(C->updH, 0);
+    sqlite3_reset(C->updH);
+    sqlite3_step(C->cmt), sqlite3_reset(C->cmt);
+    if (i) {
+      pthread_mutex_unlock(&C->m);
+      /* TODO empty and (w & chanSwNoPut) and someone is listening, tell them? */
+      return (chanSsCanPut);
+    }
+  }
+  pthread_mutex_unlock(&C->m);
+  return (chanSsCanGet | chanSsCanPut);
+err:
+  sqlite3_step(C->rlb), sqlite3_reset(C->rlb);
+  pthread_mutex_unlock(&C->m);
+  return (0);
+  (void)w;
+}
+#undef V
+
+/* TODO could have been told? */
+static void *
+monitor(
+void *c
+){
+  struct timespec t;
+  chanSs_t i;
+
+  t.tv_sec = 0;
+  t.tv_nsec = 500/*milli*/ * 1000/*micro*/ * 1000/*nano*/;
+  while (!nanosleep(&t, 0)) {
+    i = 0;
+    pthread_mutex_lock(&C->m);
+    if (sqlite3_step(C->sel) == SQLITE_ROW) {
+      if (sqlite3_column_int(C->sel, 0)) /* not empty */
+        i |= chanSsCanGet;
+      if (sqlite3_column_int(C->sel, 1)) /* not full */
+        i |= chanSsCanPut;
+    }
+    sqlite3_reset(C->sel);
+    pthread_mutex_unlock(&C->m);
+    if (C->w(C->x, i))
+      break;
+  }
+  return (0);
+}
+
+#undef C
 
 chanSs_t
 chanStrBlbSQLa(
-  chanStrBlbSQLc_t **c
- ,const char *p
- ,unsigned int o
- ,unsigned int y
- ,sqlite3_int64 z
+  void *(*a)(void *, unsigned long)
+ ,void (*f)(void *)
+ ,void (*d)(void *)
+ ,void *x
+ ,int (*w)(void *, chanSs_t)
+ ,void **v
+ ,va_list l
 ){
+  static const char *lck[] = {
+    "PRAGMA locking__mode=NORMAL;"
+   ,"PRAGMA locking__mode=EXCLUSIVE;"
+  };
   static const char *jnl[] = {
     "PRAGMA journal_mode=DELETE;"
    ,"PRAGMA journal_mode=TRUNCATE;"
    ,"PRAGMA journal_mode=PERSIST;"
+   ,"PRAGMA journal_mode=WAL;"
   };
   static const char *syn[] = {
     "PRAGMA synchronous=OFF;"
@@ -56,31 +190,54 @@ chanStrBlbSQLa(
    ,"PRAGMA synchronous=FULL;"
    ,"PRAGMA synchronous=EXTRA;"
   };
-  sqlite3_stmt *s;
+  struct chanStrBlbSQLc *c;
+  void *(*n)(unsigned long);
+  const char *p;
+  unsigned int m;
+  unsigned int o;
+  unsigned int y;
+  sqlite3_int64 z;
   int i;
 
-  if (!c)
+  if (!v)
     return (0);
-  if (!p
-   || !z
+  n = va_arg(l, void *(*)(unsigned long)); /* blob new routine */
+  p = va_arg(l, const char *);             /* sqlite path name */
+  m = va_arg(l, unsigned int);             /* locking_mode */
+  o = va_arg(l, unsigned int);             /* journal_mode */
+  y = va_arg(l, unsigned int);             /* synchronous */
+  z = va_arg(l, sqlite3_int64);            /* size to allow */
+  if (!a || !f || !p
+   || m >= sizeof (lck) / sizeof (lck[0])
    || o >= sizeof (jnl) / sizeof (jnl[0])
-   || y >= sizeof (syn) / sizeof (syn[0])) {
-    *c = 0;
+   || y >= sizeof (syn) / sizeof (syn[0])
+   || !z) {
+    *v = 0;
     return (0);
   }
-  if (!(*c = sqlite3_malloc(sizeof (**c))))
+  if (!(c = a(0, sizeof (*c))))
     return (0);
-  memset(*c, 0, sizeof (**c));
-  if (sqlite3_open_v2(p, &(*c)->d, SQLITE_OPEN_READWRITE, 0)) {
-    sqlite3_close((*c)->d);
-    if (sqlite3_open_v2(p, &(*c)->d, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, 0))
+  memset(c, 0, sizeof (*c));
+  if (pthread_mutex_init(&c->m, 0)) {
+    f(c);
+    *v = 0;
+    return (0);
+  }
+  c->f = f;
+  c->d = d;
+  c->n = n;
+  c->x = x;
+  c->w = w;
+  if (sqlite3_open_v2(p, &c->b, SQLITE_OPEN_READWRITE, 0)) {
+    sqlite3_close(c->b);
+    if (sqlite3_open_v2(p, &c->b, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, 0))
       goto err;
   }
-  if (sqlite3_exec((*c)->d ,"PRAGMA locking_mode=EXCLUSIVE;", 0, 0, 0)
-   || sqlite3_exec((*c)->d, jnl[o], 0, 0, 0)
-   || sqlite3_exec((*c)->d, syn[y], 0, 0, 0))
+  if (sqlite3_exec(c->b, lck[m], 0, 0, 0)
+   || sqlite3_exec(c->b, jnl[o], 0, 0, 0)
+   || sqlite3_exec(c->b, syn[y], 0, 0, 0))
     goto err;
-  if (sqlite3_exec((*c)->d
+  if (sqlite3_exec(c->b
    ,"BEGIN IMMEDIATE;"
     "CREATE TABLE IF NOT EXISTS \"H\"("
     "\"i\" INTEGER PRIMARY KEY"
@@ -94,124 +251,56 @@ chanStrBlbSQLa(
     ");"
    ,0, 0, 0))
     goto err;
-  if (sqlite3_prepare_v2((*c)->d
+  if (sqlite3_prepare_v2(c->b
    ,"INSERT OR IGNORE INTO \"H\" VALUES (1,?1,1,1);"
-   ,-1, &s, 0))
+   ,-1, &c->bgn, 0))
     goto err;
-  sqlite3_bind_int64(s, 1, z); /* largest signed 64bit = 9223372036854775807 */
-  if (sqlite3_step(s) != SQLITE_DONE)
+  sqlite3_bind_int64(c->bgn, 1, z); /* largest signed 64bit = 9223372036854775807 */
+  if (sqlite3_step(c->bgn) != SQLITE_DONE)
     goto err;
-  sqlite3_finalize(s);
-  if (sqlite3_prepare_v3((*c)->d
+  sqlite3_finalize(c->bgn);
+  if (sqlite3_prepare_v3(c->b
    ,"BEGIN IMMEDIATE"
-   ,-1, SQLITE_PREPARE_PERSISTENT, &(*c)->bgn, 0)
-   || sqlite3_prepare_v3((*c)->d
+   ,-1, SQLITE_PREPARE_PERSISTENT, &c->bgn, 0)
+   || sqlite3_prepare_v3(c->b
    ,"COMMIT"
-   ,-1, SQLITE_PREPARE_PERSISTENT, &(*c)->cmt, 0)
-   || sqlite3_prepare_v3((*c)->d
+   ,-1, SQLITE_PREPARE_PERSISTENT, &c->cmt, 0)
+   || sqlite3_prepare_v3(c->b
    ,"ROLLBACK"
-   ,-1, SQLITE_PREPARE_PERSISTENT, &(*c)->rlb, 0)
-   || sqlite3_prepare_v3((*c)->d
+   ,-1, SQLITE_PREPARE_PERSISTENT, &c->rlb, 0)
+   || sqlite3_prepare_v3(c->b
    ,"INSERT INTO \"B\" VALUES((SELECT \"t\" FROM \"H\" WHERE \"i\"=1),?1)"
-   ,-1, SQLITE_PREPARE_PERSISTENT, &(*c)->insB, 0)
-   || sqlite3_prepare_v3((*c)->d
+   ,-1, SQLITE_PREPARE_PERSISTENT, &c->insB, 0)
+   || sqlite3_prepare_v3(c->b
    ,"UPDATE \"H\" SET \"t\"=CASE WHEN \"t\"=\"l\" THEN 1 ELSE \"t\"+1 END WHERE \"i\"=1 RETURNING \"t\"=\"h\""
-   ,-1, SQLITE_PREPARE_PERSISTENT, &(*c)->updT, 0)
-   || sqlite3_prepare_v3((*c)->d
+   ,-1, SQLITE_PREPARE_PERSISTENT, &c->updT, 0)
+   || sqlite3_prepare_v3(c->b
    ,"DELETE FROM \"B\" WHERE \"i\"=(SELECT \"h\" FROM \"H\" WHERE \"i\"=1) RETURNING \"b\""
-   ,-1, SQLITE_PREPARE_PERSISTENT, &(*c)->delB, 0)
-   || sqlite3_prepare_v3((*c)->d
+   ,-1, SQLITE_PREPARE_PERSISTENT, &c->delB, 0)
+   || sqlite3_prepare_v3(c->b
    ,"UPDATE \"H\" SET \"h\"=CASE WHEN \"h\"=\"l\" THEN 1 ELSE \"h\"+1 END WHERE \"i\"=1 RETURNING \"h\"=\"t\""
-   ,-1, SQLITE_PREPARE_PERSISTENT, &(*c)->updH, 0)
-   || sqlite3_prepare_v2((*c)->d
+   ,-1, SQLITE_PREPARE_PERSISTENT, &c->updH, 0)
+   || sqlite3_prepare_v3(c->b
    ,"WITH \"T\"(\"c\")AS(SELECT COUNT(*) FROM \"B\")SELECT \"T\".\"c\">0,\"T\".\"c\"<\"H\".\"l\" FROM \"H\",\"T\" WHERE \"H\".\"i\"=1"
-   ,-1, &s, 0)
+   ,-1, SQLITE_PREPARE_PERSISTENT, &c->sel, 0)
   )
     goto err;
-  if (sqlite3_step(s) != SQLITE_ROW)
+  if (sqlite3_step(c->sel) != SQLITE_ROW)
     goto err;
   i = 0;
-  if (sqlite3_column_int(s, 0)) /* not empty */
+  if (sqlite3_column_int(c->sel, 0)) /* not empty */
     i |= chanSsCanGet;
-  if (sqlite3_column_int(s, 1)) /* not full */
+  if (sqlite3_column_int(c->sel, 1)) /* not full */
     i |= chanSsCanPut;
-  sqlite3_finalize(s);
-  sqlite3_step((*c)->cmt), sqlite3_reset((*c)->cmt);
+  sqlite3_reset(c->sel);
+  sqlite3_step(c->cmt), sqlite3_reset(c->cmt);
+  *v = c;
+  if (!m && pthread_create(&c->t, 0, monitor, c)) /* locking_mode=NORMAL */
+    goto err;
   return (i);
 err:
-/*fprintf(stderr, "SQLite error %s\n", sqlite3_errmsg((*c)->d));*/
-  chanStrBlbSQLd((*c), 0);
-  return (0);
-}
-
-void
-chanStrBlbSQLd(
-  chanStrBlbSQLc_t *c
- ,chanSs_t s
-){
-  if (!c)
-    return;
-  sqlite3_finalize(c->bgn);
-  sqlite3_finalize(c->cmt);
-  sqlite3_finalize(c->rlb);
-  sqlite3_finalize(c->insB);
-  sqlite3_finalize(c->updT);
-  sqlite3_finalize(c->delB);
-  sqlite3_finalize(c->updH);
-  sqlite3_exec(c->d, "PRAGMA journal_mode=DELETE;", 0, 0, 0);
-  sqlite3_close(c->d);
-  sqlite3_free(c);
-  return;
-  (void)s;
-}
-
-chanSs_t
-chanStrBlbSQLi(
-  chanStrBlbSQLc_t *c
- ,chanSo_t o
- ,chanSw_t w
- ,chanBlb_t **v
-){
-  const void *t;
-  int i;
-
-  if (!c)
-    return (0);
-  sqlite3_step(c->bgn), sqlite3_reset(c->bgn);
-  if (o == chanSoPut) {
-    sqlite3_bind_blob(c->insB, 1, (*v)->b, (*v)->l, SQLITE_STATIC);
-    if (sqlite3_step(c->insB) != SQLITE_DONE)
-      goto err;
-    sqlite3_reset(c->insB);
-    free(*v);
-    if (sqlite3_step(c->updT) != SQLITE_ROW)
-      goto err;
-    i = sqlite3_column_int(c->updT, 0);
-    sqlite3_reset(c->updT);
-    sqlite3_step(c->cmt), sqlite3_reset(c->cmt);
-    if (i)
-      return (chanSsCanGet);
-  } else {
-    if (sqlite3_step(c->delB) != SQLITE_ROW
-     || !(t = sqlite3_column_blob(c->delB, 0))
-     || (i = sqlite3_column_bytes(c->delB, 0)) < 0
-     || !(*v = malloc(chanBlb_tSize(i)))
-    )
-      goto err;
-    (*v)->l = i;
-    memcpy((*v)->b, t, i);
-    sqlite3_reset(c->delB);
-    if (sqlite3_step(c->updH) != SQLITE_ROW)
-      goto err;
-    i = sqlite3_column_int(c->updH, 0);
-    sqlite3_reset(c->updH);
-    sqlite3_step(c->cmt), sqlite3_reset(c->cmt);
-    if (i)
-      return (chanSsCanPut);
-  }
-  return (chanSsCanGet | chanSsCanPut);
-err:
+fprintf(stderr, "SQLite error %s\n", sqlite3_errmsg(c->b));
   sqlite3_step(c->rlb), sqlite3_reset(c->rlb);
+  chanStrBlbSQLd(c, 0);
   return (0);
-  (void)w;
 }

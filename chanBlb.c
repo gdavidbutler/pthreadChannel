@@ -18,6 +18,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include <stdarg.h>
 #include <pthread.h>
 #include "chan.h"
 #include "chanBlb.h"

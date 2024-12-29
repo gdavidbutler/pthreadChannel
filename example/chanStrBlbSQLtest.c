@@ -20,41 +20,50 @@
 
 /*
  * compile SQLite with something like:
- * (SQLITE_THREADSAFE can be anything because access to the connection is protected by a channel mutex.)
+ * (SQLITE_THREADSAFE can be anything as the single connection is guarded with mutexes.)
  *
- *  cc -std=c99 -I. -Isqlite-amalgamation-3470000 -DSQLITE_THREADSAFE=0 -Os -g -c sqlite-amalgamation-3470000/sqlite3.c
+ *  cc -std=c99 -Isqlite-amalgamation-??????? -DSQLITE_THREADSAFE=0 -Os -g -c sqlite-amalgamation-???????/sqlite3.c
  *
- * complile source with something like:
- *  cc -std=c99 -I. -Iexample -Isqlite-amalgamation-3470000 -DSQLITE_THREADSAFE=0 -Os -g -c example/chanStrBlbSQL.c
- *  cc -std=c99 -I. -Iexample -Isqlite-amalgamation-3470000 -DSQLITE_THREADSAFE=0 -Os -g -c example/chanStrBlbSQLtest.c
+ * compile example with something like:
  *
- * then link it all together with channel objects like:
- *  cc -g -o chanStrBlbSQLtest chanStrBlbSQLtest.o chanStrBlbSQL.o chan.o chanStrFIFO.o chanBlb.o sqlite3.o -lpthread
+ *  cc -std=c99 -I. -Iexample -Isqlite-amalgamation-??????? -DSQLITE_THREADSAFE=0 -Os -g -c example/chanStrBlbSQL.c
+ *  cc -std=c99 -I. -Iexample -Isqlite-amalgamation-??????? -DSQLITE_THREADSAFE=0 -Os -g -c example/chanStrBlbSQLtest.c
+ *
+ * link it all together with channel objects like:
+ *
+ *  cc -g -o chanStrBlbSQLtest chanStrBlbSQLtest.o chanStrBlbSQL.o chanBlb.o chanStrFIFO.o chan.o sqlite3.o -lpthread
+ *
+ * Usage:
+ *  ./chanStrBlbSQLtest file locking(0:NORMAL,1:EXCLUSIVE) journal(0:DELETE,1:TRUNCATE,2:PERSIST,3:WAL) synchronous(0:OFF,1:NORMAL,2:FULL,3:EXTRA) messages g|p|b
+ *
+ *  (file for SQLite, :memory: is fast but much more expensive than chanStrFIFO, which is used if file is zero length)
+ *  (SQLite PRAGMA locking_mode, 0=NORMAL, 1=EXCLUSIVE)
+ *  (SQLite PRAGMA journal_mode, 0=DELETE, 1=TRUNCATE, 2=PERSIST, 3=WAL)
+ *  (SQLite PRAGMA synchronous, 0=OFF, 1=NORMAL, 2=FULL, 3=EXTRA)
+ *  (message limit, only significant on initial create)
+ *  (g:get or p:put or b:both get and put)
  *
  * run it like:
- *  (file for SQLite, :memory: is fast but much more expensive than chanStrFIFO)
- *  (message limit is only significant on first create)
- *  (SQLite PRAGMA journal_mode, 0=DELETE, 1=TRUNCATE, 2=PERSIST)
- *  (SQLite PRAGMA synchronous, 0=OFF, 1=NORMAL, 2=FULL, 3=EXTRA)
- *  (g: get or p: put or b: both get and put)
+ *  (with locking_mode=1(EXCLUSIVE), must run in sequence.)
+ *  (with locking_mode=0(NORMAL), can run concurrently.)
  *
- *  ./chanStrBlbSQLtest test.db 2 1 100 p < README.md
+ *  ./chanStrBlbSQLtest test.db 0 2 2 100 p < README.md
  *   test.db is full of README.md blobs
  *
- *  ./chanStrBlbSQLtest test.db 2 1 1 g > README.out
+ *  ./chanStrBlbSQLtest test.db 0 2 2 100 g > README.out
  *   test.db is empty
  *
  *  cmp README.md README.out
  *
- * or both:
- *  (for comparison, when the file name is zero length, chanStrFIFO is used)
+ * or both in one process:
  *
- *  ./chanStrBlbSQLtest test.db 2 1 100 b < README.md > README.out
+ *  ./chanStrBlbSQLtest test.db 1 2 2 100 b < README.md > README.out
  *   test.db is empty
  *
  *  cmp README.md README.out
  */
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -97,7 +106,8 @@ outT(
   chanBlb_t *m;
 
   pthread_cleanup_push((void(*)(void*))chanClose, v);
-  while (chanOp(0, v, (void **)&m, chanOpGet) == chanOsGet) {
+  /* timeout is 1 second because locking_mode=NORMAL monitor thread checks each 1/2 second */
+  while (chanOp(1/*second*/ * 1000/*milli*/ * 1000/*micro*/ * 1000/*nano*/, v, (void **)&m, chanOpGet) == chanOsGet) {
     unsigned int l;
     int i;
 
@@ -114,45 +124,39 @@ main(
   int argc
  ,char *argv[]
 ){
-  void *x;
   chan_t *c;
   pthread_t in;
   pthread_t out;
   sqlite3_int64 z;
+  int l;
   int j;
   int s;
 
-  if (argc < 6
-   || ((j = atoi(argv[2])) < 0 || j > 2)
-   || ((s = atoi(argv[3])) < 0 || s > 3)
-   || (z = atoll(argv[4])) <= 0
-   || (*argv[5] != 'g' && *argv[5] != 'p' && *argv[5] != 'b')
-   || (!*argv[1] && *argv[5] != 'b')) {
-    fprintf(stderr, "Usage: %s file journal(0:DELETE,1:TRUNCATE,2:PERSIST) synchronous(0:OFF,1:NORMAL,2:FULL,3:EXTRA) messages g|p|b\n", argv[0]);
+  if (argc < 7
+   || ((l = atoi(argv[2])) < 0 || l > 1)
+   || ((j = atoi(argv[3])) < 0 || j > 3)
+   || ((s = atoi(argv[4])) < 0 || s > 3)
+   || (z = atoll(argv[5])) <= 0
+   || (*argv[6] != 'g' && *argv[6] != 'p' && *argv[6] != 'b')
+   || (!*argv[1] && *argv[6] != 'b')) {
+    fprintf(stderr, "Usage: %s file"
+                    " locking(0:NORMAL,1:EXCLUSIVE)"
+                    " journal(0:DELETE,1:TRUNCATE,2:PERSIST,3:WAL)"
+                    " synchronous(0:OFF,1:NORMAL,2:FULL,3:EXTRA)"
+                    " messages g|p|b\n", argv[0]);
     return (1);
   }
   chanInit(realloc, free);
   sqlite3_initialize();
   if (*argv[1])
-    j = chanStrBlbSQLa((chanStrBlbSQLc_t **)&x, argv[1], j, s, z);
+    c = chanCreate(free, chanStrBlbSQLd, chanStrBlbSQLi, chanStrBlbSQLa, malloc, argv[1], l, j, s, z);
   else
-    j = chanStrFIFOa((chanStrFIFOc_t **)&x, realloc, free, free, z);
-  if (!j) {
-    perror("chanStrBlbSQLa");
-    return (1);
-  }
-  if (*argv[1]) {
-    if (!(c = chanCreate(x, (chanSd_t)chanStrBlbSQLd, (chanSi_t)chanStrBlbSQLi, j)))
-      chanStrBlbSQLd(x, 0);
-  } else {
-    if (!(c = chanCreate(x, (chanSd_t)chanStrFIFOd, (chanSi_t)chanStrFIFOi, j)))
-      chanStrFIFOd(x, 0);
-  }
+    c = chanCreate(free, chanStrFIFOd, chanStrFIFOi, chanStrFIFOa, z);
   if (!c) {
     perror("chanCreate");
     return (1);
   }
-  if (*argv[5] != 'g') {
+  if (*argv[6] != 'g') {
     chanOpen(c);
     if (pthread_create(&in, 0, inT, c)) {
       chanClose(c);
@@ -162,7 +166,7 @@ main(
       return (1);
     }
   }
-  if (*argv[5] != 'p') {
+  if (*argv[6] != 'p') {
     chanOpen(c);
     if (pthread_create(&out, 0, outT, c)) {
       chanClose(c);
@@ -172,12 +176,12 @@ main(
       return (1);
     }
   }
-  if (*argv[5] != 'g')
+  if (*argv[6] != 'g')
     pthread_join(in, 0);
+  if (*argv[6] != 'p')
+    pthread_join(out, 0);
   chanShut(c);
   chanClose(c);
-  if (*argv[5] != 'p')
-    pthread_join(out, 0);
   sqlite3_shutdown();
   return (0);
 }

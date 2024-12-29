@@ -18,6 +18,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include <stdarg.h>
 #include "chan.h"
 #include "chanStrFIFO.h"
 
@@ -30,54 +31,28 @@ struct chanStrFIFOc {
   unsigned int t;    /* store tail */
 };
 
-chanSs_t
-chanStrFIFOa(
-  chanStrFIFOc_t **c
- ,void *(*a)(void *, unsigned long)
- ,void (*f)(void *)
- ,void (*d)(void *)
- ,unsigned int s
-){
-  if (!c)
-    return (0);
-  if (!a || !f || !s) {
-    *c = 0;
-    return (0);
-  }
-  f(a(0,1)); /* force exception here and now */
-  if (!(*c = a(0, sizeof (**c)))
-   || !((*c)->q = a(0, s * sizeof (*(*c)->q)))) {
-    f(*c);
-    *c = 0;
-    return (0);
-  }
-  (*c)->f = f;
-  (*c)->d = d;
-  (*c)->s = s;
-  (*c)->h = (*c)->t = 0;
-  return (chanSsCanPut);
-}
+#define C ((struct chanStrFIFOc *)c)
 
 void
 chanStrFIFOd(
-  chanStrFIFOc_t *c
+  void *c
  ,chanSs_t s
 ){
   if (!c)
     return;
-  if (s & chanSsCanGet && c->d)
+  if (s & chanSsCanGet && C->d)
     do {
-      c->d(c->q[c->h]);
-      if (++c->h == c->s)
-        c->h = 0;
-    } while (c->h != c->t);
-  c->f(c->q);
-  c->f(c);
+      C->d(C->q[C->h]);
+      if (++C->h == C->s)
+        C->h = 0;
+    } while (C->h != C->t);
+  C->f(C->q);
+  C->f(c);
 }
 
 chanSs_t
 chanStrFIFOi(
-  chanStrFIFOc_t *c
+  void *c
  ,chanSo_t o
  ,chanSw_t w
  ,void **v
@@ -85,18 +60,56 @@ chanStrFIFOi(
   if (!c)
     return (0);
   if (o == chanSoPut) {
-    c->q[c->t] = *v;
-    if (++c->t == c->s)
-      c->t = 0;
-    if (c->t == c->h)
+    C->q[C->t] = *v;
+    if (++C->t == C->s)
+      C->t = 0;
+    if (C->t == C->h)
       return (chanSsCanGet);
   } else {
-    *v = c->q[c->h];
-    if (++c->h == c->s)
-      c->h = 0;
-    if (c->h == c->t)
+    *v = C->q[C->h];
+    if (++C->h == C->s)
+      C->h = 0;
+    if (C->h == C->t)
       return (chanSsCanPut);
   }
   return (chanSsCanGet | chanSsCanPut);
   (void) w;
+}
+
+#undef C
+
+chanSs_t
+chanStrFIFOa(
+  void *(*a)(void *, unsigned long)
+ ,void (*f)(void *)
+ ,void (*d)(void *)
+ ,void *x
+ ,int (*w)(void *, chanSs_t)
+ ,void **v
+ ,va_list l
+){
+  struct chanStrFIFOc *c;
+  unsigned int s;
+
+  if (!v)
+    return (0);
+  s = va_arg(l, unsigned int);
+  if (!a || !f || !s) {
+    *v = 0;
+    return (0);
+  }
+  if (!(c = a(0, sizeof (*c)))
+   || !(c->q = a(0, s * sizeof (*c->q)))) {
+    f(c);
+    *v = 0;
+    return (0);
+  }
+  c->f = f;
+  c->d = d;
+  c->s = s;
+  c->h = c->t = 0;
+  *v = c;
+  return (chanSsCanPut);
+  (void)x;
+  (void)w;
 }

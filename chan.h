@@ -31,10 +31,12 @@ typedef enum chanSs { /* bit map */
  ,chanSsCanGet = 2 /* not empty */
 } chanSs_t;
 
-/* Channel Store context done, called during last (deallocating) chanClose */
+/* Channel Store deallocation
+ * called during last (deallocating) chanClose
+ */
 typedef void
 (*chanSd_t)(
-  void *cntx
+  void *storeContext
  ,chanSs_t state
 );
 
@@ -52,7 +54,7 @@ typedef enum chanSw { /* bit map */
 
 /* Channel Store implementation
  *
- * A Channel Store takes a pointer to a context,
+ * A Channel Store takes a pointer to a Store context,
  *  the operation the Channel wants to perform on the Store
  *  indication of waiting Gets and Puts
  *  and a value pointer
@@ -62,10 +64,34 @@ typedef enum chanSw { /* bit map */
  */
 typedef chanSs_t
 (*chanSi_t)(
-  void *cntx
+  void *storeContext
  ,chanSo_t oper
  ,chanSw_t wait
  ,void **val
+);
+
+/* Channel Store allocation
+ *
+ * A chanCreate takes a pointer to a Store allocation function
+ *  a realloc() like function
+ *  a free() like function
+ *  a Store item dequeue function
+ *  a pointer to a pointer to a Store context
+ *  a pointer to a pointer to a Channel wake context
+ *  a pointer to a pointer to a Channel wake callback that takes the above context and a Store state
+ *  specific arguments to the allocation function
+ * Return a Store state
+ *  if zero, fail
+ */
+typedef chanSs_t
+(*chanSa_t)(
+  void *(*realloc)(void *, unsigned long)
+ ,void (*free)(void *)
+ ,void (*dequeue)(void *)
+ ,void *wakeContext
+ ,int (*wake)(void *, chanSs_t)
+ ,void **storeContext
+ ,va_list
 );
 
 /*
@@ -90,22 +116,22 @@ typedef struct chan chan_t;
  *  This works best (providing low latency) when threads work more and talk less.
  *
  * When allocating the Channel, supply:
- *  a Store context (0 if none)
- *  a Store done function, chanSd_t (0 if none)
+ *  a Store item dequeue function (0 if none)
+ *  a Store deallocation function, chanSd_t (0 if none)
  *  a Store implementation function, chanSi_t (0 if none)
- *  a Store implementation initial state, chanSs_t (0 if no chanSi_t)
- *   when the impl function is 0 the done function
- *   is called, if needed, with the Channel's single item
+ *  a Store allocation function, chanSa_t (0 if none)
+ *  additional allocation parameters
  *
  * Return 0 on error (memory allocation)
  * Returned Channel is Open.
  */
 chan_t *
 chanCreate(
-  void *cntx
- ,chanSd_t done
- ,chanSi_t impl
- ,chanSs_t state
+  void (*dequeue)(void *)
+ ,chanSd_t deallocation
+ ,chanSi_t implementation
+ ,chanSa_t allocation
+ ,...
 );
 
 /* Channel (re)Open, to keep a Channel from being deallocated till chanClose */

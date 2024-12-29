@@ -18,6 +18,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include <stdarg.h>
 #include "chan.h"
 #include "chanStrLIFO.h"
 
@@ -29,53 +30,27 @@ struct chanStrLIFOc {
   unsigned int t;    /* store tail */
 };
 
-chanSs_t
-chanStrLIFOa(
-  chanStrLIFOc_t **c
- ,void *(*a)(void *, unsigned long)
- ,void (*f)(void *)
- ,void (*d)(void *)
- ,unsigned int s
-){
-  if (!c)
-    return (0);
-  if (!a || !f || !s) {
-    *c = 0;
-    return (0);
-  }
-  f(a(0,1)); /* force exception here and now */
-  if (!(*c = a(0, sizeof (**c)))
-   || !((*c)->q = a(0, s * sizeof (*(*c)->q)))) {
-    f(*c);
-    *c = 0;
-    return (0);
-  }
-  (*c)->f = f;
-  (*c)->d = d;
-  (*c)->s = s;
-  (*c)->t = 0;
-  return (chanSsCanPut);
-}
+#define C ((struct chanStrLIFOc *)c)
 
 void
 chanStrLIFOd(
-  chanStrLIFOc_t *c
+  void *c
  ,chanSs_t s
 ){
   if (!c)
     return;
-  if (s & chanSsCanGet && c->d)
+  if (s & chanSsCanGet && C->d)
     do {
-      --c->t;
-      c->d(c->q[c->t]);
-    } while (c->t);
-  c->f(c->q);
-  c->f(c);
+      --C->t;
+      C->d(C->q[C->t]);
+    } while (C->t);
+  C->f(C->q);
+  C->f(c);
 }
 
 chanSs_t
 chanStrLIFOi(
-  chanStrLIFOc_t *c
+  void *c
  ,chanSo_t o
  ,chanSw_t w
  ,void **v
@@ -83,14 +58,52 @@ chanStrLIFOi(
   if (!c)
     return (0);
   if (o == chanSoPut) {
-    c->q[c->t] = *v;
-    if (++c->t == c->s)
+    C->q[C->t] = *v;
+    if (++C->t == C->s)
       return (chanSsCanGet);
   } else {
-    *v = c->q[--c->t];
-    if (!c->t)
+    *v = C->q[--C->t];
+    if (!C->t)
       return (chanSsCanPut);
   }
   return (chanSsCanGet | chanSsCanPut);
-  (void) w;
+  (void)w;
+}
+
+#undef C
+
+chanSs_t
+chanStrLIFOa(
+  void *(*a)(void *, unsigned long)
+ ,void (*f)(void *)
+ ,void (*d)(void *)
+ ,void *x
+ ,int (*w)(void *, chanSs_t)
+ ,void **v
+ ,va_list l
+){
+  struct chanStrLIFOc *c;
+  unsigned int s;
+
+  if (!v)
+    return (0);
+  s = va_arg(l, unsigned int);
+  if (!a || !f || !s) {
+    *v = 0;
+    return (0);
+  }
+  if (!(c = a(0, sizeof (*c)))
+   || !(c->q = a(0, s * sizeof (*c->q)))) {
+    f(c);
+    *v = 0;
+    return (0);
+  }
+  c->f = f;
+  c->d = d;
+  c->s = s;
+  c->t = 0;
+  *v = c;
+  return (chanSsCanPut);
+  (void)x;
+  (void)w;
 }

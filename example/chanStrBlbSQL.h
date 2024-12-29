@@ -21,30 +21,35 @@
 #ifndef __CHANSTRBLBSQL_H__
 #define __CHANSTRBLBSQL_H__
 
-/* chan store context */
-typedef struct chanStrBlbSQLc chanStrBlbSQLc_t;
-
-chanSs_t
-chanStrBlbSQLa(
-  chanStrBlbSQLc_t **context
- ,const char *path
- ,unsigned int journal
- ,unsigned int synchronous
- ,sqlite3_int64 limit
-);
-
 void
 chanStrBlbSQLd(
-  chanStrBlbSQLc_t *context
+  void *context
  ,chanSs_t state
 );
 
 chanSs_t
 chanStrBlbSQLi(
-  chanStrBlbSQLc_t *context
+  void *context
  ,chanSo_t operation
  ,chanSw_t wait
- ,chanBlb_t **value
+ ,void **value
+);
+
+chanSs_t
+chanStrBlbSQLa(
+  void *(*realloc)(void *, unsigned long)
+ ,void (*free)(void *)
+ ,void (*dequeue)(void *) 
+ ,void *wakeContext
+ ,int (*wake)(void *, chanSs_t)
+ ,void **storeContext
+ ,va_list list
+/*  void *(*malloc)(unsigned long) */
+/*  const char *path */
+/*  unsigned int locking_mode */
+/*  unsigned int journal_mode */
+/*  unsigned int synchronous */
+/*  unsigned int size */
 );
 
 #endif /* __CHANSTRBLBSQL_H__ */

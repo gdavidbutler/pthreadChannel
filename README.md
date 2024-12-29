@@ -92,24 +92,13 @@ But as the processing cost decreases toward a context switch cost, Stores can dr
 Therefore, a Store's size depends on how much latency can be tolerated in the quest for efficiency.
 (See [queueing theory](https://en.wikipedia.org/wiki/Queueing_theory).)
 
-A Store's initial chanSs_t state is determined at allocation and provided to chanCreate.
-Once handed to chanCreate, a Store's chanSs_t state must not change between calls to it's chanSi_t callback.
-(See [chanStrBlbSQL](#Examples)).
-
 NOTE: These implementations preallocate heap with a maximum size to provide "back pressure" propagation semantics.
 
 A maximum sized Channel FIFO Store implementation is provided.
 When a context is created, a size is allocated.
-(See [pipeproxy](#Examples) for an example.)
+(See [pipeproxy](#Examples).)
 
-Find the API in chanStrFIFO.h:
-
-* chanStrFIFOa
-  * Allocate a chanStrFIFOc_t of size using supplied realloc, free and item dequeue routines
-* chanStrFIFOd
-  * Implement a chanSd_t to deallocate a chanStrFIFOc_t
-* chanStrFIFOi
-  * Implement chanSi_t for chanCreate()
+Find the API in chanStrFIFO.h.
 
 A maximum sized, latency sensitive, Channel FIFO Store (FLSO) implementation is provided.
 When a context is created, a maximum is allocated and starts at initial.
@@ -119,30 +108,19 @@ To balance latency and efficiency size is adjusted by:
 * After a Get, if the Store is empty and there are no waiting Puts, the size is decremented.
 * Before a Get, if the Store is full and there are waiting Puts, the size is incremented.
 
-Find the API in chanStrFLSO.h:
-
-* chanStrFLSOa
-  * Allocate a chanStrFLSOc_t of max and initial size using supplied realloc, free and item dequeue routines
-* chanStrFLSOd
-  * Implement a chanSd_t to deallocate a chanStrFLSOc_t
-* chanStrFLSOi
-  * Implement chanSi_t for chanCreate()
+Find the API in chanStrFLSO.h.
 
 A maximum sized Channel LIFO Store implementation is provided.
 When a context is created, a size is allocated.
 
-Find the API in chanStrLIFO.h:
-
-* chanStrLIFOa
-  * Allocate a chanStrLIFOc_t of size using supplied realloc, free and item dequeue routines
-* chanStrLIFOd
-  * Implement a chanSd_t to deallocate a chanStrLIFOc_t
-* chanStrLIFOi
-  * Implement chanSi_t for chanCreate()
+Find the API in chanStrLIFO.h.
 
 ### Blob
 
 A Blob is a length specified collection of octets used as a discrete unit of communication, i.e. a message.
+
+Unlike non-Blob Channel Stores, Blob Channel Stores can include persistence and sharing semantics.
+(See [chanStrBlbSQL](#Examples).)
 
 Blobs can be tranported via networking routines.
 [Since a pthread can't both wait in a pthread_cond_wait and a poll/select/etc., a pair of blocking reader and writer pthreads are used.]
@@ -182,6 +160,7 @@ Find the API in chanBlb.h:
 ### Channel routine dependencies
 
 * chan.c:
+  * stdarg.h
   * chan.h
   * pthread.h
     * pthread_once
@@ -202,10 +181,12 @@ Find the API in chanBlb.h:
     * pthread_condattr_setclock
     * pthread_condattr_destroy
     * pthread_yield
-* chanStr.c:
+* chanStr*.c:
+  * stdarg.h
   * chan.h
   * chanStr.h
 * chanBlb.c:
+  * stdarg.h
   * chan.h
   * chanBlb.h
   * pthread.h

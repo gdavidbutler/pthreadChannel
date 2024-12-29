@@ -21,30 +21,30 @@
 #ifndef __CHANSTRFIFO_H__
 #define __CHANSTRFIFO_H__
 
-/* chan store context */
-typedef struct chanStrFIFOc chanStrFIFOc_t;
-
-chanSs_t
-chanStrFIFOa(
-  chanStrFIFOc_t **context
- ,void *(*realloc)(void *, unsigned long)
- ,void (*free)(void *)
- ,void (*dequeue)(void *)
- ,unsigned int size
-);
-
 void
 chanStrFIFOd(
-  chanStrFIFOc_t *context
+  void *context
  ,chanSs_t state
 );
 
 chanSs_t
 chanStrFIFOi(
-  chanStrFIFOc_t *context
+  void *context
  ,chanSo_t operation
  ,chanSw_t waiting
  ,void **value
+);
+
+chanSs_t
+chanStrFIFOa(
+  void *(*realloc)(void *, unsigned long)
+ ,void (*free)(void *)
+ ,void (*dequeue)(void *)
+ ,void *wakeContext
+ ,int (*wake)(void *, chanSs_t)
+ ,void **storeContext
+ ,va_list list
+/* unsigned int size */
 );
 
 #endif /* __CHANSTRFIFO_H__ */
