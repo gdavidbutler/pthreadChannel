@@ -32,7 +32,7 @@ struct chanStrLIFOc {
 
 #define C ((struct chanStrLIFOc *)c)
 
-void
+static void
 chanStrLIFOd(
   void *c
  ,chanSs_t s
@@ -48,7 +48,7 @@ chanStrLIFOd(
   C->f(c);
 }
 
-chanSs_t
+static chanSs_t
 chanStrLIFOi(
   void *c
  ,chanSo_t o
@@ -76,9 +76,11 @@ chanSs_t
 chanStrLIFOa(
   void *(*a)(void *, unsigned long)
  ,void (*f)(void *)
- ,void (*d)(void *)
- ,void *x
+ ,void (*u)(void *)
  ,int (*w)(void *, chanSs_t)
+ ,void *x
+ ,chanSd_t *d
+ ,chanSi_t *i
  ,void **v
  ,va_list l
 ){
@@ -87,21 +89,21 @@ chanStrLIFOa(
 
   if (!v)
     return (0);
+  *v = 0;
   s = va_arg(l, unsigned int);
-  if (!a || !f || !s) {
-    *v = 0;
+  if (!a || !f || !s)
     return (0);
-  }
   if (!(c = a(0, sizeof (*c)))
    || !(c->q = a(0, s * sizeof (*c->q)))) {
     f(c);
-    *v = 0;
     return (0);
   }
-  c->f = f;
-  c->d = d;
   c->s = s;
   c->t = 0;
+  c->f = f;
+  c->d = u;
+  *d = chanStrLIFOd;
+  *i = chanStrLIFOi;
   *v = c;
   return (chanSsCanPut);
   (void)x;

@@ -130,7 +130,7 @@ gCpr(
 
 /* chan */
 struct chan {
-  chanSd_t d;      /* store done function */
+  chanSd_t d;      /* store deallocation function */
   chanSi_t i;      /* store implementation function */
   void *v;         /* if s, store context else value */
   cpr_t **g;       /* get circular queue */
@@ -235,7 +235,7 @@ static const unsigned int chanSu = 0x80; /* is shutdown */
   }\
 } while (0)
 
-/* Store callback to change chanSs_t outside of chanSi_t call */
+/* Store callback to set chanSs_t and wake blocked threads */
 static int
 chanWake(
   chan_t *c
@@ -277,14 +277,12 @@ chanWake(
 chan_t *
 chanCreate(
   void (*q)(void*)
- ,chanSd_t d
- ,chanSi_t i
  ,chanSa_t a
  ,...
 ){
   chan_t *c;
 
-  if (!ChanA || !ChanF || (i && !a) || (!i && a) || !(c = ChanA(0, sizeof (*c))))
+  if (!ChanA || !ChanF || !(c = ChanA(0, sizeof (*c))))
     return (0);
   c->p = c->e = c->u = c->h = 0;
   if (!(c->g = ChanA(0, sizeof (*c->g)))
@@ -302,28 +300,27 @@ error:
     ChanF(c);
     return (0);
   }
-  c->gs = c->ps = c->es = c->us = c->hs = 1;
-  c->gh = c->ph = c->eh = c->uh = c->hh = 0;
-  c->gt = c->pt = c->et = c->ut = c->ht = 0;
-  c->c = 0;
-  c->l = chanGe | chanPe | chanEe | chanUe | chanHe;
+  c->d = 0;
+  c->i = 0;
   if (a) {
     va_list l;
 
-    c->d = d;
-    c->i = i;
     va_start(l, a);
-    c->t = a(ChanA, ChanF, q, c, (int(*)(void*,chanSs_t))chanWake, &c->v, l);
+    c->t = a(ChanA, ChanF, q, (int(*)(void*,chanSs_t))chanWake, c, &c->d, &c->i, &c->v, l);
     va_end(l);
-    if (!c->t) {
+    if (!c->t || !c->i) {
       pthread_mutex_destroy(&c->m);
       goto error;
     }
   } else {
     c->d = (chanSd_t)q;
-    c->i = 0;
     c->t = chanSsCanPut;
   }
+  c->gs = c->ps = c->es = c->us = c->hs = 1;
+  c->gh = c->ph = c->eh = c->uh = c->hh = 0;
+  c->gt = c->pt = c->et = c->ut = c->ht = 0;
+  c->c = 0;
+  c->l = chanGe | chanPe | chanEe | chanUe | chanHe;
   return (c);
 }
 

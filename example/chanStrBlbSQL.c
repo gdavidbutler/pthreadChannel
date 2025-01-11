@@ -20,7 +20,6 @@
 
 #include <stdarg.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <pthread.h>
@@ -31,7 +30,7 @@
 
 struct chanStrBlbSQLc {
   void (*f)(void *);          /* infrastructure free routine */
-  void (*d)(void *);          /* blob free blob routine */
+  void (*d)(void *);          /* blob delete routine */
   void *(*n)(unsigned long);  /* blob new routine */
   sqlite3 *b;                 /* connection */
   sqlite3_stmt *bgn;
@@ -42,22 +41,19 @@ struct chanStrBlbSQLc {
   sqlite3_stmt *delB;
   sqlite3_stmt *updH;
   sqlite3_stmt *sel;
-  void *x;                    /* wake callback context */
-  int (*w)(void *, chanSs_t); /* wake callback routine */
   pthread_mutex_t m;          /* mutext to cover use of the connection */
-  pthread_t t;                /* monitor thread */
 };
 
 #define C ((struct chanStrBlbSQLc *)c)
 
-void
+static void
 chanStrBlbSQLd(
   void *c
  ,chanSs_t s
 ){
   if (!c)
     return;
-  pthread_join(C->t, 0); /* wait for monitor thread */
+  pthread_mutex_lock(&C->m);
   sqlite3_finalize(C->bgn);
   sqlite3_finalize(C->cmt);
   sqlite3_finalize(C->rlb);
@@ -67,6 +63,7 @@ chanStrBlbSQLd(
   sqlite3_finalize(C->updH);
   sqlite3_finalize(C->sel);
   sqlite3_close(C->b);
+  pthread_mutex_unlock(&C->m);
   pthread_mutex_destroy(&C->m);
   C->f(c);
   return;
@@ -74,7 +71,8 @@ chanStrBlbSQLd(
 }
 
 #define V ((chanBlb_t **)v)
-chanSs_t
+
+static chanSs_t
 chanStrBlbSQLi(
   void *c
  ,chanSo_t o
@@ -101,7 +99,6 @@ chanStrBlbSQLi(
     sqlite3_step(C->cmt), sqlite3_reset(C->cmt);
     if (i) {
       pthread_mutex_unlock(&C->m);
-      /* TODO full and (w & chanSwNoGet) and someone is listening, tell them? */
       return (chanSsCanGet);
     }
   } else {
@@ -121,46 +118,23 @@ chanStrBlbSQLi(
     sqlite3_step(C->cmt), sqlite3_reset(C->cmt);
     if (i) {
       pthread_mutex_unlock(&C->m);
-      /* TODO empty and (w & chanSwNoPut) and someone is listening, tell them? */
       return (chanSsCanPut);
     }
   }
   pthread_mutex_unlock(&C->m);
   return (chanSsCanGet | chanSsCanPut);
 err:
+  sqlite3_reset(C->insB);
+  sqlite3_reset(C->updT);
+  sqlite3_reset(C->delB);
+  sqlite3_reset(C->updH);
   sqlite3_step(C->rlb), sqlite3_reset(C->rlb);
   pthread_mutex_unlock(&C->m);
   return (0);
-  (void)w;
+  (void)w; /* not concerend with latency */
 }
+
 #undef V
-
-/* TODO could have been told? */
-static void *
-monitor(
-void *c
-){
-  struct timespec t;
-  chanSs_t i;
-
-  t.tv_sec = 0;
-  t.tv_nsec = 500/*milli*/ * 1000/*micro*/ * 1000/*nano*/;
-  while (!nanosleep(&t, 0)) {
-    i = 0;
-    pthread_mutex_lock(&C->m);
-    if (sqlite3_step(C->sel) == SQLITE_ROW) {
-      if (sqlite3_column_int(C->sel, 0)) /* not empty */
-        i |= chanSsCanGet;
-      if (sqlite3_column_int(C->sel, 1)) /* not full */
-        i |= chanSsCanPut;
-    }
-    sqlite3_reset(C->sel);
-    pthread_mutex_unlock(&C->m);
-    if (C->w(C->x, i))
-      break;
-  }
-  return (0);
-}
 
 #undef C
 
@@ -168,16 +142,14 @@ chanSs_t
 chanStrBlbSQLa(
   void *(*a)(void *, unsigned long)
  ,void (*f)(void *)
- ,void (*d)(void *)
- ,void *x
+ ,void (*u)(void *)
  ,int (*w)(void *, chanSs_t)
+ ,void *x
+ ,chanSd_t *d
+ ,chanSi_t *i
  ,void **v
  ,va_list l
 ){
-  static const char *lck[] = {
-    "PRAGMA locking__mode=NORMAL;"
-   ,"PRAGMA locking__mode=EXCLUSIVE;"
-  };
   static const char *jnl[] = {
     "PRAGMA journal_mode=DELETE;"
    ,"PRAGMA journal_mode=TRUNCATE;"
@@ -193,47 +165,40 @@ chanStrBlbSQLa(
   struct chanStrBlbSQLc *c;
   void *(*n)(unsigned long);
   const char *p;
-  unsigned int m;
   unsigned int o;
   unsigned int y;
   sqlite3_int64 z;
-  int i;
+  int s;
 
   if (!v)
     return (0);
+  *v = 0;
   n = va_arg(l, void *(*)(unsigned long)); /* blob new routine */
   p = va_arg(l, const char *);             /* sqlite path name */
-  m = va_arg(l, unsigned int);             /* locking_mode */
   o = va_arg(l, unsigned int);             /* journal_mode */
   y = va_arg(l, unsigned int);             /* synchronous */
   z = va_arg(l, sqlite3_int64);            /* size to allow */
   if (!a || !f || !p
-   || m >= sizeof (lck) / sizeof (lck[0])
    || o >= sizeof (jnl) / sizeof (jnl[0])
    || y >= sizeof (syn) / sizeof (syn[0])
-   || !z) {
-    *v = 0;
+   || !z)
     return (0);
-  }
   if (!(c = a(0, sizeof (*c))))
     return (0);
   memset(c, 0, sizeof (*c));
   if (pthread_mutex_init(&c->m, 0)) {
     f(c);
-    *v = 0;
     return (0);
   }
   c->f = f;
-  c->d = d;
+  c->d = u;
   c->n = n;
-  c->x = x;
-  c->w = w;
   if (sqlite3_open_v2(p, &c->b, SQLITE_OPEN_READWRITE, 0)) {
     sqlite3_close(c->b);
     if (sqlite3_open_v2(p, &c->b, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, 0))
       goto err;
   }
-  if (sqlite3_exec(c->b, lck[m], 0, 0, 0)
+  if (sqlite3_exec(c->b, "PRAGMA locking_mode=EXCLUSIVE;", 0, 0, 0)
    || sqlite3_exec(c->b, jnl[o], 0, 0, 0)
    || sqlite3_exec(c->b, syn[y], 0, 0, 0))
     goto err;
@@ -287,20 +252,22 @@ chanStrBlbSQLa(
     goto err;
   if (sqlite3_step(c->sel) != SQLITE_ROW)
     goto err;
-  i = 0;
+  s = 0;
   if (sqlite3_column_int(c->sel, 0)) /* not empty */
-    i |= chanSsCanGet;
+    s |= chanSsCanGet;
   if (sqlite3_column_int(c->sel, 1)) /* not full */
-    i |= chanSsCanPut;
+    s |= chanSsCanPut;
   sqlite3_reset(c->sel);
   sqlite3_step(c->cmt), sqlite3_reset(c->cmt);
+  *d = chanStrBlbSQLd;
+  *i = chanStrBlbSQLi;
   *v = c;
-  if (!m && pthread_create(&c->t, 0, monitor, c)) /* locking_mode=NORMAL */
-    goto err;
-  return (i);
+  return (s);
 err:
 fprintf(stderr, "SQLite error %s\n", sqlite3_errmsg(c->b));
   sqlite3_step(c->rlb), sqlite3_reset(c->rlb);
   chanStrBlbSQLd(c, 0);
   return (0);
+  (void)w;
+  (void)x;
 }

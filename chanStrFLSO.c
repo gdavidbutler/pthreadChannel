@@ -34,7 +34,7 @@ struct chanStrFLSOc {
 
 #define C ((struct chanStrFLSOc *)c)
 
-void
+static void
 chanStrFLSOd(
   void *c
  ,chanSs_t s
@@ -51,7 +51,7 @@ chanStrFLSOd(
   C->f(c);
 }
 
-chanSs_t
+static chanSs_t
 chanStrFLSOi(
   void *c
  ,chanSo_t o
@@ -112,9 +112,11 @@ chanSs_t
 chanStrFLSOa(
   void *(*a)(void *, unsigned long)
  ,void (*f)(void *)
- ,void (*d)(void *)
- ,void *x
+ ,void (*u)(void *)
  ,int (*w)(void *, chanSs_t)
+ ,void *x
+ ,chanSd_t *d
+ ,chanSi_t *i
  ,void **v
  ,va_list l
 ){
@@ -124,23 +126,23 @@ chanStrFLSOa(
 
   if (!v)
     return (0);
+  *v = 0;
   m = va_arg(l, unsigned int);
   s = va_arg(l, unsigned int);
-  if (!a || !f || !s || m < s) {
-    *v = 0;
+  if (!a || !f || !s || m < s)
     return (0);
-  }
   if (!(c = a(0, sizeof (*c)))
    || !(c->q = a(0, m * sizeof (*c->q)))) {
     f(c);
-    *v = 0;
     return (0);
   }
-  c->f = f;
-  c->d = d;
   c->m = m;
   c->s = s;
   c->h = c->t = 0;
+  c->f = f;
+  c->d = u;
+  *d = chanStrFLSOd;
+  *i = chanStrFLSOi;
   *v = c;
   return (chanSsCanPut);
   (void)x;

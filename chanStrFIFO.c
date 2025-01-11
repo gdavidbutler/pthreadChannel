@@ -33,7 +33,7 @@ struct chanStrFIFOc {
 
 #define C ((struct chanStrFIFOc *)c)
 
-void
+static void
 chanStrFIFOd(
   void *c
  ,chanSs_t s
@@ -50,7 +50,7 @@ chanStrFIFOd(
   C->f(c);
 }
 
-chanSs_t
+static chanSs_t
 chanStrFIFOi(
   void *c
  ,chanSo_t o
@@ -82,9 +82,11 @@ chanSs_t
 chanStrFIFOa(
   void *(*a)(void *, unsigned long)
  ,void (*f)(void *)
- ,void (*d)(void *)
- ,void *x
+ ,void (*u)(void *)
  ,int (*w)(void *, chanSs_t)
+ ,void *x
+ ,chanSd_t *d
+ ,chanSi_t *i
  ,void **v
  ,va_list l
 ){
@@ -93,21 +95,21 @@ chanStrFIFOa(
 
   if (!v)
     return (0);
+  *v = 0;
   s = va_arg(l, unsigned int);
-  if (!a || !f || !s) {
-    *v = 0;
+  if (!a || !f || !s)
     return (0);
-  }
   if (!(c = a(0, sizeof (*c)))
    || !(c->q = a(0, s * sizeof (*c->q)))) {
     f(c);
-    *v = 0;
     return (0);
   }
-  c->f = f;
-  c->d = d;
   c->s = s;
   c->h = c->t = 0;
+  c->f = f;
+  c->d = u;
+  *d = chanStrFIFOd;
+  *i = chanStrFIFOi;
   *v = c;
   return (chanSsCanPut);
   (void)x;

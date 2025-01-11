@@ -33,10 +33,13 @@ typedef enum chanSs { /* bit map */
 
 /* Channel Store deallocation
  * called during last (deallocating) chanClose
+ *
+ * takes:
+ *  a pointer to a Store closure,
  */
 typedef void
 (*chanSd_t)(
-  void *storeContext
+  void *storeClosure
  ,chanSs_t state
 );
 
@@ -53,44 +56,54 @@ typedef enum chanSw { /* bit map */
 } chanSw_t;
 
 /* Channel Store implementation
+ * called to perform Store operation and release begin stablity
  *
- * A Channel Store takes a pointer to a Store context,
+ * takes:
+ *  a pointer to a Store closure,
  *  the operation the Channel wants to perform on the Store
  *  indication of waiting Gets and Puts
  *  and a value pointer
  * Return the state of the Store as it relates to Get and Put.
  *  if zero, shutdown the channel
- * The Store is called under protection of a Channel operation mutex.
  */
 typedef chanSs_t
 (*chanSi_t)(
-  void *storeContext
+  void *storeClosure
  ,chanSo_t oper
  ,chanSw_t wait
  ,void **val
 );
 
 /* Channel Store allocation
+ * called to allocate a Channel Store
  *
- * A chanCreate takes a pointer to a Store allocation function
- *  a realloc() like function
- *  a free() like function
- *  a Store item dequeue function
- *  a pointer to a pointer to a Store context
- *  a pointer to a pointer to a Channel wake context
- *  a pointer to a pointer to a Channel wake callback that takes the above context and a Store state
- *  specific arguments to the allocation function
+ * receives:
+ *  a realloc() like function (from chanCreate)
+ *  a free() like function (from chanCreate)
+ *  a Store item dequeue function (from chanCreate)
+ *  a wake function
+ *  a wake closure
+ *
+ * provides:
+ *  a Store deallocation function or zero
+ *  a Store implementation function
+ *  a Store closure
+ *
+ * takes additioal specific arguments
+ *
  * Return a Store state
- *  if zero, fail
+ *  if zero, failed
  */
 typedef chanSs_t
 (*chanSa_t)(
   void *(*realloc)(void *, unsigned long)
  ,void (*free)(void *)
  ,void (*dequeue)(void *)
- ,void *wakeContext
  ,int (*wake)(void *, chanSs_t)
- ,void **storeContext
+ ,void *wakeClosure
+ ,chanSd_t *deallocation
+ ,chanSi_t *implementation
+ ,void **storeClosure
  ,va_list
 );
 
@@ -117,9 +130,7 @@ typedef struct chan chan_t;
  *
  * When allocating the Channel, supply:
  *  a Store item dequeue function (0 if none)
- *  a Store deallocation function, chanSd_t (0 if none)
- *  a Store implementation function, chanSi_t (0 if none)
- *  a Store allocation function, chanSa_t (0 if none)
+ *  a Store allocation function (0 if none)
  *  additional allocation parameters
  *
  * Return 0 on error (memory allocation)
@@ -128,8 +139,6 @@ typedef struct chan chan_t;
 chan_t *
 chanCreate(
   void (*dequeue)(void *)
- ,chanSd_t deallocation
- ,chanSi_t implementation
  ,chanSa_t allocation
  ,...
 );
@@ -199,7 +208,7 @@ chanOp(
 typedef struct chanArr {
   chan_t *c;  /* channel to operate on, 0 == chanOpNop */
   void **v;   /* where to get/put or 0 for monitor */
-  void *x;    /* application context - not used by channels */
+  void *x;    /* application closure - not used by channels */
   chanOp_t o;
   chanOs_t s;
 } chanArr_t;

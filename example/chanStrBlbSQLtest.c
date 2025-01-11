@@ -34,30 +34,27 @@
  *  cc -g -o chanStrBlbSQLtest chanStrBlbSQLtest.o chanStrBlbSQL.o chanBlb.o chanStrFIFO.o chan.o sqlite3.o -lpthread
  *
  * Usage:
- *  ./chanStrBlbSQLtest file locking(0:NORMAL,1:EXCLUSIVE) journal(0:DELETE,1:TRUNCATE,2:PERSIST,3:WAL) synchronous(0:OFF,1:NORMAL,2:FULL,3:EXTRA) messages g|p|b
+ *  ./chanStrBlbSQLtest file journal(0:DELETE,1:TRUNCATE,2:PERSIST,3:WAL) synchronous(0:OFF,1:NORMAL,2:FULL,3:EXTRA) messages g|p|b
  *
  *  (file for SQLite, :memory: is fast but much more expensive than chanStrFIFO, which is used if file is zero length)
- *  (SQLite PRAGMA locking_mode, 0=NORMAL, 1=EXCLUSIVE)
  *  (SQLite PRAGMA journal_mode, 0=DELETE, 1=TRUNCATE, 2=PERSIST, 3=WAL)
  *  (SQLite PRAGMA synchronous, 0=OFF, 1=NORMAL, 2=FULL, 3=EXTRA)
  *  (message limit, only significant on initial create)
  *  (g:get or p:put or b:both get and put)
  *
  * run it like:
- *  (with locking_mode=1(EXCLUSIVE), must run in sequence.)
- *  (with locking_mode=0(NORMAL), can run concurrently.)
  *
- *  ./chanStrBlbSQLtest test.db 0 2 2 100 p < README.md
+ *  ./chanStrBlbSQLtest test.db 0 2 100 p < README.md
  *   test.db is full of README.md blobs
  *
- *  ./chanStrBlbSQLtest test.db 0 2 2 100 g > README.out
+ *  ./chanStrBlbSQLtest test.db 0 2 100 g > README.out
  *   test.db is empty
  *
  *  cmp README.md README.out
  *
  * or both in one process:
  *
- *  ./chanStrBlbSQLtest test.db 1 2 2 100 b < README.md > README.out
+ *  ./chanStrBlbSQLtest test.db 0 2 100 b < README.md > README.out
  *   test.db is empty
  *
  *  cmp README.md README.out
@@ -88,7 +85,7 @@ inT(
     void *t;
 
     m->l = i;
-    if ((t = realloc(m, chanBlb_tSize(m->l))))
+    if (i < BUFSIZ && (t = realloc(m, chanBlb_tSize(m->l))))
       m = t;
     if (chanOp(0, v, (void **)&m, chanOpPut) != chanOsPut)
       break;
@@ -106,8 +103,7 @@ outT(
   chanBlb_t *m;
 
   pthread_cleanup_push((void(*)(void*))chanClose, v);
-  /* timeout is 1 second because locking_mode=NORMAL monitor thread checks each 1/2 second */
-  while (chanOp(1/*second*/ * 1000/*milli*/ * 1000/*micro*/ * 1000/*nano*/, v, (void **)&m, chanOpGet) == chanOsGet) {
+  while (chanOp(0, v, (void **)&m, chanOpGet) == chanOsGet) {
     unsigned int l;
     int i;
 
@@ -124,39 +120,48 @@ main(
   int argc
  ,char *argv[]
 ){
+  enum {
+   arg_prog
+  ,arg_file
+  ,arg_journal
+  ,arg_synchronous
+  ,arg_messages
+  ,arg_operation
+  ,arg_NUM
+  };
   chan_t *c;
   pthread_t in;
   pthread_t out;
   sqlite3_int64 z;
-  int l;
   int j;
   int s;
 
-  if (argc < 7
-   || ((l = atoi(argv[2])) < 0 || l > 1)
-   || ((j = atoi(argv[3])) < 0 || j > 3)
-   || ((s = atoi(argv[4])) < 0 || s > 3)
-   || (z = atoll(argv[5])) <= 0
-   || (*argv[6] != 'g' && *argv[6] != 'p' && *argv[6] != 'b')
-   || (!*argv[1] && *argv[6] != 'b')) {
-    fprintf(stderr, "Usage: %s file"
-                    " locking(0:NORMAL,1:EXCLUSIVE)"
+  if (argc < arg_NUM
+   || ((j = atoi(argv[arg_journal])) < 0 || j > 3)
+   || ((s = atoi(argv[arg_synchronous])) < 0 || s > 3)
+   || (z = atoll(argv[arg_messages])) <= 0
+   || (*argv[arg_operation] != 'g' && *argv[arg_operation] != 'p' && *argv[arg_operation] != 'b')
+   || (!*argv[arg_file] && *argv[arg_operation] != 'b')) {
+    fprintf(stderr, "Usage: %s"
+                    " file"
                     " journal(0:DELETE,1:TRUNCATE,2:PERSIST,3:WAL)"
                     " synchronous(0:OFF,1:NORMAL,2:FULL,3:EXTRA)"
-                    " messages g|p|b\n", argv[0]);
+                    " messages"
+                    " g|p|b\n"
+                    "\n", argv[arg_prog]);
     return (1);
   }
   chanInit(realloc, free);
   sqlite3_initialize();
-  if (*argv[1])
-    c = chanCreate(free, chanStrBlbSQLd, chanStrBlbSQLi, chanStrBlbSQLa, malloc, argv[1], l, j, s, z);
+  if (*argv[arg_file])
+    c = chanCreate(free, chanStrBlbSQLa, malloc, argv[arg_file], j, s, z);
   else
-    c = chanCreate(free, chanStrFIFOd, chanStrFIFOi, chanStrFIFOa, z);
+    c = chanCreate(free, chanStrFIFOa, z);
   if (!c) {
     perror("chanCreate");
     return (1);
   }
-  if (*argv[6] != 'g') {
+  if (*argv[arg_operation] != 'g') {
     chanOpen(c);
     if (pthread_create(&in, 0, inT, c)) {
       chanClose(c);
@@ -166,7 +171,7 @@ main(
       return (1);
     }
   }
-  if (*argv[6] != 'p') {
+  if (*argv[arg_operation] != 'p') {
     chanOpen(c);
     if (pthread_create(&out, 0, outT, c)) {
       chanClose(c);
@@ -176,11 +181,11 @@ main(
       return (1);
     }
   }
-  if (*argv[6] != 'g')
+  if (*argv[arg_operation] != 'g')
     pthread_join(in, 0);
-  if (*argv[6] != 'p')
-    pthread_join(out, 0);
   chanShut(c);
+  if (*argv[arg_operation] != 'p')
+    pthread_join(out, 0);
   chanClose(c);
   sqlite3_shutdown();
   return (0);

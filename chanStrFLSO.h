@@ -21,27 +21,15 @@
 #ifndef __CHANSTRFLSO_H__
 #define __CHANSTRFLSO_H__
 
-void
-chanStrFLSOd(
-  void *context
- ,chanSs_t state
-);
-
-chanSs_t
-chanStrFLSOi(
-  void *context
- ,chanSo_t operation
- ,chanSw_t waiting
- ,void **value
-);
-
 chanSs_t
 chanStrFLSOa(
   void *(*realloc)(void *, unsigned long)
  ,void (*free)(void *)
  ,void (*dequeue)(void *)
- ,void *wakeContext
  ,int (*wake)(void *, chanSs_t)
+ ,void *wakeContext
+ ,chanSd_t *deallocation
+ ,chanSi_t *implementation
  ,void **storeContext
  ,va_list list
 /* unsigned int max */

@@ -21,28 +21,16 @@
 #ifndef __CHANSTRFIFO_H__
 #define __CHANSTRFIFO_H__
 
-void
-chanStrFIFOd(
-  void *context
- ,chanSs_t state
-);
-
-chanSs_t
-chanStrFIFOi(
-  void *context
- ,chanSo_t operation
- ,chanSw_t waiting
- ,void **value
-);
-
 chanSs_t
 chanStrFIFOa(
   void *(*realloc)(void *, unsigned long)
  ,void (*free)(void *)
  ,void (*dequeue)(void *)
- ,void *wakeContext
  ,int (*wake)(void *, chanSs_t)
- ,void **storeContext
+ ,void *wakeClosure
+ ,chanSd_t *deallocation
+ ,chanSi_t *implementation
+ ,void **storeClosure
  ,va_list list
 /* unsigned int size */
 );

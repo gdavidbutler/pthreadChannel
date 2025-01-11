@@ -21,27 +21,15 @@
 #ifndef __CHANSTRLIFO_H__
 #define __CHANSTRLIFO_H__
 
-void
-chanStrLIFOd(
-  void *context
- ,chanSs_t state
-);
-
-chanSs_t
-chanStrLIFOi(
-  void *context
- ,chanSo_t operation
- ,chanSw_t waiting
- ,void **value
-);
-
 chanSs_t
 chanStrLIFOa(
   void *(*realloc)(void *, unsigned long)
  ,void (*free)(void *)
  ,void (*dequeue)(void *)
- ,void *wakeContext
  ,int (*wake)(void *, chanSs_t)
+ ,void *wakeContext
+ ,chanSd_t *deallocation
+ ,chanSi_t *implementation
  ,void **storeContext
  ,va_list list
 /* unsigned int size */

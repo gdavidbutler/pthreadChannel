@@ -89,11 +89,11 @@ main(
   int i;
 
   chanInit(realloc, free);
-  if (!(c[0] = chanCreate(free, chanStrFIFOd, chanStrFIFOi, chanStrFIFOa, 16))) {
+  if (!(c[0] = chanCreate(free, chanStrFIFOa, 16))) {
     perror("chanCreate");
     return (1);
   }
-  if (!(c[1] = chanCreate(free, chanStrFIFOd, chanStrFIFOi, chanStrFIFOa, 16))) {
+  if (!(c[1] = chanCreate(free, chanStrFIFOa, 16))) {
     chanClose(c[0]);
     perror("chanCreate");
     return (1);
