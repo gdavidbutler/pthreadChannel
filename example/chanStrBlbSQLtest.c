@@ -20,7 +20,7 @@
 
 /*
  * compile SQLite with something like:
- * (SQLITE_THREADSAFE can be anything as the single connection is guarded with mutexes.)
+ * (SQLITE_THREADSAFE can be anything as the single connection is guarded with a mutex.)
  *
  *  cc -std=c99 -Isqlite-amalgamation-??????? -DSQLITE_THREADSAFE=0 -Os -g -c sqlite-amalgamation-???????/sqlite3.c
  *
@@ -31,7 +31,7 @@
  *
  * link it all together with channel objects like:
  *
- *  cc -g -o chanStrBlbSQLtest chanStrBlbSQLtest.o chanStrBlbSQL.o chanBlb.o chanStrFIFO.o chan.o sqlite3.o -lpthread
+ *  cc -g -o chanStrBlbSQLtest chanStrBlbSQLtest.o chanStrBlbSQL.o sqlite3.o chanBlb.o chanStrFIFO.o chan.o -lpthread
  *
  * Usage:
  *  ./chanStrBlbSQLtest file journal(0:DELETE,1:TRUNCATE,2:PERSIST,3:WAL) synchronous(0:OFF,1:NORMAL,2:FULL,3:EXTRA) messages g|p|b

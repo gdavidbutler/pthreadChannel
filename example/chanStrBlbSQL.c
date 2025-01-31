@@ -131,7 +131,7 @@ err:
   sqlite3_step(C->rlb), sqlite3_reset(C->rlb);
   pthread_mutex_unlock(&C->m);
   return (0);
-  (void)w; /* not concerend with latency */
+  (void)w; /* not concerned with latency */
 }
 
 #undef V
@@ -225,29 +225,29 @@ chanStrBlbSQLa(
     goto err;
   sqlite3_finalize(c->bgn);
   if (sqlite3_prepare_v3(c->b
-   ,"BEGIN IMMEDIATE"
-   ,-1, SQLITE_PREPARE_PERSISTENT, &c->bgn, 0)
+    ,"BEGIN IMMEDIATE"
+    ,-1, SQLITE_PREPARE_PERSISTENT, &c->bgn, 0)
    || sqlite3_prepare_v3(c->b
-   ,"COMMIT"
-   ,-1, SQLITE_PREPARE_PERSISTENT, &c->cmt, 0)
+    ,"COMMIT"
+    ,-1, SQLITE_PREPARE_PERSISTENT, &c->cmt, 0)
    || sqlite3_prepare_v3(c->b
-   ,"ROLLBACK"
-   ,-1, SQLITE_PREPARE_PERSISTENT, &c->rlb, 0)
+    ,"ROLLBACK"
+    ,-1, SQLITE_PREPARE_PERSISTENT, &c->rlb, 0)
    || sqlite3_prepare_v3(c->b
-   ,"INSERT INTO \"B\" VALUES((SELECT \"t\" FROM \"H\" WHERE \"i\"=1),?1)"
-   ,-1, SQLITE_PREPARE_PERSISTENT, &c->insB, 0)
+    ,"INSERT INTO \"B\" VALUES((SELECT \"t\" FROM \"H\" WHERE \"i\"=1),?1)"
+    ,-1, SQLITE_PREPARE_PERSISTENT, &c->insB, 0)
    || sqlite3_prepare_v3(c->b
-   ,"UPDATE \"H\" SET \"t\"=CASE WHEN \"t\"=\"l\" THEN 1 ELSE \"t\"+1 END WHERE \"i\"=1 RETURNING \"t\"=\"h\""
-   ,-1, SQLITE_PREPARE_PERSISTENT, &c->updT, 0)
+    ,"UPDATE \"H\" SET \"t\"=CASE WHEN \"t\"=\"l\" THEN 1 ELSE \"t\"+1 END WHERE \"i\"=1 RETURNING \"t\"=\"h\""
+    ,-1, SQLITE_PREPARE_PERSISTENT, &c->updT, 0)
    || sqlite3_prepare_v3(c->b
-   ,"DELETE FROM \"B\" WHERE \"i\"=(SELECT \"h\" FROM \"H\" WHERE \"i\"=1) RETURNING \"b\""
-   ,-1, SQLITE_PREPARE_PERSISTENT, &c->delB, 0)
+    ,"DELETE FROM \"B\" WHERE \"i\"=(SELECT \"h\" FROM \"H\" WHERE \"i\"=1) RETURNING \"b\""
+    ,-1, SQLITE_PREPARE_PERSISTENT, &c->delB, 0)
    || sqlite3_prepare_v3(c->b
-   ,"UPDATE \"H\" SET \"h\"=CASE WHEN \"h\"=\"l\" THEN 1 ELSE \"h\"+1 END WHERE \"i\"=1 RETURNING \"h\"=\"t\""
-   ,-1, SQLITE_PREPARE_PERSISTENT, &c->updH, 0)
+    ,"UPDATE \"H\" SET \"h\"=CASE WHEN \"h\"=\"l\" THEN 1 ELSE \"h\"+1 END WHERE \"i\"=1 RETURNING \"h\"=\"t\""
+    ,-1, SQLITE_PREPARE_PERSISTENT, &c->updH, 0)
    || sqlite3_prepare_v3(c->b
-   ,"WITH \"T\"(\"c\")AS(SELECT COUNT(*) FROM \"B\")SELECT \"T\".\"c\">0,\"T\".\"c\"<\"H\".\"l\" FROM \"H\",\"T\" WHERE \"H\".\"i\"=1"
-   ,-1, SQLITE_PREPARE_PERSISTENT, &c->sel, 0)
+    ,"WITH \"T\"(\"c\")AS(SELECT COUNT(*) FROM \"B\")SELECT \"T\".\"c\">0,\"T\".\"c\"<\"H\".\"l\" FROM \"H\",\"T\" WHERE \"H\".\"i\"=1"
+    ,-1, SQLITE_PREPARE_PERSISTENT, &c->sel, 0)
   )
     goto err;
   if (sqlite3_step(c->sel) != SQLITE_ROW)
@@ -268,6 +268,6 @@ fprintf(stderr, "SQLite error %s\n", sqlite3_errmsg(c->b));
   sqlite3_step(c->rlb), sqlite3_reset(c->rlb);
   chanStrBlbSQLd(c, 0);
   return (0);
-  (void)w;
-  (void)x;
+  (void)w; /* not shared yet */
+  (void)x; /* not shared yet */
 }

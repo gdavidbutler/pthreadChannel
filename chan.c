@@ -235,7 +235,7 @@ static const unsigned int chanSu = 0x80; /* is shutdown */
   }\
 } while (0)
 
-/* Store callback to set chanSs_t and wake blocked threads */
+/* Store callback to set chanSs_t and wake threads */
 static int
 chanWake(
   chan_t *c
@@ -373,8 +373,17 @@ chanClose(
     pthread_mutex_unlock(&c->m);
     return;
   }
-  c->l |= chanSu;
   while ((c->l & (chanGe | chanPe | chanEe | chanUe | chanHe)) != (chanGe | chanPe | chanEe | chanUe | chanHe)) {
+    cpr_t *m;
+    cpr_t *p;
+    unsigned int l;
+
+    m = 0;
+    WAKE(chanGe, g, 1, ;);
+    WAKE(chanPe, p, 1, ;);
+    WAKE(chanEe, e, 1, ;);
+    WAKE(chanUe, u, 1, ;);
+    WAKE(chanHe, h, 1, ;);
     pthread_mutex_unlock(&c->m);
     sched_yield();
     pthread_mutex_lock(&c->m);
