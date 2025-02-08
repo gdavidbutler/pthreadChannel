@@ -432,7 +432,7 @@ fwProcess(
     p = c;
   c = v->b * (c / p);
   if (p > 1) {
-    if (!(fwt.snk = chanCreate(0, 0, 0, 0)) || !(fwt.src = chanCreate(0, 0, 0, 0))) {
+    if (!(fwt.snk = chanCreate(0, 0)) || !(fwt.src = chanCreate(0, 0))) {
       chanClose(fwt.snk);
       return (r);
     }
