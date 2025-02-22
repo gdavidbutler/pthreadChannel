@@ -36,6 +36,7 @@ chanBlb_tSize(
 typedef enum {
   chanBlbFrmNf /* no framing, argument is inputSize */
  ,chanBlbFrmNs /* NetString input and output framing, non-zero argument is input Blob maxSize, otherwise no arbitrary max */
+ ,chanBlbFrmFc /* FCGI input and output framing, (argument not used) first three bytes are FCGI type, request1 and request0 */
  ,chanBlbFrmN0 /* NETCONF/1.0 input and output framing, non-zero argument is input Blob maxSize, otherwise no arbitrary max */
  ,chanBlbFrmN1 /* NETCONF/1.1 input and output framing, non-zero argument is input Blob maxSize, otherwise no arbitrary max */
  ,chanBlbFrmH1 /* HTTP/1.1 input framing and no output framing, non-zero argument is input Blob maxSize, otherwise no arbitrary max */

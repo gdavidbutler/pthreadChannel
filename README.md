@@ -136,6 +136,8 @@ Several "framing" methods are provided (useful with streaming protocols):
   * No framing. Writes are Blob size. Reads are, within a specified maximum, sized by the amount read. (Most useful with datagram protocols.)
 * chanBlbNs
   * Read and write framed using [Netstring](https://en.wikipedia.org/wiki/Netstring).
+* chanBlbFc
+  * Read and write framed using [FastCGI](https://en.wikipedia.org/wiki/FastCGI).
 * chanBlbN0
   * Read and write framed using [NETCONF](https://en.wikipedia.org/wiki/NETCONF) 1.0.
 (This flawed, XML specific, framer is only useful for NETCONF before a transition to NETCONF 1.1.)
