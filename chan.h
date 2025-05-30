@@ -56,7 +56,7 @@ typedef enum chanSw { /* bit map */
 } chanSw_t;
 
 /* Channel Store implementation
- * called to perform Store operation and release begin stablity
+ * called to perform Store operation
  *
  * takes:
  *  a pointer to a Store closure,
@@ -81,7 +81,7 @@ typedef chanSs_t
  *  a realloc() like function (from chanCreate)
  *  a free() like function (from chanCreate)
  *  a Store item dequeue function (from chanCreate)
- *  a wake function
+ *  a wake function (update store state outside a store operation call)
  *  a wake closure
  *
  * provides:

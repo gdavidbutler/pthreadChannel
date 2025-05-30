@@ -32,7 +32,7 @@ chanStrBlbSQLa(
  ,chanSi_t *implementation
  ,void **storeClosure
  ,va_list list
-/*  void *(*malloc)(unsigned long) */
+/*  void *(*allocBlb)(unsigned long) */
 /*  const char *path */
 /*  unsigned int journal_mode */
 /*  unsigned int synchronous */

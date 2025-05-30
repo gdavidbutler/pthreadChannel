@@ -145,6 +145,6 @@ chanStrFLSOa(
   *i = chanStrFLSOi;
   *v = c;
   return (chanSsCanPut);
-  (void)x;
-  (void)w;
+  (void)w; /* not needed */
+  (void)x; /* not needed */
 }

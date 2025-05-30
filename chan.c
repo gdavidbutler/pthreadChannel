@@ -130,9 +130,10 @@ gCpr(
 
 /* chan */
 struct chan {
-  chanSd_t d;      /* store deallocation function */
   chanSi_t i;      /* store implementation function */
-  void *v;         /* if s, store context else value */
+  chanSd_t d;      /* store deallocation function */
+  void (*s)(void*);/* if no store implementation/deallocation, item deallocation function */
+  void *v;         /* if store implementation, store context else value */
   cpr_t **g;       /* get circular queue */
   cpr_t **p;       /* put circular queue */
   cpr_t **e;       /* get event circular queue */
@@ -235,7 +236,7 @@ static const unsigned int chanSu = 0x80; /* is shutdown */
   }\
 } while (0)
 
-/* Store callback to set chanSs_t and wake threads */
+/* Store callback to update chanSs_t and wake threads */
 static int
 chanWake(
   chan_t *c
@@ -276,7 +277,7 @@ chanWake(
 
 chan_t *
 chanCreate(
-  void (*q)(void*)
+  void (*s)(void*)
  ,chanSa_t a
  ,...
 ){
@@ -300,22 +301,21 @@ error:
     ChanF(c);
     return (0);
   }
-  c->d = 0;
   c->i = 0;
+  c->d = 0;
+  c->s = s;
   if (a) {
     va_list l;
 
     va_start(l, a);
-    c->t = a(ChanA, ChanF, q, (int(*)(void*,chanSs_t))chanWake, c, &c->d, &c->i, &c->v, l);
+    c->t = a(ChanA, ChanF, c->s, (int(*)(void*,chanSs_t))chanWake, c, &c->d, &c->i, &c->v, l);
     va_end(l);
-    if (!c->t || !c->i) {
+    if (!c->t || !c->d || !c->i) {
       pthread_mutex_destroy(&c->m);
       goto error;
     }
-  } else {
-    c->d = (chanSd_t)q;
+  } else
     c->t = chanSsCanPut;
-  }
   c->gs = c->ps = c->es = c->us = c->hs = 1;
   c->gh = c->ph = c->eh = c->uh = c->hh = 0;
   c->gt = c->pt = c->et = c->ut = c->ht = 0;
@@ -394,8 +394,10 @@ chanClose(
   ChanF(c->u);
   ChanF(c->h);
   pthread_mutex_unlock(&c->m);
-  if (c->d && (c->i || c->t & chanSsCanGet))
+  if (c->d)
     c->d(c->v, c->t);
+  else if (c->s && c->t & chanSsCanGet)
+    c->s(c->v);
   pthread_mutex_destroy(&c->m);
   ChanF(c);
 }

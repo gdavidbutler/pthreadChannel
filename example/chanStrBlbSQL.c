@@ -178,7 +178,7 @@ chanStrBlbSQLa(
   o = va_arg(l, unsigned int);             /* journal_mode */
   y = va_arg(l, unsigned int);             /* synchronous */
   z = va_arg(l, sqlite3_int64);            /* size to allow */
-  if (!a || !f || !p
+  if (!a || !f || !n || !p
    || o >= sizeof (jnl) / sizeof (jnl[0])
    || y >= sizeof (syn) / sizeof (syn[0])
    || !z)
@@ -268,6 +268,6 @@ fprintf(stderr, "SQLite error %s\n", sqlite3_errmsg(c->b));
   sqlite3_step(c->rlb), sqlite3_reset(c->rlb);
   chanStrBlbSQLd(c, 0);
   return (0);
-  (void)w; /* not shared yet */
-  (void)x; /* not shared yet */
+  (void)w; /* not yet */
+  (void)x; /* not yet */
 }

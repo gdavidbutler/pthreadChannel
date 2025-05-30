@@ -88,12 +88,12 @@ servT(
   chanArr_t p[2]; /* ingress and egress channels */
 
   s[0] = (int)(long)v;
-  pthread_cleanup_push((void(*)(void*))close, (void *)(long)s[0]);
+  pthread_cleanup_push(cls, (void *)(long)s[0]);
   if ((s[1] = socket(Caddr->ai_family, Caddr->ai_socktype, Caddr->ai_protocol)) < 0) {
     perror("socket");
     goto exit0;
   }
-  pthread_cleanup_push((void(*)(void*))close, (void *)(long)s[1]);
+  pthread_cleanup_push(cls, (void *)(long)s[1]);
   if (connect(s[1], Caddr->ai_addr, Caddr->ai_addrlen)) {
     perror("connect");
     goto exit1;
@@ -141,7 +141,7 @@ listenT(
   int c;
 
   l = (int)(long)v;
-  pthread_cleanup_push((void(*)(void*))close, (void *)(long)l);
+  pthread_cleanup_push(cls, (void *)(long)l);
   while ((c = accept(l, &a, &s)) >= 0) {
     pthread_t t;
 

@@ -19,6 +19,11 @@
  */
 
 /*
+ * If you have SQLite installed in your system, after setting SQLITE flags in toplevel Makefile, run:
+ *   make chanStrBlbSQLtest
+ *
+ * else...
+ *
  * compile SQLite with something like:
  * (SQLITE_THREADSAFE can be anything as the single connection is guarded with a mutex.)
  *
