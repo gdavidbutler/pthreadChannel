@@ -26,11 +26,14 @@ chanStrBlbSQLtest: example/chanStrBlbSQLtest.c example/chanStrBlbSQL.h chan.h St
 chanStrBlbSQL.o: example/chanStrBlbSQL.c example/chanStrBlbSQL.h chan.h Str/chanStrFIFO.h Blb/chanBlb.h
 	$(CC) $(SQLITE_CFLAGS) -Iexample -c example/chanStrBlbSQL.c
 
-# for MacOS change to
-#	$(CC) $(CFLAGS) -D_GNU_SOURCE -c chan.c
+# for MacOS
+#	$(CC) $(CFLAGS) -c chan.c
+# for setclock
+#	$(CC) $(CFLAGS) -DHAVE_CONDATTR_SETCLOCK -c chan.c
+# for GNU
 #	$(CC) $(CFLAGS) -D_GNU_SOURCE -DHAVE_CONDATTR_SETCLOCK -c chan.c
 chan.o: chan.c chan.h
-	$(CC) $(CFLAGS) -D_GNU_SOURCE -c chan.c
+	$(CC) $(CFLAGS) -D_GNU_SOURCE -DHAVE_CONDATTR_SETCLOCK -c chan.c
 
 chanStrFIFO.o: Str/chanStrFIFO.c Str/chanStrFIFO.h chan.h
 	$(CC) $(CFLAGS) -c Str/chanStrFIFO.c
