@@ -98,7 +98,7 @@ A maximum sized Channel FIFO Store implementation is provided.
 When a context is created, a size is allocated.
 (See [pipeproxy](#Examples).)
 
-Find the API in chanStrFIFO.h.
+Find the API in Str/chanStrFIFO.h.
 
 A maximum sized, latency sensitive, Channel FIFO Store (FLSO) implementation is provided.
 When a context is created, a maximum is allocated and starts at initial.
@@ -108,12 +108,12 @@ To balance latency and efficiency size is adjusted by:
 * After a Get, if the Store is empty and there are no waiting Puts, the size is decremented.
 * Before a Get, if the Store is full and there are waiting Puts, the size is incremented.
 
-Find the API in chanStrFLSO.h.
+Find the API in Str/chanStrFLSO.h.
 
 A maximum sized Channel LIFO Store implementation is provided.
 When a context is created, a size is allocated.
 
-Find the API in chanStrLIFO.h.
+Find the API in Str/chanStrLIFO.h.
 
 ### Blob
 
@@ -154,7 +154,7 @@ Blob flow (repeats):
       * Non-zero content Blob
   * Write is not framed.
 
-Find the API in chanBlb.h:
+Find the API in Blb/chanBlb.h:
 
 * chanBlb
   * Blob transport via ingress and egress Channels.
@@ -183,14 +183,14 @@ Find the API in chanBlb.h:
     * pthread_condattr_setclock
     * pthread_condattr_destroy
     * pthread_yield
-* chanStr*.c:
+* Str/chanStr*.c:
   * stdarg.h
   * chan.h
-  * chanStr.h
-* chanBlb.c:
+  * Str/chanStr.h
+* Blb/chanBlb.c:
   * stdarg.h
   * chan.h
-  * chanBlb.h
+  * Blb/chanBlb.h
   * pthread.h
     * pthread_create
     * pthread_detach
