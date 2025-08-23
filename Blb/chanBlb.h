@@ -33,6 +33,8 @@ chanBlb_tSize(
   unsigned int octets
 );
 
+/**********************************************************/
+
 typedef enum {
   chanBlbFrmNf /* no framing, argument is inputSize */
  ,chanBlbFrmNs /* NetString input and output framing, non-zero argument is input Blob maxSize, otherwise no arbitrary max */
