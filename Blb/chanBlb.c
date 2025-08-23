@@ -48,7 +48,7 @@ struct chanBlbE {
   struct chanBlbD *ds;
   chan_t *c;
   void *x;
-  unsigned int (*xo)(void *, const void *, unsigned int);
+  unsigned int (*xf)(void *, const void *, unsigned int);
   void (*xc)(void *);
   void *f;
   void (*fc)(void *);
@@ -97,7 +97,7 @@ chanNfE(
     unsigned int i;
 
     pthread_cleanup_push((void(*)(void*))V->mf, m);
-    for (l = 0, i = 1; l < m->l && (i = V->xo(V->x, m->b + l, m->l - l)) > 0; l += i);
+    for (l = 0, i = 1; l < m->l && (i = V->xf(V->x, m->b + l, m->l - l)) > 0; l += i);
     pthread_cleanup_pop(1); /* V->mf(m) */
     if (!i)
       break;
@@ -152,7 +152,7 @@ chanNsE(
       for (s1 = m->b, o = m->l; o; --o, ++s2, ++s1)
         *s2 = *s1;
       *s2 = ',';
-      for (o = 0; o < l && (i = V->xo(V->x, t + o, l - o)) > 0; o += i);
+      for (o = 0; o < l && (i = V->xf(V->x, t + o, l - o)) > 0; o += i);
       pthread_cleanup_pop(1); /* V->mf(t) */
     } else
       i = 0;
@@ -201,7 +201,7 @@ chanFcE(
       *(b + 3) = *(m->b + 2);
       if (m->l == 3) {
         *(b + 4) = *(b + 5) = *(b + 6) = 0;
-        for (o1 = 0, l1 = 8; o1 < l1 && (i = V->xo(V->x, b + o1, l1 - o1)) > 0; o1 += i);
+        for (o1 = 0, l1 = 8; o1 < l1 && (i = V->xf(V->x, b + o1, l1 - o1)) > 0; o1 += i);
       } else for (o1 = 3; o1 < m->l; o1 += l1) {
         unsigned char *s1;
         unsigned char *s2;
@@ -217,7 +217,7 @@ chanFcE(
         for (s2 = b + 8, s1 = m->b + o1, l2 = l1; l2; ++s2, ++s1, --l2)
           *s2 = *s1;
         l2 = 8 + l1 + i;
-        for (o2 = 0; o2 < l2 && (i = V->xo(V->x, b + o2, l2 - o2)) > 0; o2 += i);
+        for (o2 = 0; o2 < l2 && (i = V->xf(V->x, b + o2, l2 - o2)) > 0; o2 += i);
       }
     } else
       i = 0;
@@ -273,7 +273,7 @@ chanN0E(
       *s2++ = ']';
       *s2++ = ']';
       *s2 = '>';
-      for (o = 0; o < l && (i = V->xo(V->x, t + o, l - o)) > 0; o += i);
+      for (o = 0; o < l && (i = V->xf(V->x, t + o, l - o)) > 0; o += i);
       pthread_cleanup_pop(1); /* V->mf(t) */
     } else
       i = 0;
@@ -342,7 +342,7 @@ chanN1E(
       *s2++ = '#';
       *s2++ = '#';
       *s2 = '\n';
-      for (o = 0; o < l && (i = V->xo(V->x, t + o, l - o)) > 0; o += i);
+      for (o = 0; o < l && (i = V->xf(V->x, t + o, l - o)) > 0; o += i);
       pthread_cleanup_pop(1); /* V->mf(t) */
     } else
       i = 0;
@@ -369,7 +369,7 @@ struct chanBlbI {
   chanBlb_t *b;
   unsigned int l;
   void *x;
-  unsigned int (*xo)(void *, void *, unsigned int);
+  unsigned int (*xf)(void *, void *, unsigned int);
   void (*xc)(void *);
   void *f;
   void (*fc)(void *);
@@ -428,7 +428,7 @@ chanNfI(
     void *t;
 
     pthread_cleanup_push((void(*)(void*))V->mf, m);
-    i = V->xo(V->x, m->b, V->l);
+    i = V->xf(V->x, m->b, V->l);
     pthread_cleanup_pop(0); /* V->mf(m) */
     if (!i)
       break;
@@ -494,7 +494,7 @@ chanNsI(
   p[0].o = chanOpPut;
   i0 = 0;
   while ((i = V->b ? chanBlbConsume(V->mf, &V->b, b + i0, sizeof (b) - i0)
-                   :           V->xo(V->x, b + i0, sizeof (b) - i0)) > 0) {
+                   :           V->xf(V->x, b + i0, sizeof (b) - i0)) > 0) {
     unsigned int i1;
     unsigned int i2;
     unsigned int i3;
@@ -517,10 +517,10 @@ chanNsI(
     i0 = i2;
     pthread_cleanup_push((void(*)(void*))V->mf, m);
     for (i2 = m->l; i3 < i2 && (i = V->b ? chanBlbConsume(V->mf, &V->b, m->b + i3, i2 - i3)
-                                                   : V->xo(V->x, m->b + i3, i2 - i3)) > 0; i3 += i);
+                                                   : V->xf(V->x, m->b + i3, i2 - i3)) > 0; i3 += i);
     if (i > 0) {
       if ((i0 && b[--i0] == ',')
-       || (!i0 && (i = V->xo(V->x, b, 1)) == 1 && b[0] == ','))
+       || (!i0 && (i = V->xf(V->x, b, 1)) == 1 && b[0] == ','))
         i = chanOne(0, sizeof (p) / sizeof (p[0]), p) == 1 && p[0].s == chanOsPut;
       else
         i = 0;
@@ -565,7 +565,7 @@ chanFcI(
   p[0].o = chanOpPut;
   i0 = 0;
   while ((i = V->b ? chanBlbConsume(V->mf, &V->b, b + i0, V->l - i0)
-                   :           V->xo(V->x, b + i0, V->l - i0)) > 0) {
+                   :           V->xf(V->x, b + i0, V->l - i0)) > 0) {
     unsigned char *s1;
     unsigned char *s2;
     unsigned int i1;
@@ -653,7 +653,7 @@ chanN0I(
 
     for (; i1 < i0; i1 += i) {
       pthread_cleanup_push((void(*)(void*))V->mf, m);
-      i = V->xo(V->x, m->b + i1, i0 - i1);
+      i = V->xf(V->x, m->b + i1, i0 - i1);
       pthread_cleanup_pop(0); /* V->mf(m) */
       if (!i)
         goto bad;
@@ -733,7 +733,7 @@ chanN1I(
   i0 = 0;
   i1 = 0;
   while ((i = V->b ? chanBlbConsume(V->mf, &V->b, b + i1, sizeof (b) - i1)
-                   :           V->xo(V->x, b + i1, sizeof (b) - i1)) > 0) {
+                   :           V->xf(V->x, b + i1, sizeof (b) - i1)) > 0) {
     void *tv;
     unsigned int i2;
     unsigned int i3;
@@ -778,7 +778,7 @@ chanN1I(
       i1 = i4;
       pthread_cleanup_push((void(*)(void*))V->mf, m);
       for (; i3 && (i = V->b ? chanBlbConsume(V->mf, &V->b, m->b + i0, i3)
-                             :           V->xo(V->x, m->b + i0, i3)) > 0; i3 -= i, i0 += i);
+                             :           V->xf(V->x, m->b + i0, i3)) > 0; i3 -= i, i0 += i);
       pthread_cleanup_pop(0);
       if (i <= 0)
         goto bad;
@@ -839,7 +839,7 @@ chanH1I(
 
     for (; i1 < i0; i1 += i) {
       pthread_cleanup_push((void(*)(void*))V->mf, m);
-      i = V->xo(V->x, m->b + i1, i0 - i1);
+      i = V->xf(V->x, m->b + i1, i0 - i1);
       pthread_cleanup_pop(0); /* V->mf(m) */
       if (!i)
         goto bad;
@@ -1038,7 +1038,7 @@ endHeaders:
           if (i1 == i0)
             goto bad;
           pthread_cleanup_push((void(*)(void*))V->mf, m);
-          i = V->xo(V->x, m->b + i1, i0 - i1);
+          i = V->xf(V->x, m->b + i1, i0 - i1);
           pthread_cleanup_pop(0); /* V->mf(m) */
           if (!i)
             goto bad;
@@ -1066,7 +1066,7 @@ sizeHeader:
           m = tv;
           s1 = m->b + i1 - i2;
           pthread_cleanup_push((void(*)(void*))V->mf, m);
-          for (s1 = m->b + i1 - i2; i2 < ch && (i = V->xo(V->x, s1 + i2, ch - i2)) > 0; i2 += i);
+          for (s1 = m->b + i1 - i2; i2 < ch && (i = V->xf(V->x, s1 + i2, ch - i2)) > 0; i2 += i);
           pthread_cleanup_pop(0); /* V->mf(m) */
           if (!i) {
             V->mf(m1);
@@ -1120,7 +1120,7 @@ sizeHeader:
             goto bad;
         }
         pthread_cleanup_push((void(*)(void*))V->mf, m);
-        i = V->xo(V->x, m->b + i1, i0 - i1);
+        i = V->xf(V->x, m->b + i1, i0 - i1);
         pthread_cleanup_pop(0); /* V->mf(m) */
         if (!i)
           goto bad;
@@ -1140,7 +1140,7 @@ endTrailers:
           m = tv;
       } else if (i2 < cl) {
         pthread_cleanup_push((void(*)(void*))V->mf, m);
-        for (s1 = m->b; i2 < cl && (i = V->xo(V->x, s1 + i2, cl - i2)) > 0; i2 += i);
+        for (s1 = m->b; i2 < cl && (i = V->xf(V->x, s1 + i2, cl - i2)) > 0; i2 += i);
         pthread_cleanup_pop(0); /* V->mf(m) */
         if (!i) {
           V->mf(m1);
@@ -1183,11 +1183,11 @@ chanBlb(
  ,void (*mf)(void *)
  ,chan_t *i
  ,void *in
- ,unsigned int (*ino)(void *, void *, unsigned int)
+ ,unsigned int (*inf)(void *, void *, unsigned int)
  ,void (*inc)(void *)
  ,chan_t *e
  ,void *ot
- ,unsigned int (*oto)(void *, const void *, unsigned int)
+ ,unsigned int (*otf)(void *, const void *, unsigned int)
  ,void (*otc)(void *)
  ,void *f
  ,void (*fc)(void *)
@@ -1202,8 +1202,8 @@ chanBlb(
   d = 0;
   if (!ma || !mf
    || (!i && !e)
-   || (i && !ino)
-   || (e && !oto)
+   || (i && !inf)
+   || (e && !otf)
    || m < chanBlbFrmNf
    || m > chanBlbFrmH1
    || (m == chanBlbFrmNf && !g)
@@ -1234,7 +1234,7 @@ chanBlb(
     x->ds = d;
     x->c = chanOpen(e);
     x->x = ot;
-    x->xo = oto;
+    x->xf = otf;
     x->xc = otc;
     x->f = f;
     x->fc = fc;
@@ -1272,7 +1272,7 @@ chanBlb(
     x->ds = d;
     x->c = chanOpen(i);
     x->x = in;
-    x->xo = ino;
+    x->xf = inf;
     x->xc = inc;
     x->f = f;
     x->fc = fc;
