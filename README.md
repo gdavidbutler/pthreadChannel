@@ -125,25 +125,32 @@ Unlike non-Blob Channel Stores, Blob Channel Stores can include persistence and 
 Blobs can be tranported via networking routines.
 [Since a pthread can't both wait in a pthread_cond_wait and a poll/select/etc., a pair of blocking reader and writer pthreads are used.]
 
+* chanBlb
+  * Blob transport via ingress and egress Channels.
+
 When applying the API to socket and pipe like intefaces:
 
 * socket: use shutdown on inClose and outClose and close on finClose
 * pipe: use close on inClose and outClose and no finClose
 
-Several "framing" methods are provided (useful with streaming protocols):
+Find the API in Blb/chanBlb.h.
 
-* chanBlbNf
-  * No framing. Writes are Blob size. Reads are, within a specified maximum, sized by the amount read. (Most useful with datagram protocols.)
-* chanBlbNs
-  * Read and write framed using [Netstring](https://en.wikipedia.org/wiki/Netstring).
-* chanBlbFc
+Several "framing" thread implementations are provided (useful with streaming protocols):
+
+* chanBlbFcgi
   * Read and write framed using [FastCGI](https://en.wikipedia.org/wiki/FastCGI).
-* chanBlbN0
+
+* chanBlbNetstring
+  * Read and write framed using [Netstring](https://en.wikipedia.org/wiki/Netstring).
+
+* chanBlbNetconf10
   * Read and write framed using [NETCONF](https://en.wikipedia.org/wiki/NETCONF) 1.0.
 (This flawed, XML specific, framer is only useful for NETCONF before a transition to NETCONF 1.1.)
-* chanBlbN1
+
+* chanBlbNetconf11
   * Read and write framed using [NETCONF](https://en.wikipedia.org/wiki/NETCONF) 1.1.
-* chanBlbH1
+
+* chanBlbHttp1
   * Read framed using [HTTP/1.x](https://en.wikipedia.org/wiki/Hypertext_Transfer_Protocol) on headers Transfer-Encoding (chunked) and Content-Length.
 Blob flow (repeats):
     * Header Blob
@@ -153,49 +160,6 @@ Blob flow (repeats):
     * Else if "Content-Length" header:
       * Non-zero content Blob
   * Write is not framed.
-
-Find the API in Blb/chanBlb.h:
-
-* chanBlb
-  * Blob transport via ingress and egress Channels.
-
-### Channel routine dependencies
-
-* chan.c:
-  * stdarg.h
-  * chan.h
-  * pthread.h
-    * pthread_once
-    * pthread_key_create
-    * pthread_setspecific
-    * pthread_getspecific
-    * pthread_mutex_init
-    * pthread_mutex_lock
-    * pthread_mutex_trylock
-    * pthread_mutex_unlock
-    * pthread_mutex_destroy
-    * pthread_cond_init
-    * pthread_cond_wait
-    * pthread_cond_timedwait
-    * pthread_cond_signal
-    * pthread_cond_destroy
-    * pthread_condattr_init
-    * pthread_condattr_setclock
-    * pthread_condattr_destroy
-    * pthread_yield
-* Str/chanStr*.c:
-  * stdarg.h
-  * chan.h
-  * Str/chanStr.h
-* Blb/chanBlb.c:
-  * stdarg.h
-  * chan.h
-  * Blb/chanBlb.h
-  * pthread.h
-    * pthread_create
-    * pthread_detach
-    * pthread_cleanup_push
-    * pthread_cleanup_pop
 
 ### Examples
 

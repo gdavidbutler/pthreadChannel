@@ -1,6 +1,6 @@
 /*
  * pthreadChannel - an implementation of channels for pthreads
- * Copyright (C) 2016-2024 G. David Butler <gdb@dbSystems.com>
+ * Copyright (C) 2016-2025 G. David Butler <gdb@dbSystems.com>
  *
  * This file is part of pthreadChannel
  *
@@ -35,14 +35,36 @@ chanBlb_tSize(
 
 /**********************************************************/
 
-typedef enum {
-  chanBlbFrmNf /* no framing, argument is inputSize */
- ,chanBlbFrmNs /* NetString input and output framing, non-zero argument is input Blob maxSize, otherwise no arbitrary max */
- ,chanBlbFrmFc /* FCGI input and output framing, (argument not used) first three bytes are FCGI type, request1 and request0 */
- ,chanBlbFrmN0 /* NETCONF/1.0 input and output framing, non-zero argument is input Blob maxSize, otherwise no arbitrary max */
- ,chanBlbFrmN1 /* NETCONF/1.1 input and output framing, non-zero argument is input Blob maxSize, otherwise no arbitrary max */
- ,chanBlbFrmH1 /* HTTP/1.1 input framing and no output framing, non-zero argument is input Blob maxSize, otherwise no arbitrary max */
-} chanBlbFrm_t;
+struct chanBlbEgrCtx {
+  void *(*realloc)(void *, unsigned long);
+  void (*free)(void *);
+  chan_t *chan;
+  void *ctx;
+  unsigned int (*output)(void *ctx, const void *buffer, unsigned int length);
+  void *opaque[4];
+  void (*fin)(void *chanBlbEgrCtx);
+};
+
+struct chanBlbIgrCtx {
+  void *(*realloc)(void *, unsigned long);
+  void (*free)(void *);
+  chan_t *chan;
+  void *ctx;
+  unsigned int (*input)(void *ctx, void *buffer, unsigned int length);
+  void *opaque[4];
+  void (*fin)(void *chanBlbIgrCtx);
+  chanBlb_t *blb; /* initial ingress */
+  unsigned int arg;
+};
+
+/* utility to injest chanBlbIgrCtx->blb */
+unsigned int
+chanBlbIgrBlb(
+  void (*free)(void *)
+ ,chanBlb_t **blob
+ ,void *destination
+ ,unsigned int len
+);
 
 /* Channel Blob
  *
@@ -50,40 +72,43 @@ typedef enum {
  *
  * Provide realloc and free routines to use.
  *
- * Provide an optional ingress chan_t: (if not provided, in parameters are not used)
- *  Otherwise, input() is required, inClose() is optional.
  * Provide an optional egress chan_t: (if not provided, out parameters are not used)
  *  Otherwise, output() is required, outClose() is optional.
- *
- * A chanOpPut of chanBlb_t items on the egress channel does output():
- *  A chanOpGet or output() failure will chanShut(egress) and outClose(out).
- *
  * A chanOpGet on the ingress channel will return chanBlb_t items from input():
  *  A chanOpPut or input() failure will chanShut(ingress) and inClose(in).
+ * Provide an optional egress framer
+ *
+ * Provide an optional ingress chan_t: (if not provided, in parameters are not used)
+ *  Otherwise, input() is required, inClose() is optional.
+ * A chanOpPut of chanBlb_t items on the egress channel does output():
+ *  A chanOpGet or output() failure will chanShut(egress) and outClose(out).
+ * Provide an optional ingress framer
+ * Provide an optional initialIngress; previous input bytes from protocol start
  *
  * After all chanShut(), if provided, finClose(fin) is invoked
  *
  * Provide an optional pthread_create attribute
- * Provide an optional initialIngress; previous input bytes from protocol start
+ * Provide an optional framer argument
  */
 int
 chanBlb(
   void *(*realloc)(void *, unsigned long)
  ,void (*free)(void *)
- ,chan_t *ingress
- ,void *in
- ,unsigned int (*input)(void *in, void *buffer, unsigned int size) /* return 0 on failure */
- ,void (*inClose)(void *in)
  ,chan_t *egress
  ,void *out
  ,unsigned int (*output)(void *out, const void *buffer, unsigned int size) /* return 0 on failure */
  ,void (*outClose)(void *out)
+ ,void *(*egressFrm)(struct chanBlbEgrCtx *)
+ ,chan_t *ingress
+ ,void *in
+ ,unsigned int (*input)(void *in, void *buffer, unsigned int size) /* return 0 on failure */
+ ,void (*inClose)(void *in)
+ ,void *(*ingressFrm)(struct chanBlbIgrCtx *)
+ ,chanBlb_t *initialIngress
  ,void *fin
  ,void (*finClose)(void *out)
  ,pthread_attr_t *attr
- ,chanBlbFrm_t framing
  ,unsigned int argument
- ,chanBlb_t *initialIngress
 ); /* returns 0 on failure */
 
 #endif /* __CHANBLB_H__ */

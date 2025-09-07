@@ -24,8 +24,9 @@
 #include <unistd.h>
 #include <pthread.h>
 #include "chan.h"
-#include "chanBlb.h"
 #include "chanStrFIFO.h"
+#include "chanBlb.h"
+#include "chanBlbNetstring.h"
 
 static void *
 outT(
@@ -104,7 +105,11 @@ main(
     perror("pipe");
     return (1);
   }
-  if (!chanBlb(realloc, free, c[0], (void *)(long)p[0], input, cls, c[1], (void *)(long)p[1], output, cls, 0, 0, 0, chanBlbFrmNs, 0, 0)) {
+  if (!chanBlb(realloc, free
+      ,c[1], (void *)(long)p[1], output, cls, chanBlbNetstringE
+      ,c[0], (void *)(long)p[0], input, cls, chanBlbNetstringI, 0
+      ,0, 0
+      ,0, 0)) {
     close(p[1]);
     close(p[0]);
     chanClose(c[1]);

@@ -3,16 +3,21 @@ SQLITE_INC =
 SQLITE_LIB = -lsqlite3
 SQLITE_CFLAGS = $(SQLITE_INC) $(CFLAGS)
 
-all: chan.o chanStrFIFO.o chanStrFLSO.o chanStrLIFO.o chanBlb.o sockproxy pipeproxy squint floydWarshall
+all: chan.o chanStrFIFO.o chanStrFLSO.o chanStrLIFO.o chanBlb.o chanBlbFcgi.o chanBlbNetstring.o chanBlbNetconf10.o chanBlbNetconf11.o chanBlbHttp1.o sockproxy pipeproxy squint floydWarshall
 
 clean:
-	rm -f chan.o chanStrFIFO.o chanStrFLSO.o chanStrLIFO.o chanBlb.o chanStrBlbSQL.o sockproxy pipeproxy squint floydWarshall chanStrBlbSQLtest
+	rm -f chan.o
+	rm -f chanStrFIFO.o chanStrFLSO.o chanStrLIFO.o
+	rm -f chanBlb.o chanBlbFcgi.o chanBlbNetstring.o chanBlbNetconf10.o chanBlbNetconf11.o chanBlbHttp1.o chanStrBlbSQL.o
+	rm -f sockproxy pipeproxy squint floydWarshall
+	rm -f chanStrBlbSQL.o
+	rm -f chanStrBlbSQLtest
 
 sockproxy: example/sockproxy.c chan.h Blb/chanBlb.h chan.o chanBlb.o
 	$(CC) $(CFLAGS) -o sockproxy example/sockproxy.c chan.o chanBlb.o -lpthread
 
-pipeproxy: example/pipeproxy.c chan.h Blb/chanBlb.h chan.o chanBlb.o chanStrFIFO.o
-	$(CC) $(CFLAGS) -o pipeproxy example/pipeproxy.c chan.o chanBlb.o chanStrFIFO.o -lpthread
+pipeproxy: example/pipeproxy.c chan.h Blb/chanBlb.h chan.o chanStrFIFO.o chanBlb.o chanBlbNetstring.o
+	$(CC) $(CFLAGS) -o pipeproxy example/pipeproxy.c chan.o chanStrFIFO.o chanBlb.o chanBlbNetstring.o -lpthread
 
 squint: example/squint.c chan.h chan.o
 	$(CC) $(CFLAGS) -o squint example/squint.c chan.o -lpthread
@@ -46,6 +51,21 @@ chanStrLIFO.o: Str/chanStrLIFO.c Str/chanStrLIFO.h chan.h
 
 chanBlb.o: Blb/chanBlb.c Blb/chanBlb.h chan.h
 	$(CC) $(CFLAGS) -c Blb/chanBlb.c
+
+chanBlbFcgi.o: Blb/chanBlbFcgi.c Blb/chanBlbFcgi.h Blb/chanBlb.h chan.h
+	$(CC) $(CFLAGS) -c Blb/chanBlbFcgi.c
+
+chanBlbNetstring.o: Blb/chanBlbNetstring.c Blb/chanBlbNetstring.h Blb/chanBlb.h chan.h
+	$(CC) $(CFLAGS) -c Blb/chanBlbNetstring.c
+
+chanBlbNetconf10.o: Blb/chanBlbNetconf10.c Blb/chanBlbNetconf10.h Blb/chanBlb.h chan.h
+	$(CC) $(CFLAGS) -c Blb/chanBlbNetconf10.c
+
+chanBlbNetconf11.o: Blb/chanBlbNetconf11.c Blb/chanBlbNetconf11.h Blb/chanBlb.h chan.h
+	$(CC) $(CFLAGS) -c Blb/chanBlbNetconf11.c
+
+chanBlbHttp1.o: Blb/chanBlbHttp1.c Blb/chanBlbHttp1.h Blb/chanBlb.h chan.h
+	$(CC) $(CFLAGS) -c Blb/chanBlbHttp1.c
 
 check: squint
 	./squint
