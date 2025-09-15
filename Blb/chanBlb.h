@@ -38,23 +38,24 @@ chanBlb_tSize(
 struct chanBlbEgrCtx {
   void *(*realloc)(void *, unsigned long);
   void (*free)(void *);
+  void *frmCtx;
   chan_t *chan;
-  void *ctx;
-  unsigned int (*output)(void *ctx, const void *buffer, unsigned int length);
-  void *opaque[4];
+  void *outCtx;
+  unsigned int (*out)(void *ctx, const void *buffer, unsigned int length);
   void (*fin)(void *chanBlbEgrCtx);
+  void *opaque[4];
 };
 
 struct chanBlbIgrCtx {
   void *(*realloc)(void *, unsigned long);
   void (*free)(void *);
+  void *frmCtx;
   chan_t *chan;
-  void *ctx;
-  unsigned int (*input)(void *ctx, void *buffer, unsigned int length);
-  void *opaque[4];
+  void *inpCtx;
+  unsigned int (*inp)(void *ctx, void *buffer, unsigned int length);
+  chanBlb_t *blb;
   void (*fin)(void *chanBlbIgrCtx);
-  chanBlb_t *blb; /* initial ingress */
-  unsigned int arg;
+  void *opaque[4];
 };
 
 /* utility to injest chanBlbIgrCtx->blb */
@@ -73,42 +74,50 @@ chanBlbIgrBlb(
  * Provide realloc and free routines to use.
  *
  * Provide an optional egress chan_t: (if not provided, out parameters are not used)
- *  Otherwise, output() is required, outClose() is optional.
- * A chanOpGet on the ingress channel will return chanBlb_t items from input():
- *  A chanOpPut or input() failure will chanShut(ingress) and inClose(in).
+ *  Otherwise, output() is required, outputClose() is optional.
+ * Provide an optional egress framer context
  * Provide an optional egress framer
  *
  * Provide an optional ingress chan_t: (if not provided, in parameters are not used)
- *  Otherwise, input() is required, inClose() is optional.
- * A chanOpPut of chanBlb_t items on the egress channel does output():
- *  A chanOpGet or output() failure will chanShut(egress) and outClose(out).
+ *  Otherwise, input() is required, inputClose() is optional.
+ * Provide an optional ingress framer context
  * Provide an optional ingress framer
- * Provide an optional initialIngress; previous input bytes from protocol start
+ * Provide an optional initial blob; previous input bytes from protocol start
  *
- * After all chanShut(), if provided, finClose(fin) is invoked
+ * Provide an optional finalCtx and finalClose()
+ *
+ * A chanOpPut of chanBlb_t items on the egress channel does output():
+ *  A chanOpGet or output() failure will chanShut(egress) and outputClose(outputCtx).
+ * A chanOpGet on the ingress channel will return chanBlb_t items from input():
+ *  A chanOpPut or input() failure will chanShut(ingress) and inputClose(inputCtx).
+ * After all chanShut(), if provided, finlClose(finlCtx) is invoked
  *
  * Provide an optional pthread_create attribute
- * Provide an optional framer argument
  */
 int
 chanBlb(
   void *(*realloc)(void *, unsigned long)
  ,void (*free)(void *)
+
  ,chan_t *egress
- ,void *out
- ,unsigned int (*output)(void *out, const void *buffer, unsigned int size) /* return 0 on failure */
- ,void (*outClose)(void *out)
- ,void *(*egressFrm)(struct chanBlbEgrCtx *)
+ ,void *outputCtx
+ ,unsigned int (*output)(void *outputCtx, const void *buffer, unsigned int size) /* return 0 on failure */
+ ,void (*outputClose)(void *outputCtx)
+ ,void *egressFrmCtx
+ ,void *(*egessrFrm)(struct chanBlbEgrCtx *)
+
  ,chan_t *ingress
- ,void *in
- ,unsigned int (*input)(void *in, void *buffer, unsigned int size) /* return 0 on failure */
- ,void (*inClose)(void *in)
- ,void *(*ingressFrm)(struct chanBlbIgrCtx *)
- ,chanBlb_t *initialIngress
- ,void *fin
- ,void (*finClose)(void *out)
+ ,void *inputCtx
+ ,unsigned int (*input)(void *inputCtx, void *buffer, unsigned int size) /* return 0 on failure */
+ ,void (*inputClose)(void *inputCtx)
+ ,void *igessrFrmCtx
+ ,void *(*igessrFrm)(struct chanBlbIgrCtx *)
+ ,chanBlb_t *blb
+
+ ,void *finalCtx
+ ,void (*finalClose)(void *finalCtx)
+
  ,pthread_attr_t *attr
- ,unsigned int argument
 ); /* returns 0 on failure */
 
 #endif /* __CHANBLB_H__ */

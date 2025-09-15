@@ -58,7 +58,7 @@ chanBlbNetconf10E(
       *s2++ = ']';
       *s2++ = ']';
       *s2 = '>';
-      for (o = 0; o < l && (i = v->output(v->ctx, t + o, l - o)) > 0; o += i);
+      for (o = 0; o < l && (i = v->out(v->outCtx, t + o, l - o)) > 0; o += i);
       pthread_cleanup_pop(1); /* v->free(t) */
     } else
       i = 0;
@@ -76,16 +76,13 @@ chanBlbNetconf10I(
 ){
   chanBlb_t *m;
   chanArr_t p[1];
-  unsigned int bs;
+  unsigned int l;
   unsigned int i0;
   unsigned int i1;
   unsigned int i;
 
+  l = v->frmCtx ? (long)v->frmCtx : 65536; /* when zero maxSize, balance data rate, io() call overhead and realloc() release policy */
   pthread_cleanup_push((void(*)(void*))v->fin, v);
-  if (v->arg)
-    bs = v->arg;
-  else
-    bs = 65536; /* when zero maxSize, balance data rate, io() call overhead and realloc() release policy */
   p[0].c = v->chan;
   p[0].v = (void **)&m;
   p[0].o = chanOpPut;
@@ -95,10 +92,10 @@ chanBlbNetconf10I(
     v->blb = 0;
     i = i0 = m->l;
     goto next;
-  } else if (!(m = v->realloc(0, chanBlb_tSize(bs))))
+  } else if (!(m = v->realloc(0, chanBlb_tSize(l))))
     goto bad;
   else
-    i0 = bs;
+    i0 = l;
   for (;;) {
     chanBlb_t *m1;
     void *tv;
@@ -108,7 +105,7 @@ chanBlbNetconf10I(
 
     for (; i1 < i0; i1 += i) {
       pthread_cleanup_push((void(*)(void*))v->free, m);
-      i = v->input(v->ctx, m->b + i1, i0 - i1);
+      i = v->inp(v->inpCtx, m->b + i1, i0 - i1);
       pthread_cleanup_pop(0); /* v->free(m) */
       if (!i)
         goto bad;
@@ -122,8 +119,8 @@ next:
          && *(s1 + 5) == '>')
           goto found;
     }
-    if (!v->arg) {
-      i0 += bs;
+    if (!v->frmCtx) {
+      i0 += l;
       if (!(tv = v->realloc(m, chanBlb_tSize(i0))))
         goto bad;
       m = tv;
@@ -134,7 +131,7 @@ found:
     m->l = i1 + i - i2;
     i2 -= 6;
     s1 += 6;
-    i0 = bs;
+    i0 = l;
     if (!(m1 = v->realloc(0, chanBlb_tSize(i0))))
       goto bad;
     for (i1 = i2, s2 = m1->b; i1; --i1, ++s1, ++s2)

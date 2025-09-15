@@ -30,16 +30,13 @@ chanBlbHttp1I(
 ){
   chanBlb_t *m;
   chanArr_t p[1];
-  unsigned int bs;
+  unsigned int l;
   unsigned int i0;
   unsigned int i1;
   unsigned int i;
 
+  l = v->frmCtx ? (long)v->frmCtx : 65536; /* when zero maxSize, balance data rate, io() call overhead and realloc() release policy */
   pthread_cleanup_push((void(*)(void*))v->fin, v);
-  if (v->arg)
-    bs = v->arg;
-  else
-    bs = 65536; /* when zero maxSize, balance data rate, io() call overhead and realloc() release policy */
   p[0].c = v->chan;
   p[0].v = (void **)&m;
   p[0].o = chanOpPut;
@@ -49,10 +46,10 @@ chanBlbHttp1I(
     v->blb = 0;
     i = i0 = m->l;
     goto nextHeaders;
-  } else if (!(m = v->realloc(0, chanBlb_tSize(bs))))
+  } else if (!(m = v->realloc(0, chanBlb_tSize(l))))
     goto bad;
   else
-    i0 = bs;
+    i0 = l;
   for (;;) {
     chanBlb_t *m1;
     void *tv;
@@ -65,7 +62,7 @@ chanBlbHttp1I(
 
     for (; i1 < i0; i1 += i) {
       pthread_cleanup_push((void(*)(void*))v->free, m);
-      i = v->input(v->ctx, m->b + i1, i0 - i1);
+      i = v->inp(v->inpCtx, m->b + i1, i0 - i1);
       pthread_cleanup_pop(0); /* v->free(m) */
       if (!i)
         goto bad;
@@ -175,8 +172,8 @@ nextHeaders:
           break;
         }
     }
-    if (!v->arg) {
-      i0 += bs;
+    if (!v->frmCtx) {
+      i0 += l;
       if (!(tv = v->realloc(m, chanBlb_tSize(i0))))
         goto bad;
       m = tv;
@@ -204,17 +201,17 @@ endHeaders:
      || *s2++ != 'P'
      || *s2   != '/')
       goto bad;
-    if (v->arg) {
+    if (v->frmCtx) {
       if (cl > i2)
         goto bad;
       if (ch && !i2)
         goto bad;
-      i0 = bs;
+      i0 = l;
     } else {
       if (cl > i2)
         i0 = cl;
       else
-        i0 = bs;
+        i0 = l;
     }
     if (!(m1 = v->realloc(0, chanBlb_tSize(i0))))
       goto bad;
@@ -264,7 +261,7 @@ endHeaders:
           if (i1 == i0)
             goto bad;
           pthread_cleanup_push((void(*)(void*))v->free, m);
-          i = v->input(v->ctx, m->b + i1, i0 - i1);
+          i = v->inp(v->inpCtx, m->b + i1, i0 - i1);
           pthread_cleanup_pop(0); /* v->free(m) */
           if (!i)
             goto bad;
@@ -274,9 +271,9 @@ sizeHeader:
           break;
         ch += 2;
         m->l = ch + i1 - i2;
-        if (v->arg && m->l > v->arg)
+        if (v->frmCtx && m->l > (long)v->frmCtx)
           goto bad;
-        i0 = bs;
+        i0 = l;
         if (!(m1 = v->realloc(0, chanBlb_tSize(i0))))
           goto bad;
         if (i2 > ch) {
@@ -292,7 +289,7 @@ sizeHeader:
           m = tv;
           s1 = m->b + i1 - i2;
           pthread_cleanup_push((void(*)(void*))v->free, m);
-          for (s1 = m->b + i1 - i2; i2 < ch && (i = v->input(v->ctx, s1 + i2, ch - i2)) > 0; i2 += i);
+          for (s1 = m->b + i1 - i2; i2 < ch && (i = v->inp(v->inpCtx, s1 + i2, ch - i2)) > 0; i2 += i);
           pthread_cleanup_pop(0); /* v->free(m) */
           if (!i) {
             v->free(m1);
@@ -337,8 +334,8 @@ sizeHeader:
           }
         i1 += i;
         if (i1 == i0) {
-          if (!v->arg) {
-            i0 += bs;
+          if (!v->frmCtx) {
+            i0 += l;
             if (!(tv = v->realloc(m, chanBlb_tSize(i0))))
               goto bad;
             m = tv;
@@ -346,7 +343,7 @@ sizeHeader:
             goto bad;
         }
         pthread_cleanup_push((void(*)(void*))v->free, m);
-        i = v->input(v->ctx, m->b + i1, i0 - i1);
+        i = v->inp(v->inpCtx, m->b + i1, i0 - i1);
         pthread_cleanup_pop(0); /* v->free(m) */
         if (!i)
           goto bad;
@@ -356,7 +353,7 @@ endTrailers:
       i2 = i1 + i;
     }
     if (cl) {
-      i0 = bs;
+      i0 = l;
       if (!(m1 = v->realloc(0, chanBlb_tSize(i0))))
         goto bad;
       if (i2 > cl) {
@@ -366,7 +363,7 @@ endTrailers:
           m = tv;
       } else if (i2 < cl) {
         pthread_cleanup_push((void(*)(void*))v->free, m);
-        for (s1 = m->b; i2 < cl && (i = v->input(v->ctx, s1 + i2, cl - i2)) > 0; i2 += i);
+        for (s1 = m->b; i2 < cl && (i = v->inp(v->inpCtx, s1 + i2, cl - i2)) > 0; i2 += i);
         pthread_cleanup_pop(0); /* v->free(m) */
         if (!i) {
           v->free(m1);

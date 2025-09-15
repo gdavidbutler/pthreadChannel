@@ -53,7 +53,7 @@ chanBlbFcgiE(
       *(b + 3) = *(m->b + 2);
       if (m->l == 3) {
         *(b + 4) = *(b + 5) = *(b + 6) = 0;
-        for (o1 = 0, l1 = 8; o1 < l1 && (i = v->output(v->ctx, b + o1, l1 - o1)) > 0; o1 += i);
+        for (o1 = 0, l1 = 8; o1 < l1 && (i = v->out(v->outCtx, b + o1, l1 - o1)) > 0; o1 += i);
       } else for (o1 = 3; o1 < m->l; o1 += l1) {
         unsigned char *s1;
         unsigned char *s2;
@@ -69,7 +69,7 @@ chanBlbFcgiE(
         for (s2 = b + 8, s1 = m->b + o1, l2 = l1; l2; ++s2, ++s1, --l2)
           *s2 = *s1;
         l2 = 8 + l1 + i;
-        for (o2 = 0; o2 < l2 && (i = v->output(v->ctx, b + o2, l2 - o2)) > 0; o2 += i);
+        for (o2 = 0; o2 < l2 && (i = v->out(v->outCtx, b + o2, l2 - o2)) > 0; o2 += i);
       }
     } else
       i = 0;
@@ -90,21 +90,21 @@ chanBlbFcgiI(
   unsigned char *b;
   chanBlb_t *m;
   chanArr_t p[1];
+  unsigned int l;
   unsigned int i0;
   unsigned int i;
 
   pthread_cleanup_push((void(*)(void*))v->fin, v);
-  if (!v->arg)
-    v->arg = 8 + 65535 + 255;
-  if (!(b = v->realloc(0, v->arg)))
+  l = v->frmCtx ? (long)v->frmCtx : 8 + 65535 + 255;
+  if (!(b = v->realloc(0, l)))
     goto bad;
   pthread_cleanup_push((void(*)(void*))v->free, b);
   p[0].c = v->chan;
   p[0].v = (void **)&m;
   p[0].o = chanOpPut;
   i0 = 0;
-  while ((i = v->blb ? chanBlbIgrBlb(v->free, &v->blb, b + i0, v->arg - i0)
-                   : v->input(v->ctx, b + i0, v->arg - i0)) > 0) {
+  while ((i = v->blb ? chanBlbIgrBlb(v->free, &v->blb, b + i0, l - i0)
+                     : v->inp(v->inpCtx, b + i0, l - i0)) > 0) {
     unsigned char *s1;
     unsigned char *s2;
     unsigned int i1;

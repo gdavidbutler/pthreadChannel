@@ -44,14 +44,15 @@ struct ctxM {
 struct ctxE { /* struct chanBlbEgrCtx with different names */
   void *(*ma)(void *, unsigned long);
   void (*mf)(void *);
+  void *g;
   chan_t *c;
   void *x;
   unsigned int (*xf)(void *, const void *, unsigned int);
+  void (*d)(void *);
   struct ctxM *m;
   void (*xc)(void *);
   void *f;
   void (*fc)(void *);
-  void (*d)(void *);
 };
 
 static void
@@ -112,16 +113,16 @@ nfE(
 struct ctxI { /* struct chanBlbIgrCtx with different names */
   void *(*ma)(void *, unsigned long);
   void (*mf)(void *);
+  void *g;
   chan_t *c;
   void *x;
   unsigned int (*xf)(void *, void *, unsigned int);
+  chanBlb_t *b;
+  void (*d)(void *);
   struct ctxM *m;
   void (*xc)(void *);
   void *f;
   void (*fc)(void *);
-  void (*d)(void *);
-  chanBlb_t *b;
-  unsigned int l;
 };
 
 static void
@@ -181,21 +182,23 @@ nfI(
 #define V ((struct ctxI *)v)
   chanBlb_t *m;
   chanArr_t p[1];
+  unsigned int l;
   unsigned int i;
 
   pthread_cleanup_push((void(*)(void*))V->d, v);
+  l = V->g ? (long)V->g : 65536;
   p[0].c = V->c;
   p[0].v = (void **)&m;
   p[0].o = chanOpPut;
-  while ((m = V->ma(0, chanBlb_tSize(V->l)))) {
+  while ((m = V->ma(0, chanBlb_tSize(l)))) {
     void *t;
 
     pthread_cleanup_push((void(*)(void*))V->mf, m);
     if (V->b) {
-      if ((i = chanBlbIgrBlb(V->mf, &V->b, m->b, V->l)) < V->l)
-        i += V->xf(V->x, m->b + i, V->l - i);
+      if ((i = chanBlbIgrBlb(V->mf, &V->b, m->b, l)) < l)
+        i += V->xf(V->x, m->b + i, l - i);
     } else
-      i = V->xf(V->x, m->b, V->l);
+      i = V->xf(V->x, m->b, l);
     pthread_cleanup_pop(0); /* V->mf(m) */
     if (!i)
       break;
@@ -220,21 +223,26 @@ int
 chanBlb(
   void *(*ma)(void *, unsigned long)
  ,void (*mf)(void *)
+
  ,chan_t *e
  ,void *ot
  ,unsigned int (*otf)(void *, const void *, unsigned int)
  ,void (*otc)(void *)
+ ,void *eg
  ,void *(*fe)(struct chanBlbEgrCtx *)
+
  ,chan_t *i
  ,void *in
  ,unsigned int (*inf)(void *, void *, unsigned int)
  ,void (*inc)(void *)
+ ,void *ig
  ,void *(*fi)(struct chanBlbIgrCtx *)
  ,chanBlb_t *b
+
  ,void *f
  ,void (*fc)(void *)
+
  ,pthread_attr_t *a
- ,unsigned int g
 ){
   pthread_t t;
   struct ctxM *m;
@@ -270,6 +278,7 @@ chanBlb(
     x->f = f;
     x->fc = fc;
     x->d = finE;
+    x->g = eg;
     if (pthread_create(&t, a, fe ? (void *(*)(void *))fe : nfE, x)) {
       chanClose(x->c);
       mf(x);
@@ -302,8 +311,8 @@ chanBlb(
     x->f = f;
     x->fc = fc;
     x->d = finI;
+    x->g = ig;
     x->b = b;
-    x->l = g;
     b = 0;
     if (pthread_create(&t, a, fi ? (void *(*)(void *))fi : nfI, x)) {
       if (m) {

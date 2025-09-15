@@ -62,7 +62,7 @@ chanBlbNetstringE(
       for (s1 = m->b, o = m->l; o; --o, ++s2, ++s1)
         *s2 = *s1;
       *s2 = ',';
-      for (o = 0; o < l && (i = v->output(v->ctx, t + o, l - o)) > 0; o += i);
+      for (o = 0; o < l && (i = v->out(v->outCtx, t + o, l - o)) > 0; o += i);
       pthread_cleanup_pop(1); /* v->free(t) */
     } else
       i = 0;
@@ -80,17 +80,19 @@ chanBlbNetstringI(
 ){
   chanBlb_t *m;
   chanArr_t p[1];
+  unsigned int l;
   unsigned int i0;
   unsigned int i;
   char b[16];
 
+  l = v->frmCtx ? (long)v->frmCtx : 0;
   pthread_cleanup_push((void(*)(void*))v->fin, v);
   p[0].c = v->chan;
   p[0].v = (void **)&m;
   p[0].o = chanOpPut;
   i0 = 0;
   while ((i = v->blb ? chanBlbIgrBlb(v->free, &v->blb, b + i0, sizeof (b) - i0)
-                   : v->input(v->ctx, b + i0, sizeof (b) - i0)) > 0) {
+                     : v->inp(v->inpCtx, b + i0, sizeof (b) - i0)) > 0) {
     unsigned int i1;
     unsigned int i2;
     unsigned int i3;
@@ -102,7 +104,7 @@ chanBlbNetstringI(
       continue;
     if (i1 == i0
      || b[i1++] != ':'
-     || (v->arg && v->arg < i2)
+     || (l && l < i2)
      || !(m = v->realloc(0, chanBlb_tSize(i2))))
       break;
     m->l = i2;
@@ -113,10 +115,10 @@ chanBlbNetstringI(
     i0 = i2;
     pthread_cleanup_push((void(*)(void*))v->free, m);
     for (i2 = m->l; i3 < i2 && (i = v->blb ? chanBlbIgrBlb(v->free, &v->blb, m->b + i3, i2 - i3)
-                                         : v->input(v->ctx, m->b + i3, i2 - i3)) > 0; i3 += i);
+                                           : v->inp(v->inpCtx, m->b + i3, i2 - i3)) > 0; i3 += i);
     if (i > 0) {
       if ((i0 && b[--i0] == ',')
-       || (!i0 && (i = v->input(v->ctx, b, 1)) == 1 && b[0] == ','))
+       || (!i0 && (i = v->inp(v->inpCtx, b, 1)) == 1 && b[0] == ','))
         i = chanOne(0, sizeof (p) / sizeof (p[0]), p) == 1 && p[0].s == chanOsPut;
       else
         i = 0;

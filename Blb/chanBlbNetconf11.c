@@ -73,7 +73,7 @@ chanBlbNetconf11E(
       *s2++ = '#';
       *s2++ = '#';
       *s2 = '\n';
-      for (o = 0; o < l && (i = v->output(v->ctx, t + o, l - o)) > 0; o += i);
+      for (o = 0; o < l && (i = v->out(v->outCtx, t + o, l - o)) > 0; o += i);
       pthread_cleanup_pop(1); /* v->free(t) */
     } else
       i = 0;
@@ -91,11 +91,13 @@ chanBlbNetconf11I(
 ){
   chanBlb_t *m;
   chanArr_t p[1];
+  unsigned int l;
   unsigned int i0;
   unsigned int i1;
   int i;
   char b[16];
 
+  l = v->frmCtx ? (long)v->frmCtx : 0;
   pthread_cleanup_push((void(*)(void*))v->fin, v);
   p[0].c = v->chan;
   p[0].v = (void **)&m;
@@ -104,7 +106,7 @@ chanBlbNetconf11I(
   i0 = 0;
   i1 = 0;
   while ((i = v->blb ? chanBlbIgrBlb(v->free, &v->blb, b + i1, sizeof (b) - i1)
-                   : v->input(v->ctx, b + i1, sizeof (b) - i1)) > 0) {
+                     : v->inp(v->inpCtx, b + i1, sizeof (b) - i1)) > 0) {
     void *tv;
     unsigned int i2;
     unsigned int i3;
@@ -137,7 +139,7 @@ chanBlbNetconf11I(
       }
       i4 = i0 + i3;
       if (b[i2++] != '\n'
-       || (v->arg && v->arg < i4)
+       || (l && l < i4)
        || !(tv = v->realloc(m, chanBlb_tSize(i4))))
         goto bad;
       m = tv;
@@ -149,7 +151,7 @@ chanBlbNetconf11I(
       i1 = i4;
       pthread_cleanup_push((void(*)(void*))v->free, m);
       for (; i3 && (i = v->blb ? chanBlbIgrBlb(v->free, &v->blb, m->b + i0, i3)
-                             : v->input(v->ctx, m->b + i0, i3)) > 0; i3 -= i, i0 += i);
+                             : v->inp(v->inpCtx, m->b + i0, i3)) > 0; i3 -= i, i0 += i);
       pthread_cleanup_pop(0);
       if (i <= 0)
         goto bad;

@@ -106,10 +106,10 @@ main(
     return (1);
   }
   if (!chanBlb(realloc, free
-      ,c[1], (void *)(long)p[1], output, cls, chanBlbNetstringE
-      ,c[0], (void *)(long)p[0], input, cls, chanBlbNetstringI, 0
+      ,c[1], (void *)(long)p[1], output, cls, 0, chanBlbNetstringE
+      ,c[0], (void *)(long)p[0], input, cls, (void *)65536, chanBlbNetstringI, 0
       ,0, 0
-      ,0, 0)) {
+      ,0)) {
     close(p[1]);
     close(p[0]);
     chanClose(c[1]);
