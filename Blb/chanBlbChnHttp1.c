@@ -22,10 +22,10 @@
 #include <pthread.h>
 #include "chan.h"
 #include "chanBlb.h"
-#include "chanBlbHttp1.h"
+#include "chanBlbChnHttp1.h"
 
 void *
-chanBlbHttp1I(
+chanBlbChnHttp1Igr(
   struct chanBlbIgrCtx *v
 ){
   chanBlb_t *m;

@@ -26,7 +26,8 @@
 #include "chan.h"
 #include "chanStrFIFO.h"
 #include "chanBlb.h"
-#include "chanBlbNetstring.h"
+#include "chanBlbTrnFd.h"
+#include "chanBlbChnNetstring.h"
 
 static void *
 outT(
@@ -46,50 +47,22 @@ outT(
   return (0);
 }
 
-static unsigned int
-input(
- void *v
-,void *b
-,unsigned int l
-){
-  int i;
-
-  if ((i = read((int)(long)v, b, l)) < 0)
-    i = 0;
-  return (i);
-}
-
-static unsigned int
-output(
- void *v
-,const void *b
-,unsigned int l
-){
-  int i;
-
-  if ((i = write((int)(long)v, b, l)) < 0)
-    i = 0;
-  return (i);
-}
-
-static void
-cls(
- void *v
-){
-  close((int)(long)v);
-}
-
 int
 main(
   void
 ){
   chanBlb_t *m;
   chan_t *c[2];
+  void *ctx;
   int p[2];
   pthread_t t;
   int i;
 
   chanInit(realloc, free);
+  if (!(ctx = chanBlbTrnFdCtx())) {
+    perror("chanBlbTrnFdCtx");
+    return (1);
+  }
   if (!(c[0] = chanCreate(free, chanStrFIFOa, 16))) {
     perror("chanCreate");
     return (1);
@@ -106,9 +79,9 @@ main(
     return (1);
   }
   if (!chanBlb(realloc, free
-      ,c[1], (void *)(long)p[1], output, cls, 0, chanBlbNetstringE
-      ,c[0], (void *)(long)p[0], input, cls, (void *)65536, chanBlbNetstringI, 0
-      ,0, 0
+      ,c[1], chanBlbTrnFdOutputCtx(ctx, p[1]), chanBlbTrnFdOutput, chanBlbTrnFdOutputClose, 0, chanBlbChnNetstringEgr
+      ,c[0], chanBlbTrnFdInputCtx(ctx, p[0]), chanBlbTrnFdInput, chanBlbTrnFdInputClose, (void *)65536, chanBlbChnNetstringIgr, 0
+      ,ctx, chanBlbTrnFdFinalClose
       ,0)) {
     close(p[1]);
     close(p[0]);

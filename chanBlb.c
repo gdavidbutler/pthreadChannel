@@ -41,13 +41,15 @@ struct ctxM {
   unsigned int s;
 };
 
+/**********************************************************/
+
 struct ctxE { /* struct chanBlbEgrCtx with different names */
   void *(*ma)(void *, unsigned long);
   void (*mf)(void *);
   void *g;
   chan_t *c;
   void *x;
-  unsigned int (*xf)(void *, const void *, unsigned int);
+  unsigned int (*xf)(void *, const unsigned char *, unsigned int);
   void (*d)(void *);
   struct ctxM *m;
   void (*xc)(void *);
@@ -69,6 +71,7 @@ finE(
     if (!V->m->s) {
       V->m->s = 1;
       pthread_mutex_unlock(&V->m->m);
+      V->mf(v);
       return;
     }
     pthread_mutex_unlock(&V->m->m);
@@ -116,7 +119,7 @@ struct ctxI { /* struct chanBlbIgrCtx with different names */
   void *g;
   chan_t *c;
   void *x;
-  unsigned int (*xf)(void *, void *, unsigned int);
+  unsigned int (*xf)(void *, unsigned char *, unsigned int);
   chanBlb_t *b;
   void (*d)(void *);
   struct ctxM *m;
@@ -140,6 +143,7 @@ finI(
     if (!V->m->s) {
       V->m->s = 1;
       pthread_mutex_unlock(&V->m->m);
+      V->mf(v);
       return;
     }
     pthread_mutex_unlock(&V->m->m);
@@ -226,14 +230,14 @@ chanBlb(
 
  ,chan_t *e
  ,void *ot
- ,unsigned int (*otf)(void *, const void *, unsigned int)
+ ,unsigned int (*otf)(void *, const unsigned char *, unsigned int)
  ,void (*otc)(void *)
  ,void *eg
  ,void *(*fe)(struct chanBlbEgrCtx *)
 
  ,chan_t *i
  ,void *in
- ,unsigned int (*inf)(void *, void *, unsigned int)
+ ,unsigned int (*inf)(void *, unsigned char *, unsigned int)
  ,void (*inc)(void *)
  ,void *ig
  ,void *(*fi)(struct chanBlbIgrCtx *)
@@ -255,7 +259,7 @@ chanBlb(
   )
     goto error;
   mf(ma(0,1)); /* force exception here and now */
-  if (e && i && fc) {
+  if (e && i && fc) { /* need finalClose synchronization */
     if (!(m = ma(0, sizeof (*m)))
      || pthread_mutex_init(&m->m, 0)) {
       mf(m);
@@ -285,7 +289,11 @@ chanBlb(
       goto error;
     }
     pthread_detach(t);
-  }
+    if (!m) /* if no synchronization, only one finalClose on error */
+      fc = 0;
+  } else if (otc)
+    otc(ot);
+  otc = 0; /* only one outputClose on error */
   if (i) {
     struct ctxI *x;
 
@@ -313,7 +321,6 @@ chanBlb(
     x->d = finI;
     x->g = ig;
     x->b = b;
-    b = 0;
     if (pthread_create(&t, a, fi ? (void *(*)(void *))fi : nfI, x)) {
       if (m) {
         pthread_mutex_lock(&m->m);
@@ -329,7 +336,8 @@ chanBlb(
       goto error;
     }
     pthread_detach(t);
-  }
+  } else if (inc)
+    inc(in);
   return (1);
 error:
   if (m) {

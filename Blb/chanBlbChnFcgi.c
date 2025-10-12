@@ -22,10 +22,10 @@
 #include <pthread.h>
 #include "chan.h"
 #include "chanBlb.h"
-#include "chanBlbFcgi.h"
+#include "chanBlbChnFcgi.h"
 
 void *
-chanBlbFcgiE(
+chanBlbChnFcgiEgr(
   struct chanBlbEgrCtx *v
 ){
   unsigned char *b;
@@ -84,7 +84,7 @@ bad:
 }
 
 void *
-chanBlbFcgiI(
+chanBlbChnFcgiIgr(
   struct chanBlbIgrCtx *v
 ){
   unsigned char *b;

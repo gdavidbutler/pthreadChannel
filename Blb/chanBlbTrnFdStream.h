@@ -18,12 +18,51 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#ifndef __CHANBLBHTTP1_H__
-#define __CHANBLBHTTP1_H__
+#ifndef __CHANBLBTRNFDSTREAM_H__
+#define __CHANBLBTRNFDSTREAM_H__
 
 void *
-chanBlbHttp1I(
-  struct chanBlbIgrCtx *v
+chanBlbTrnFdStreamCtx(
+  int streamFd
 );
 
-#endif /* __CHANBLBHTTP1_H__ */
+void *
+chanBlbTrnFdStreamInputCtx(
+  void *context
+);
+
+unsigned int
+chanBlbTrnFdStreamInput(
+  void *InputCtx
+ ,unsigned char *buffer
+ ,unsigned int length
+);
+
+void
+chanBlbTrnFdStreamInputClose(
+  void *InputCtx
+);
+
+void *
+chanBlbTrnFdStreamOutputCtx(
+  void *context
+);
+
+unsigned int
+chanBlbTrnFdStreamOutput(
+  void *outputCtx
+ ,const unsigned char *buffer
+ ,unsigned int length
+);
+
+void
+chanBlbTrnFdStreamOutputClose(
+  void *outputCtx
+);
+
+void
+chanBlbTrnFdStreamFinalClose(
+  void *context
+);
+
+#endif /* __CHANBLBTRNFDSTREAM_H__ */

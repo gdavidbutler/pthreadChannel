@@ -18,17 +18,12 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#ifndef __CHANBLBNETCONF10_H__
-#define __CHANBLBNETCONF10_H__
+#ifndef __CHANBLBCHNHTTP1_H__
+#define __CHANBLBCHNHTTP1_H__
 
 void *
-chanBlbNetconf10E(
-  struct chanBlbEgrCtx *v
-);
-
-void *
-chanBlbNetconf10I(
+chanBlbChnHttp1Igr(
   struct chanBlbIgrCtx *v
 );
 
-#endif /* __CHANBLBNETCONF10_H__ */
+#endif /* __CHANBLBCHNHTTP1_H__ */

@@ -18,17 +18,17 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#ifndef __CHANBLBNETSTRING_H__
-#define __CHANBLBNETSTRING_H__
+#ifndef __CHANBLBCHNNETSTRING_H__
+#define __CHANBLBCHNNETSTRING_H__
 
 void *
-chanBlbNetstringE(
+chanBlbChnNetstringEgr(
   struct chanBlbEgrCtx *v
 );
 
 void *
-chanBlbNetstringI(
+chanBlbChnNetstringIgr(
   struct chanBlbIgrCtx *v
 );
 
-#endif /* __CHANBLBNETSTRING_H__ */
+#endif /* __CHANBLBCHNNETSTRING_H__ */

@@ -41,7 +41,7 @@ struct chanBlbEgrCtx {
   void *frmCtx;
   chan_t *chan;
   void *outCtx;
-  unsigned int (*out)(void *ctx, const void *buffer, unsigned int length);
+  unsigned int (*out)(void *outCtx, const void *buffer, unsigned int length);
   void (*fin)(void *chanBlbEgrCtx);
   void *opaque[4];
 };
@@ -52,7 +52,7 @@ struct chanBlbIgrCtx {
   void *frmCtx;
   chan_t *chan;
   void *inpCtx;
-  unsigned int (*inp)(void *ctx, void *buffer, unsigned int length);
+  unsigned int (*inp)(void *inpCtx, void *buffer, unsigned int length);
   chanBlb_t *blb;
   void (*fin)(void *chanBlbIgrCtx);
   void *opaque[4];
@@ -73,12 +73,12 @@ chanBlbIgrBlb(
  *
  * Provide realloc and free routines to use.
  *
- * Provide an optional egress chan_t: (if not provided, out parameters are not used)
+ * Provide an optional egress chan_t: (if not provided, outputClose(outputCtx),if provided, is called immediately)
  *  Otherwise, output() is required, outputClose() is optional.
  * Provide an optional egress framer context
  * Provide an optional egress framer
  *
- * Provide an optional ingress chan_t: (if not provided, in parameters are not used)
+ * Provide an optional ingress chan_t: (if not provided, inputClose(inputCtx), if provided, is called immediately)
  *  Otherwise, input() is required, inputClose() is optional.
  * Provide an optional ingress framer context
  * Provide an optional ingress framer
@@ -93,6 +93,8 @@ chanBlbIgrBlb(
  * After all chanShut(), if provided, finlClose(finlCtx) is invoked
  *
  * Provide an optional pthread_create attribute
+ *
+ * NOTE: This routine takes ownership of the contexts using the provided Close routines.
  */
 int
 chanBlb(
@@ -101,14 +103,14 @@ chanBlb(
 
  ,chan_t *egress
  ,void *outputCtx
- ,unsigned int (*output)(void *outputCtx, const void *buffer, unsigned int size) /* return 0 on failure */
+ ,unsigned int (*output)(void *outputCtx, const unsigned char *buffer, unsigned int size) /* return 0 on failure */
  ,void (*outputClose)(void *outputCtx)
  ,void *egressFrmCtx
  ,void *(*egessrFrm)(struct chanBlbEgrCtx *)
 
  ,chan_t *ingress
  ,void *inputCtx
- ,unsigned int (*input)(void *inputCtx, void *buffer, unsigned int size) /* return 0 on failure */
+ ,unsigned int (*input)(void *inputCtx, unsigned char *buffer, unsigned int size) /* return 0 on failure */
  ,void (*inputClose)(void *inputCtx)
  ,void *igessrFrmCtx
  ,void *(*igessrFrm)(struct chanBlbIgrCtx *)

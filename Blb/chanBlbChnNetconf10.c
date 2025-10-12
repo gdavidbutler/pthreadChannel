@@ -22,10 +22,10 @@
 #include <pthread.h>
 #include "chan.h"
 #include "chanBlb.h"
-#include "chanBlbNetconf10.h"
+#include "chanBlbChnNetconf10.h"
 
 void *
-chanBlbNetconf10E(
+chanBlbChnNetconf10Egr(
   struct chanBlbEgrCtx *v
 ){
   chanBlb_t *m;
@@ -71,7 +71,7 @@ chanBlbNetconf10E(
 }
 
 void *
-chanBlbNetconf10I(
+chanBlbChnNetconf10Igr(
   struct chanBlbIgrCtx *v
 ){
   chanBlb_t *m;

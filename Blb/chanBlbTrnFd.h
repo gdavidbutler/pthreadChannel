@@ -18,17 +18,50 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#ifndef __CHANBLBNETCONF11_H__
-#define __CHANBLBNETCONF11_H__
+#ifndef __CHANBLBTRNFD_H__
+#define __CHANBLBTRNFD_H__
 
 void *
-chanBlbNetconf11E(
-  struct chanBlbEgrCtx *v
+chanBlbTrnFdCtx(
+  void
 );
 
 void *
-chanBlbNetconf11I(
-  struct chanBlbIgrCtx *v
+chanBlbTrnFdInputCtx(
+  void *context
+ ,int inputFd
 );
 
-#endif /* __CHANBLBNETCONF11_H__ */
+unsigned int
+chanBlbTrnFdInput(
+ void *inputCtx
+,unsigned char *buffer
+,unsigned int length
+);
+
+void
+chanBlbTrnFdInputClose(
+  void *inputCtx
+);
+
+void *
+chanBlbTrnFdOutputCtx(
+  void *context
+ ,int outputFd
+);
+
+unsigned int
+chanBlbTrnFdOutput(
+  void *outputCtx
+ ,const unsigned char *buffer
+ ,unsigned int length
+);
+
+void
+chanBlbTrnFdOutputClose(
+  void *outputCtx
+);
+
+#define chanBlbTrnFdFinalClose 0
+
+#endif /* __CHANBLBTRNFD_H__ */

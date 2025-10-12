@@ -124,33 +124,37 @@ Unlike non-Blob Channel Stores, Blob Channel Stores can include persistence and 
 
 Blobs can be tranported via networking routines.
 [Since a pthread can't both wait in a pthread_cond_wait and a poll/select/etc., a pair of blocking reader and writer pthreads are used.]
+To limit the number of trivial threads, the API provides callback interfaces for both the Channel and transport sides.
 
 * chanBlb
   * Blob transport via ingress and egress Channels.
 
-When applying the API to socket and pipe like intefaces:
-
-* socket: use shutdown on inClose and outClose and close on finClose
-* pipe: use close on inClose and outClose and no finClose
-
 Find the API in Blb/chanBlb.h.
 
-Several "framing" thread implementations are provided (useful with streaming protocols):
+A couple of transport side implementations are provided (file descriptor based intefaces):
 
-* chanBlbFcgi
+* chanBlbTrnFd
+  * File dscriptor for non-stream interfaces (e.g. pipe, UDP socket), use close on inClose and outClose and no finClose.
+
+* chanBlbTrnFdStream
+  * File descriptor for stream interfaces (e.g. TCP socket), use shutdown on inClose and outClose and close on finClose.
+
+Several Channel side, "framing", implementations are provided (useful with streaming protocols):
+
+* chanBlbChnFcgi
   * Read and write framed using [FastCGI](https://en.wikipedia.org/wiki/FastCGI).
 
-* chanBlbNetstring
+* chanBlbChnNetstring
   * Read and write framed using [Netstring](https://en.wikipedia.org/wiki/Netstring).
 
-* chanBlbNetconf10
+* chanBlbChnNetconf10
   * Read and write framed using [NETCONF](https://en.wikipedia.org/wiki/NETCONF) 1.0.
 (This flawed, XML specific, framer is only useful for NETCONF before a transition to NETCONF 1.1.)
 
-* chanBlbNetconf11
+* chanBlbChnNetconf11
   * Read and write framed using [NETCONF](https://en.wikipedia.org/wiki/NETCONF) 1.1.
 
-* chanBlbHttp1
+* chanBlbChnHttp1
   * Read framed using [HTTP/1.x](https://en.wikipedia.org/wiki/Hypertext_Transfer_Protocol) on headers Transfer-Encoding (chunked) and Content-Length.
 Blob flow (repeats):
     * Header Blob
@@ -174,9 +178,11 @@ Connects two chanBlbs back-to-back, with Channels reversed.
     1. ./sockproxy -T 1 -F 2 -S 2222 -t 1 -f 2 -h localhost -s ssh &
     1. ssh -p 2222 user@localhost
 * pipeproxy
-  * Copy stdin to stdout through chanBlb preserving read boundaries using a FIFO Store and Netstring framing
+  * Copy stdin to stdout through chanBlb pipe file descriptors preserving read boundaries using a FIFO Store and Netstring framing.
 * chanStrBlbSQL
-  * Demonstrate a SQLite based Channel Blob FIFO Store
+  * Demonstrate a SQLite based Channel Blob FIFO Store.
+* chanBlbTrnKcp
+  * Demonstrate a [KCP](https://github.com/skywind3000/kcp) UDP transport integration.
 * squint
   * Implementation of [M. Douglas McIlroy's "Squinting at Power Series"](https://swtch.com/~rsc/thread/squint.pdf).
 * floydWarshall

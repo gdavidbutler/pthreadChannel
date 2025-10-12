@@ -29,55 +29,9 @@
 #include <pthread.h>
 #include "chan.h"
 #include "chanBlb.h"
+#include "chanBlbTrnFdStream.h"
 
 struct addrinfo *Caddr;
-
-static unsigned int
-input(
- void *v
-,void *b
-,unsigned int l
-){
-  int i;
-
-  if ((i = read((int)(long)v, b, l)) < 0)
-    i = 0;
-  return (i);
-}
-
-static unsigned int
-output(
- void *v
-,const void *b
-,unsigned int l
-){
-  int i;
-
-  if ((i = write((int)(long)v, b, l)) < 0)
-    i = 0;
-  return (i);
-}
-
-static void
-icls(
- void *v
-){
-  shutdown((int)(long)v, SHUT_RD);
-}
-
-static void
-ocls(
- void *v
-){
-  shutdown((int)(long)v, SHUT_WR);
-}
-
-static void
-cls(
- void *v
-){
-  close((int)(long)v);
-}
 
 /* connect two chanSocks back to back, with ingress and egress channels reversed */
 static void *
@@ -85,15 +39,26 @@ servT(
   void *v
 ){
   int s[2];        /* server and client sockets */
+  void *ctx[2];    /* input and output contexts */
   chanArr_t p[2]; /* ingress and egress channels */
 
   s[0] = (int)(long)v;
-  pthread_cleanup_push(cls, (void *)(long)s[0]);
+  if (!(ctx[0] = chanBlbTrnFdStreamCtx(s[0]))) {
+    perror("chanBlbTrnFdStreamCtx");
+    close(s[0]);
+    return (0);
+  }
+  pthread_cleanup_push(chanBlbTrnFdStreamFinalClose, ctx[0]);
   if ((s[1] = socket(Caddr->ai_family, Caddr->ai_socktype, Caddr->ai_protocol)) < 0) {
     perror("socket");
     goto exit0;
   }
-  pthread_cleanup_push(cls, (void *)(long)s[1]);
+  if (!(ctx[1] = chanBlbTrnFdStreamCtx(s[1]))) {
+    perror("chanBlbTrnFdStreamCtx");
+    close(s[1]);
+    goto exit0;
+  }
+  pthread_cleanup_push(chanBlbTrnFdStreamFinalClose, ctx[1]);
   if (connect(s[1], Caddr->ai_addr, Caddr->ai_addrlen)) {
     perror("connect");
     goto exit1;
@@ -102,40 +67,36 @@ servT(
     perror("chanCreate");
     goto exit1;
   }
-  pthread_cleanup_push((void(*)(void*))chanClose, p[0].c);
   if (!(p[1].c = chanCreate(free, 0))) {
     perror("chanCreate");
-    goto exit2;
-  }
-  pthread_cleanup_push((void(*)(void*))chanClose, p[1].c);
-  if (!chanBlb(realloc, free
-      ,p[1].c, (void *)(long)s[0], output, ocls, 0, 0
-      ,p[0].c, (void *)(long)s[0], input, icls, 0, 0, 0
-      ,(void *)(long)s[0], cls
-      ,(void *)65536)) {
-    perror("chanSock");
-    goto exit3;
+    chanClose(p[0].c);
+    goto exit1;
   }
   if (!chanBlb(realloc, free
-      ,p[0].c, (void *)(long)s[1], output, ocls, 0, 0
-      ,p[1].c, (void *)(long)s[1], input, icls, 0, 0, 0
-      ,(void *)(long)s[1], cls
-      ,(void *)65536)) {
-    perror("chanSock");
-    goto exit3;
+      ,p[0].c, chanBlbTrnFdStreamOutputCtx(ctx[1]), chanBlbTrnFdStreamOutput, chanBlbTrnFdStreamOutputClose, 0, 0
+      ,p[1].c, chanBlbTrnFdStreamInputCtx(ctx[1]), chanBlbTrnFdStreamInput, chanBlbTrnFdStreamInputClose, 0, 0, 0
+      ,ctx[1], chanBlbTrnFdStreamFinalClose
+      ,0)) {
+    perror("chanBlb");
+    goto exit0;
+  }
+  if (!chanBlb(realloc, free
+      ,p[1].c, chanBlbTrnFdStreamOutputCtx(ctx[0]), chanBlbTrnFdStreamOutput, chanBlbTrnFdStreamOutputClose, 0, 0
+      ,p[0].c, chanBlbTrnFdStreamInputCtx(ctx[0]), chanBlbTrnFdStreamInput, chanBlbTrnFdStreamInputClose, 0, 0, 0
+      ,ctx[0], chanBlbTrnFdStreamFinalClose
+      ,0)) {
+    perror("chanBlb");
+    return (0);
   }
   /* wait for either chanShut */
   p[0].v = p[1].v = 0;
   p[0].o = p[1].o = chanOpSht;
   chanOne(0, sizeof (p) / sizeof (p[0]), p);
-exit3:
-  pthread_cleanup_pop(1); /* chanClose(p[1].c) */
-exit2:
-  pthread_cleanup_pop(1); /* chanClose(p[0].c) */
+  return (0);
 exit1:
-  pthread_cleanup_pop(1); /* close(s[1]) */
+  pthread_cleanup_pop(1); /* chanBlbTrnFdStreamFinalClose(ctx[1]) */
 exit0:
-  pthread_cleanup_pop(1); /* close(s[0]) */
+  pthread_cleanup_pop(1); /* chanBlbTrnFdStreamFinalClose(ctx[0]) */
   return (0);
 }
 
@@ -149,7 +110,7 @@ listenT(
   int c;
 
   l = (int)(long)v;
-  pthread_cleanup_push(cls, (void *)(long)l);
+  pthread_cleanup_push(chanBlbTrnFdStreamFinalClose, (void *)(long)l);
   while ((c = accept(l, &a, &s)) >= 0) {
     pthread_t t;
 
