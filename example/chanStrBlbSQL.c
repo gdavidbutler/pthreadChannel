@@ -41,7 +41,6 @@ struct chanStrBlbSQLc {
   sqlite3_stmt *delB;
   sqlite3_stmt *updH;
   sqlite3_stmt *sel;
-  pthread_mutex_t m;          /* mutext to cover use of the connection */
 };
 
 #define C ((struct chanStrBlbSQLc *)c)
@@ -53,7 +52,6 @@ chanStrBlbSQLd(
 ){
   if (!c)
     return;
-  pthread_mutex_lock(&C->m);
   sqlite3_finalize(C->bgn);
   sqlite3_finalize(C->cmt);
   sqlite3_finalize(C->rlb);
@@ -63,8 +61,6 @@ chanStrBlbSQLd(
   sqlite3_finalize(C->updH);
   sqlite3_finalize(C->sel);
   sqlite3_close(C->b);
-  pthread_mutex_unlock(&C->m);
-  pthread_mutex_destroy(&C->m);
   C->f(c);
   return;
   (void)s; /* leaving blobs in store */
@@ -84,7 +80,6 @@ chanStrBlbSQLi(
 
   if (!c)
     return (0);
-  pthread_mutex_lock(&C->m);
   sqlite3_step(C->bgn), sqlite3_reset(C->bgn);
   if (o == chanSoPut) {
     sqlite3_bind_blob(C->insB, 1, (*V)->b, (*V)->l, SQLITE_STATIC);
@@ -97,14 +92,11 @@ chanStrBlbSQLi(
     i = sqlite3_column_int(C->updT, 0);
     sqlite3_reset(C->updT);
     sqlite3_step(C->cmt), sqlite3_reset(C->cmt);
-    if (i) {
-      pthread_mutex_unlock(&C->m);
+    if (i)
       return (chanSsCanGet);
-    }
   } else {
     if (sqlite3_step(C->delB) != SQLITE_ROW
-     || !(t = sqlite3_column_blob(C->delB, 0))
-     || (i = sqlite3_column_bytes(C->delB, 0)) < 0
+     || ((t = sqlite3_column_blob(C->delB, 0)), (i = sqlite3_column_bytes(C->delB, 0))) < 0
      || !(*v = C->n(chanBlb_tSize(i)))
     )
       goto err;
@@ -116,12 +108,9 @@ chanStrBlbSQLi(
     i = sqlite3_column_int(C->updH, 0);
     sqlite3_reset(C->updH);
     sqlite3_step(C->cmt), sqlite3_reset(C->cmt);
-    if (i) {
-      pthread_mutex_unlock(&C->m);
+    if (i)
       return (chanSsCanPut);
-    }
   }
-  pthread_mutex_unlock(&C->m);
   return (chanSsCanGet | chanSsCanPut);
 err:
   sqlite3_reset(C->insB);
@@ -129,7 +118,6 @@ err:
   sqlite3_reset(C->delB);
   sqlite3_reset(C->updH);
   sqlite3_step(C->rlb), sqlite3_reset(C->rlb);
-  pthread_mutex_unlock(&C->m);
   return (0);
   (void)w; /* not concerned with latency */
 }
@@ -186,10 +174,6 @@ chanStrBlbSQLa(
   if (!(c = a(0, sizeof (*c))))
     return (0);
   memset(c, 0, sizeof (*c));
-  if (pthread_mutex_init(&c->m, 0)) {
-    f(c);
-    return (0);
-  }
   c->f = f;
   c->d = u;
   c->n = n;
@@ -198,6 +182,7 @@ chanStrBlbSQLa(
     if (sqlite3_open_v2(p, &c->b, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, 0))
       goto err;
   }
+  /* SQLite doesn't provide inter-process notification of file updates, so use an EXCLUSIVE locking guard */
   if (sqlite3_exec(c->b, "PRAGMA locking_mode=EXCLUSIVE;", 0, 0, 0)
    || sqlite3_exec(c->b, jnl[o], 0, 0, 0)
    || sqlite3_exec(c->b, syn[y], 0, 0, 0))
@@ -268,6 +253,7 @@ fprintf(stderr, "SQLite error %s\n", sqlite3_errmsg(c->b));
   sqlite3_step(c->rlb), sqlite3_reset(c->rlb);
   chanStrBlbSQLd(c, 0);
   return (0);
-  (void)w; /* not yet */
-  (void)x; /* not yet */
+/* locking_mode=EXCLUSIVE unused */
+  (void)w; /* wake callback */
+  (void)x; /* wake callback closure */
 }

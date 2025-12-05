@@ -25,18 +25,17 @@
  * else...
  *
  * compile SQLite with something like:
- * (SQLITE_THREADSAFE can be anything as the single connection is guarded with a mutex.)
  *
- *  cc -std=c99 -Isqlite-amalgamation-??????? -DSQLITE_THREADSAFE=0 -Os -g -c sqlite-amalgamation-???????/sqlite3.c
+ *  cc -Isqlite-amalgamation-??????? -c sqlite-amalgamation-???????/sqlite3.c
  *
  * compile example with something like:
  *
- *  cc -std=c99 -I. -Iexample -Isqlite-amalgamation-??????? -DSQLITE_THREADSAFE=0 -Os -g -c example/chanStrBlbSQL.c
- *  cc -std=c99 -I. -Iexample -Isqlite-amalgamation-??????? -DSQLITE_THREADSAFE=0 -Os -g -c example/chanStrBlbSQLtest.c
+ *  cc -I. -IStr -Iexample -Isqlite-amalgamation-??????? -c example/chanStrBlbSQL.c
+ *  cc -I. -Iexample -Isqlite-amalgamation-??????? -c example/chanStrBlbSQLtest.c
  *
  * link it all together with channel objects like:
  *
- *  cc -g -o chanStrBlbSQLtest chanStrBlbSQLtest.o chanStrBlbSQL.o sqlite3.o chanBlb.o chanStrFIFO.o chan.o -lpthread
+ *  cc -o chanStrBlbSQLtest chanStrBlbSQLtest.o chanStrBlbSQL.o sqlite3.o chanBlb.o chanStrFIFO.o chan.o -lpthread
  *
  * Usage:
  *  ./chanStrBlbSQLtest file journal(0:DELETE,1:TRUNCATE,2:PERSIST,3:WAL) synchronous(0:OFF,1:NORMAL,2:FULL,3:EXTRA) messages g|p|b
@@ -44,7 +43,7 @@
  *  (file for SQLite, :memory: is fast but much more expensive than chanStrFIFO, which is used if file is zero length)
  *  (SQLite PRAGMA journal_mode, 0=DELETE, 1=TRUNCATE, 2=PERSIST, 3=WAL)
  *  (SQLite PRAGMA synchronous, 0=OFF, 1=NORMAL, 2=FULL, 3=EXTRA)
- *  (message limit, only significant on initial create)
+ *  (messages limit, only significant on initial create)
  *  (g:get or p:put or b:both get and put)
  *
  * run it like:
@@ -92,10 +91,18 @@ inT(
     m->l = i;
     if (i < BUFSIZ && (t = realloc(m, chanBlb_tSize(m->l))))
       m = t;
-    if (chanOp(0, v, (void **)&m, chanOpPut) != chanOsPut)
+    if (chanOp(0, v, (void **)&m, chanOpPut) != chanOsPut) {
+      free(m);
+      m = 0;
       break;
+    }
   }
-  free(m);
+  if (m) {
+    /* for this test program, signal EOF */
+    m->l = 0;
+    if (chanOp(0, v, (void **)&m, chanOpPut) != chanOsPut)
+      free(m);
+  }
   pthread_cleanup_pop(1); /* chanClose(v) */
   return (0);
 }
@@ -112,6 +119,12 @@ outT(
     unsigned int l;
     int i;
 
+    if (!m->l) {
+      /* for this test program, handle EOF signal */
+      free(m);
+      chanShut(v);
+      break;
+    }
     for (l = 0; l < m->l && (i = write(1, m->b + l, m->l - l)) > 0; l += i);
     free(m);
   }
@@ -188,7 +201,6 @@ main(
   }
   if (*argv[arg_operation] != 'g')
     pthread_join(in, 0);
-  chanShut(c);
   if (*argv[arg_operation] != 'p')
     pthread_join(out, 0);
   chanClose(c);
