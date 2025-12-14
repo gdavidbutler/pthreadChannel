@@ -26,7 +26,7 @@
 #include <poll.h>
 #include <unistd.h>
 #include "chanBlbTrnKcp.h"
-#include "../../kcp/ikcp.h"
+#include "ikcp.h"
 
 static int
 output(
