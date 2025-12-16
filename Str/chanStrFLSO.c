@@ -24,7 +24,7 @@
 
 struct chanStrFLSOc {
   void (*f)(void *); /* free routine */
-  void (*d)(void *); /* item dequeue routine */
+  void (*d)(void *); /* item deallocation routine */
   void **q;          /* circular store */
   unsigned int m;    /* store max */
   unsigned int s;    /* store size */

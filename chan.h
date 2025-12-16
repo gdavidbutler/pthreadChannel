@@ -80,7 +80,7 @@ typedef chanSs_t
  * receives:
  *  a realloc() like function (from chanCreate)
  *  a free() like function (from chanCreate)
- *  a Store item dequeue function (from chanCreate)
+ *  a Store item deallocation function (from chanCreate)
  *  a wake function (update store state outside a store operation call)
  *  a wake closure
  *
@@ -98,7 +98,7 @@ typedef chanSs_t
 (*chanSa_t)(
   void *(*realloc)(void *, unsigned long)
  ,void (*free)(void *)
- ,void (*dequeue)(void *)
+ ,void (*dealloc)(void *)
  ,int (*wake)(void *, chanSs_t)
  ,void *wakeClosure
  ,chanSd_t *deallocation
@@ -129,7 +129,7 @@ typedef struct chan chan_t;
  *  This works best (providing low latency) when threads work more and talk less.
  *
  * When allocating the Channel, supply:
- *  a Store item dequeue function (0 if none)
+ *  a Store item deallocation function (0 if none)
  *  a Store allocation function (0 if none)
  *  additional allocation parameters
  *
@@ -138,7 +138,7 @@ typedef struct chan chan_t;
  */
 chan_t *
 chanCreate(
-  void (*dequeue)(void *)
+  void (*dealloc)(void *)
  ,chanSa_t allocation
  ,...
 );

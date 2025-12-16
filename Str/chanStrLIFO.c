@@ -24,7 +24,7 @@
 
 struct chanStrLIFOc {
   void (*f)(void *); /* free routine */
-  void (*d)(void *); /* item dequeue routine */
+  void (*d)(void *); /* item deallocation routine */
   void **q;          /* circular store */
   unsigned int s;    /* store size */
   unsigned int t;    /* store tail */
