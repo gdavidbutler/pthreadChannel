@@ -399,13 +399,16 @@ fwThread(
 #define V ((struct fwThread *)v)
   struct fwProcess *s;
 
+  pthread_cleanup_push(free, v);
+  pthread_cleanup_push((void(*)(void*))chanClose, V->snk);
+  pthread_cleanup_push((void(*)(void*))chanClose, V->src);
   while(chanOp(0, V->snk, (void **)&s, chanOpGet) == chanOsGet) {
     s->f(s);
     chanOp(0, V->src, (void **)&s, chanOpPut);
   }
-  chanClose(V->src);
-  chanClose(V->snk);
-  free(v);
+  pthread_cleanup_pop(1); /* chanClose(V->src) */
+  pthread_cleanup_pop(1); /* chanClose(V->snk) */
+  pthread_cleanup_pop(1); /* free(v) */
   return (0);
 #undef V
 }
