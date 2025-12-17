@@ -60,7 +60,7 @@ getMs(
 
 static void *
 pT(
-  struct pT *v
+  void *v
 ){
 #define V ((struct pT *)v)
   unsigned int c;
@@ -139,7 +139,7 @@ chanBlbTrnKcpCtx(
    || ikcp_wndsize(x->v, ow, iw)
    || ikcp_nodelay(x->v, nd, it, rs, nc))
     goto error3;
-  if (pthread_create(&t, 0, (void *(*)(void *))pT, x))
+  if (pthread_create(&t, 0, pT, x))
     goto error3;
   pthread_detach(t);
   return (x);
