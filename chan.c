@@ -180,8 +180,10 @@ static const unsigned int chanSu = 0x80; /* is shutdown */
         k = 0;\
     } while (k != c->V##t);\
     if (c->V##h == c->V##t) {\
-      if (!(v = ChanA(c->V, (c->V##s + 1) * sizeof (*c->V))))\
+      if (!(v = ChanA(c->V, (c->V##s + 1) * sizeof (*c->V)))) {\
+        fl = i;\
         goto exit;\
+      }\
       c->V = v;\
       if ((k = c->V##s - c->V##h))\
         for (q = c->V + c->V##h + k; k; --k, --q)\
@@ -448,11 +450,13 @@ chanOne(
   unsigned int j;
   unsigned int k;
   unsigned int l;
+  unsigned int fl;
   struct timespec s;
 
   if (!t || !a)
     return (0);
   m = 0;
+  fl = 0;
   j = 0;
   for (i = 0; i < t; ++i) switch ((a + i)->o) {
 
@@ -748,6 +752,7 @@ fndPut1:
     pthread_mutex_unlock(&c->m);
     break;
   }
+  fl = t;
   if (w > 0) {
     static long nsps = 1000000000L;
 
@@ -764,7 +769,7 @@ fndPut1:
       s.tv_nsec += w % nsps;
     } else
       s.tv_nsec += w;
-    if (s.tv_nsec > nsps) {
+    if (s.tv_nsec >= nsps) {
       ++s.tv_sec;
       s.tv_nsec -= nsps;
     }
@@ -1013,7 +1018,7 @@ fndPut2:
 exit:
   if (m)
     pthread_mutex_unlock(&m->m);
-  for (i = 0; i < t; ++i) switch ((a + i)->o) {
+  for (i = fl; i < t; ++i) switch ((a + i)->o) {
 
   case chanOpNop:
     break;
@@ -1044,11 +1049,13 @@ chanAll(
   unsigned int j;
   unsigned int k;
   unsigned int l;
+  unsigned int fl;
   struct timespec s;
 
   if (!t || !a)
     return (chanAlErr);
   m = 0;
+  fl = 0;
 lock1:
   j = 0;
   k = 0;
@@ -1321,6 +1328,7 @@ fndPut1:
     pthread_mutex_unlock(&c->m);
     break;
   }
+  fl = t;
   if (w > 0) {
     static long nsps = 1000000000L;
 
@@ -1337,7 +1345,7 @@ fndPut1:
       s.tv_nsec += w % nsps;
     } else
       s.tv_nsec += w;
-    if (s.tv_nsec > nsps) {
+    if (s.tv_nsec >= nsps) {
       ++s.tv_sec;
       s.tv_nsec -= nsps;
     }
@@ -1647,7 +1655,7 @@ fndPut2:
 exit:
   if (m)
     pthread_mutex_unlock(&m->m);
-  for (i = 0; i < t; ++i) switch ((a + i)->o) {
+  for (i = fl; i < t; ++i) switch ((a + i)->o) {
 
   case chanOpNop:
     break;
