@@ -4,7 +4,7 @@ Yet another implementation of a "Channel" construct for POSIX threads (pthreads)
 
 ### Why Channels?
 
-Parallel programming with shared memory is notoriously difficult. The standard approach—protecting shared data with mutexes and coordinating threads with condition variables—requires reasoning about all possible interleavings of concurrent execution. Humans are not good at this.
+Parallel programming with shared memory is notoriously difficult. The standard approach, protecting shared data with mutexes and coordinating threads with condition variables, requires reasoning about all possible interleavings of concurrent execution.
 
 The problems are well-known:
 * **Deadlocks** from inconsistent lock ordering across code paths
@@ -12,40 +12,14 @@ The problems are well-known:
 * **Missed wakeups** from condition variable signal/wait races
 * **Priority inversion**, **lock convoys**, and other subtle performance pathologies
 
-Worse, these bugs are non-deterministic. Code that passes extensive testing can fail in production under different timing. A bug may manifest once per million runs—or only on certain hardware. Code review helps but cannot reliably catch races; the human reviewer must mentally simulate all interleavings, which is precisely what humans cannot do.
+Worse, these bugs are non-deterministic. Code that passes extensive testing can fail in production under different timing. A bug may manifest once per million runs, or only on certain hardware.
 
-Channels offer a different model: instead of protecting shared data with locks, **transfer ownership of data through channels**. A Put hands off data; a Get receives it. The synchronization is encapsulated within the channel operations themselves. User code contains no mutexes, no condition variables, no barriers—and thus no opportunity to use them incorrectly.
-
-Critically, channel operations cannot be undone. Once a Get completes, the item is consumed; it cannot be put back. This constraint forces clean ownership semantics but creates a problem: what if an algorithm must Get from two channels and Put to a third, atomically? If the second Get fails, the first cannot be undone. This is why chanAll exists—it performs all operations atomically or none, enabling multi-channel transactions without partial completion.
-
-````
-chanOne (first ready completes, others left for next call)
-    ┌─────┐
-    │ op0 │───┐
-    └─────┘   │
-    ┌─────┐   ▼
-    │ op1 │──►[one completes]───► return which one
-    └─────┘   ▲
-    ┌─────┐   │
-    │ op2 │───┘
-    └─────┘
-
-chanAll (all complete atomically, or none do)
-    ┌─────┐
-    │ op0 │───┐
-    └─────┘   │
-    ┌─────┐   ▼
-    │ op1 │──►[all or nothing]───► return count completed
-    └─────┘   ▲
-    ┌─────┐   │
-    │ op2 │───┘
-    └─────┘
-````
+Channels offer a different model: instead of protecting shared data with locks, **transfer ownership of data through channels**. A Put hands off data; a Get receives it. The synchronization is encapsulated within the channel operations themselves. User code contains no mutexes, no condition variables and no barriers.
 
 This library provides:
-* **chanOp** — blocking Put or Get on a single channel
-* **chanOne** — wait for the first available operation across multiple channels (like select)
-* **chanAll** — perform all operations atomically or none (for multi-channel transactions)
+* **chanOp** - blocking Put or Get on a single channel
+* **chanOne** - wait for the first available operation across multiple channels (like select)
+* **chanAll** - perform all operations atomically across multiple channels or none
 
 These primitives compose safely. Two correct channel-based components, when connected, remain correct. This is not true of lock-based code, where combining two independently correct modules can introduce deadlocks neither had alone.
 
@@ -53,13 +27,13 @@ The cost is discipline: data must flow through channels rather than be shared. B
 
 #### Validation
 
-Testing parallel code is as hard as writing it—bugs hide in rare interleavings. To validate this implementation, particularly the atomic semantics of chanAll, the [squint](#Examples) example implements [McIlroy's "Squinting at Power Series"](https://swtch.com/~rsc/thread/squint.pdf)—a deliberately pathological parallel algorithm. It spawns threads dynamically, uses demand channels to prevent thread explosion, and performs atomic multi-channel operations throughout. Execution order is completely unpredictable, varying with core count, load, and scheduler decisions. Yet after all the chaos—threads creating, exiting, channels opening, shutting, closing—the program must produce the correct coefficients of TAN. It does. This is the proof that the lock ladder (acquire ascending, release descending) prevents deadlocks and that chanAll's all-or-nothing semantics hold under pressure.
+Testing parallel code is as hard as writing it, bugs hide in rare interleavings. To validate this implementation the [squint](#Examples) example implements [McIlroy's "Squinting at Power Series"](https://swtch.com/~rsc/thread/squint.pdf), a deliberately pathological parallel algorithm. It spawns threads dynamically, uses demand channels to prevent thread explosion, and performs atomic multi-channel operations throughout. Execution order is completely unpredictable, varying with core count, load, and scheduler decisions. Yet after all the chaos (threads creating, exiting, channels opening, shutting, closing) the program must produce the correct coefficients of the tangent power series. It does. This is the proof that the lock ladder (acquire ascending, release descending) prevents deadlocks and that chanAll's all-or-nothing semantics hold under pressure.
 
 #### CSP Heritage
 
 This library draws from [Communicating Sequential Processes](https://en.wikipedia.org/wiki/Communicating_sequential_processes) (CSP), where concurrent processes communicate through channels rather than sharing memory. In classic CSP, implemented in machine or assembler language using jump instructions, a rendezvous (Get and Put block until the other arrives) works well. When buffering is needed (queue, stack, etc.), it is implemented as another CSP.
 
-But modern CSPs—coroutines, functions with local variables and recursion—have higher context switch costs. Modern processors (call/return instructions, etc.) make this acceptable. However, a pthread context switch requires operating system support and the cost is prohibitively high for simple operations like buffering.
+But modern CSPs (coroutines, functions with local variables and recursion) have higher context switch costs. Modern processors (call/return instructions, etc.) make this acceptable. However, a pthread context switch requires operating system support and the cost is prohibitively high for simple operations like buffering.
 
 This implementation therefore uses **callbacks instead of processes** where a trivial thread would otherwise be required:
 * [Store](#Store) callbacks provide buffering without a buffer thread
@@ -115,7 +89,7 @@ This enables RPC-style request/response patterns:
          ▼                                              ▼    (delegated ownership)
 ````
 
-NOTE: chanOpen the response chan_t before passing it—otherwise the responder's chanClose could deallocate the channel before the requester's Get completes.
+NOTE: chanOpen the response chan_t before passing it, otherwise the responder's chanClose could deallocate the channel before the requester's Get completes.
   * requesting pthread:
     ````C
     chanOpen(responseChan);
@@ -129,14 +103,14 @@ NOTE: chanOpen the response chan_t before passing it—otherwise the responder's
     chanClose(responseChan);
     ````
 * Pthreads are serviced fairly, avoiding thundering herd:
-  * Waiters queue in order; when an item is available, only the next waiter is woken—not all of them.
+  * Waiters queue in order; when an item is available, only the next waiter is woken, not all of them.
   * A new arrival goes to the end of the line if others are already waiting.
 
   However, when both Puts and Gets are waiting, an arriving thread completes opportunistically:
   * If Gets are waiting and Puts are also waiting, a new Get takes an item immediately (a waiting Put is about to fill the Store anyway).
   * If Puts are waiting and Gets are also waiting, a new Put deposits immediately (a waiting Get is about to drain the Store anyway).
 
-  This avoids an unnecessary context switch: the new arrival would queue, immediately wake the first in line, then complete—so skip the queue. In effect, the channel switches from interrupt-style (wait for signal) to polling-style (proceed immediately) under load.
+  This avoids an unnecessary context switch. In effect, the channel switches from interrupt-style (wait for signal) to polling-style (proceed immediately) under load.
 
 #### Channel Lifecycle
 
@@ -207,7 +181,7 @@ Find the API in chan.h:
 
 By default, a Channel can hold a single item. A Put into an empty Channel succeeds immediately; the putter only blocks when attempting a second Put before a Get drains the first. This minimizes latency when producer and consumer rates are balanced.
 
-When rates differ, a larger buffer reduces context switching—the producer can run ahead without blocking on every item. Store callbacks execute within the Put/Get caller's context, providing buffer semantics without a buffer thread (see [CSP Heritage](#csp-heritage)).
+When rates differ, a larger buffer reduces context switching. The producer can run ahead without blocking on every item. Store callbacks execute within the Put/Get caller's context, providing buffer semantics without a buffer thread (see [CSP Heritage](#csp-heritage)).
 
 ```
   Default (single item):        With FIFO Store:
@@ -232,19 +206,17 @@ Find the API in Str/chanStrFIFO.h.
 A maximum sized, latency sensitive, Channel FIFO Store (FLSO) implementation is provided.
 When a context is created, a maximum and initial size are specified; the Store starts at initial size.
 
-**Problem**: Fixed-size buffers force a choice between low latency (small buffer) and high throughput (large buffer). Under variable load, neither choice is optimal—small buffers thrash under load, large buffers add latency when idle.
+**Problem**: Fixed-size buffers force a choice between low latency (small buffer) and high throughput (large buffer). Under variable load, neither choice is optimal. Small buffers can thrash under load. Large buffers can add latency.
 
-**Solution**: Dynamically adjust buffer size based on observed pressure:
-* **Shrink when idle**: If the Store is empty and no one is waiting, reduce size toward minimum (1). This minimizes latency when the system is keeping up.
-* **Grow under pressure**: If the Store is full and consumers/producers are waiting, increase size toward maximum. This absorbs bursts without thrashing.
+**Solution**: Dynamically adjust buffer size based on observed pressure.
 
-**Inspiration**: Consider a sushi cooler in a supermarket. Sushi must be fresh (low latency). Producers (staff making sushi) observe the bin and customers in line. If the bin is empty and no customers are waiting, keep less sushi on hand—maximize freshness. If the bin is full and customers are waiting, make more—the demand justifies it. FLSO applies this principle to buffer sizing.
+**Inspiration**: Consider a sushi cooler in a supermarket. Sushi must be fresh (low latency). The cooler observes producers (staff available to make sushi) and consumers (customers in line for sushi) and adjusts the amount of sushi it can hold. FLSO applies this principle to store sizing.
 
 The adjustment rules, executed within Put/Get operations:
 * Before a Put, if the Store is empty and there are no waiting Gets, the size is decremented.
 * After a Put, if the Store is full and there are waiting Gets, the size is incremented.
-* After a Get, if the Store is empty and there are no waiting Puts, the size is decremented.
 * Before a Get, if the Store is full and there are waiting Puts, the size is incremented.
+* After a Get, if the Store is empty and there are no waiting Puts, the size is decremented.
 
 This achieves self-tuning latency/throughput balance without external configuration or monitoring.
 
@@ -257,14 +229,12 @@ Find the API in Str/chanStrLIFO.h.
 
 ### Blob
 
-Channels pass pointers—ideal for intra-process SMP where threads share memory. But pointers are meaningless across process boundaries or over a network. For inter-process or inter-system communication, the actual data must be transmitted.
+Channels pass pointers for intra-process SMP where threads share memory. But pointers are meaningless across process boundaries or over a network. For inter-process or inter-system communication, data must be transmitted.
 
 A Blob is a length-prefixed array of octets: a message. Blob Stores hold the content itself, not a pointer, enabling:
 * **Persistence**: Blobs can survive process restart (see [chanStrBlbSQL](#Examples), which stores blobs in SQLite)
-* **Sharing**: Multiple processes can access a Blob Store (with appropriate coordination)
 * **Transport**: Blobs can be sent over network connections (see chanBlb below)
 
-Blobs can be transported via networking routines.
 Since a pthread can't both wait in a pthread_cond_wait and a poll/select/etc., a pair of blocking reader and writer pthreads are used.
 To limit the number of trivial threads, the API provides callback interfaces for both the Channel (Chn) and transport (Trn) sides.
 
