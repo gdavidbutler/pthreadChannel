@@ -87,3 +87,5 @@ chanBlbTrnFdStream.o: Blb/chanBlbTrnFdStream.c Blb/chanBlbTrnFdStream.h Blb/chan
 
 check: squint
 	./squint
+	./pipeproxy < example/floydWarshall.stdin
+	./floydWarshall < example/floydWarshall.stdin
