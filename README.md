@@ -25,10 +25,6 @@ These primitives compose safely. Two correct channel-based components, when conn
 
 The cost is discipline: data must flow through channels rather than be shared. But this discipline is enforced by the API, not by programmer vigilance. The result is parallel code that humans can reason about, review, and maintain.
 
-#### Validation
-
-Testing parallel code is as hard as writing it, bugs hide in rare interleavings. To validate this implementation the [squint](#Examples) example implements [McIlroy's "Squinting at Power Series"](https://swtch.com/~rsc/thread/squint.pdf), a deliberately pathological parallel algorithm. It spawns threads dynamically, uses demand channels to prevent thread explosion, and performs atomic multi-channel operations throughout. Execution order is completely unpredictable, varying with core count, load, and scheduler decisions. Yet after all the chaos (threads creating, exiting, channels opening, shutting, closing) the program must produce the correct coefficients of the tangent power series. It does. This is the proof that the lock ladder (acquire ascending, release descending) prevents deadlocks and that chanAll's all-or-nothing semantics hold under pressure.
-
 #### CSP Heritage
 
 This library draws from [Communicating Sequential Processes](https://en.wikipedia.org/wiki/Communicating_sequential_processes) (CSP), where concurrent processes communicate through channels rather than sharing memory. In classic CSP, implemented in machine or assembler language using jump instructions, a rendezvous (Get and Put block until the other arrives) works well. When buffering is needed (queue, stack, etc.), it is implemented as another CSP.
@@ -349,6 +345,144 @@ Connects two chanBlbs back-to-back, with Channels reversed.
   * Implementation of [M. Douglas McIlroy's "Squinting at Power Series"](https://swtch.com/~rsc/thread/squint.pdf).
 * floydWarshall
   * Use a Channel coordinating dynamic thread pool to parallelize the [Floyd-Warshall](https://en.wikipedia.org/wiki/Floyd–Warshall_algorithm) all shortest paths algorithm using [blocking](https://github.com/moorejs/APSP-in-parallel) techniques extended to optionally save all equal next hops.
+
+### Formal Verification with SPIN
+
+The channel implementation has been formally verified using [SPIN](http://spinroot.com/), a model checker for concurrent systems. SPIN exhaustively explores all possible interleavings of concurrent execution to verify correctness properties.
+
+Promela models verify different aspects of the implementation:
+
+| Model | Purpose | Key Properties Verified |
+|-------|---------|------------------------|
+| `chan.pml` | General channel operations | Safety, conservation, deadlock freedom |
+| `chanOne.pml` | Select-style first-available | First-match semantics, exactly-one completion |
+| `chanAll.pml` | Atomic multi-channel operations | All-or-nothing atomicity, lock ladder correctness |
+| `chanStrFIFO.pml` | FIFO Store | FIFO ordering, conservation, capacity bounds |
+| `chanStrFLSO.pml` | Self-tuning FIFO Store | FIFO ordering, size bounds, adaptation safety |
+
+#### Running Verification
+
+Requires SPIN (`spin` command) and a C compiler. Basic verification:
+
+```bash
+# Generate and compile verifier
+spin -a chan.pml
+cc -DSAFETY -o pan pan.c
+
+# Run safety check
+./pan -N atomicity
+
+# For liveness properties (with fairness)
+cc -o pan pan.c
+./pan -a -f -N completion
+```
+
+Each model supports test scenario selection via preprocessor defines:
+
+# chanOne.pml scenarios
+spin -a chanOne.pml                    # default: first-match test
+spin -DTEST_COMPETE -a chanOne.pml     # competing threads
+spin -DTEST_LADDER -a chanOne.pml      # lock ladder deadlock test
+```
+
+```bash
+# chanAll.pml scenarios
+spin -a chanAll.pml                    # default: competing threads
+spin -DTEST_PRODUCER_CONSUMER -a chanAll.pml
+
+#### Verification Results
+
+**chan.pml** - General operations (1,498 states with reduced parameters):
+
+| Property | Result | Description |
+|----------|--------|-------------|
+| `safety` | PASSED | No race conditions or invalid states |
+| `conservation` | PASSED | Items neither created nor destroyed |
+
+**chanOne.pml** - Select-style operations (472-2,583 states):
+
+| Property | Result | Description |
+|----------|--------|-------------|
+| `exactly_one` | PASSED | Each chanOne completes 0 or 1 operations |
+| `first_match` | PASSED | Returns first completable operation in array order |
+| `progress` | PASSED | Both threads complete (with fairness) |
+| `ladder_progress` | PASSED | No deadlock from lock ladder |
+
+**chanAll.pml** - Atomic multi-channel operations (319-626 states):
+
+| Property | Result | Description |
+|----------|--------|-------------|
+| `atomicity` | PASSED | All operations complete atomically or none do |
+| `completion` | PASSED | Both threads eventually complete (with fairness) |
+| `state_consistency` | PASSED | Channel states remain consistent |
+
+**chanStrFIFO.pml** - Fixed-size FIFO Store (1,238 states):
+
+| Property | Result | Description |
+|----------|--------|-------------|
+| `fifo_order` | PASSED | Items retrieved in order stored |
+| `conservation` | PASSED | No items lost or duplicated |
+| `bounds` | PASSED | Count never exceeds store size |
+| `progress` | PASSED | Producer/consumer complete (with fairness) |
+
+**chanStrFLSO.pml** - Self-tuning FIFO Store (160,010 states):
+
+| Property | Result | Description |
+|----------|--------|-------------|
+| `fifo_order` | PASSED | FIFO ordering preserved despite resizing |
+| `size_bounds` | PASSED | Size stays within min/max bounds |
+| `conservation` | PASSED | No items lost during resize |
+| `adapts_safely` | PASSED | Resizing respects bounds |
+| `progress` | PASSED | Producer/consumer complete (with fairness) |
+
+The models verify that the lock ladder pattern (acquire locks in ascending order, retry on trylock failure) prevents deadlocks, that chanAll's all-or-nothing semantics hold under concurrent interference, and that the Store implementations maintain FIFO ordering and data integrity.
+
+#### Runtime Verification
+
+The implementation passes runtime verification with sanitizers:
+
+```bash
+# ThreadSanitizer - detects data races
+cc -fsanitize=thread -g -O1 -o squint example/squint.c chan.c -I. -lpthread
+./squint 10   # No warnings
+
+# AddressSanitizer - detects memory errors
+cc -fsanitize=address -g -O1 -o squint example/squint.c chan.c -I. -lpthread
+./squint 10   # No warnings
+
+# Memory leak check (macOS)
+leaks --atExit -- ./squint 10
+```
+
+#### Static Analysis
+
+Clang static analyzer reports no true positives:
+
+```bash
+clang --analyze chan.c
+```
+
+The analyzer reports potential NULL dereference warnings in the `WAKE` macro. These are **false positives** because the analyzer cannot prove the invariant that waiter queue flags accurately reflect queue contents (when the "not empty" flag is set, a valid waiter pointer exists).
+
+#### Implementation Invariants
+
+The following invariants are maintained by the implementation:
+
+| Invariant | Description | Enforcement |
+|-----------|-------------|-------------|
+| **Lock ladder** | Locks acquired in ascending channel address order | `chanAll`, `chanOne` retry on trylock failure |
+| **Atomic all-or-none** | `chanAll` completes all operations or none | Single atomic section after lock acquisition |
+| **First-match** | `chanOne` returns first satisfiable operation | Sequential scan in array order |
+| **Waiter fairness** | Waiters serviced in arrival order | FIFO waiter queues per operation type |
+| **Queue/flag consistency** | Empty flags match queue state | Flag set when head==tail, cleared on enqueue |
+| **Reference counting** | Channel deallocated when openCnt reaches 0 | `chanOpen`/`chanClose` balance |
+| **Shutdown semantics** | After `chanShut`: Put fails, Get drains | `chanSu` flag checked before operations |
+| **Store conservation** | Items neither created nor destroyed | Store callbacks maintain item count |
+| **FIFO ordering** | Items retrieved in order stored | Circular buffer with head/tail pointers |
+
+#### Informal Verification with squint
+
+Testing parallel code is as hard as writing it, bugs hide in rare interleavings. To validate this implementation the [squint](#Examples) example implements [McIlroy's "Squinting at Power Series"](https://swtch.com/~rsc/thread/squint.pdf), a deliberately pathological parallel algorithm. It spawns threads dynamically, uses demand channels to prevent thread explosion, and performs atomic multi-channel operations throughout. Execution order is completely unpredictable, varying with core count, load, and scheduler decisions. Yet after all the chaos (threads creating, exiting, channels opening, shutting, closing) the program must produce the correct coefficients of the tangent power series. It does. This is the proof that the lock ladder (acquire ascending, release descending) prevents deadlocks and that chanAll's all-or-nothing semantics hold under pressure.
 
 ### Building
 

@@ -435,6 +435,25 @@ chanOp(
   return chanOsNop;
 }
 
+static void
+shut(
+  chan_t *c
+){
+  cpr_t *m;
+  cpr_t *p;
+  unsigned int l;
+
+  if (c->l & chanSu)
+    return;
+  c->l |= chanSu;
+  m = 0;
+  WAKE(chanGe, g, 1, ;);
+  WAKE(chanPe, p, 1, ;);
+  WAKE(chanEe, e, 1, ;);
+  WAKE(chanUe, u, 1, ;);
+  WAKE(chanHe, h, 1, ;);
+}
+
 unsigned int
 chanOne(
   long w
@@ -503,9 +522,9 @@ get1:
         if (!k && !(c->l & chanGe))
           WAKE(chanUe, u, 1, break;);
 get2:
-        pthread_mutex_unlock(&c->m);
         if (!c->t)
-          chanShut(c);
+          shut(c);
+        pthread_mutex_unlock(&c->m);
         (a + i)->s = chanOsGet;
         return (i + 1);
       } else if (!(c->t & chanSsCanGet) && c->l & chanSu)
@@ -539,9 +558,9 @@ put1:
         if (!k && !(c->l & chanPe))
           WAKE(chanEe, e, 1, break;);
 put2:
-        pthread_mutex_unlock(&c->m);
         if (!c->t)
-          chanShut(c);
+          shut(c);
+        pthread_mutex_unlock(&c->m);
         (a + i)->s = chanOsPut;
         return (i + 1);
       }
@@ -1225,9 +1244,9 @@ unlock1:
       } else
 get1:
         (a + i)->s = chanOsNop;
-      pthread_mutex_unlock(&c->m);
       if (!c->t)
-        chanShut(c);
+        shut(c);
+      pthread_mutex_unlock(&c->m);
       break;
 
     case chanOpPut:
@@ -1254,9 +1273,9 @@ get1:
       } else
 put1:
         (a + i)->s = chanOsNop;
-      pthread_mutex_unlock(&c->m);
       if (!c->t)
-        chanShut(c);
+        shut(c);
+      pthread_mutex_unlock(&c->m);
       break;
     }
     return (chanAlOp);
@@ -1551,9 +1570,9 @@ unlock2:
           }
           (a + i)->s = chanOsNop;
         }
-        pthread_mutex_unlock(&c->m);
         if (!c->t)
-          chanShut(c);
+          shut(c);
+        pthread_mutex_unlock(&c->m);
         break;
 
       case chanOpPut:
@@ -1585,9 +1604,9 @@ unlock2:
           }
           (a + i)->s = chanOsNop;
         }
-        pthread_mutex_unlock(&c->m);
         if (!c->t)
-          chanShut(c);
+          shut(c);
+        pthread_mutex_unlock(&c->m);
         break;
       }
       return (chanAlOp);
