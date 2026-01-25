@@ -379,16 +379,16 @@ cc -o pan pan.c
 
 Each model supports test scenario selection via preprocessor defines:
 
+```bash
 # chanOne.pml scenarios
 spin -a chanOne.pml                    # default: first-match test
 spin -DTEST_COMPETE -a chanOne.pml     # competing threads
 spin -DTEST_LADDER -a chanOne.pml      # lock ladder deadlock test
-```
 
-```bash
 # chanAll.pml scenarios
 spin -a chanAll.pml                    # default: competing threads
 spin -DTEST_PRODUCER_CONSUMER -a chanAll.pml
+```
 
 #### Verification Results
 
