@@ -238,6 +238,25 @@ static const unsigned int chanSu = 0x80; /* is shutdown */
   }\
 } while (0)
 
+static void
+shut(
+  chan_t *c
+){
+  cpr_t *m;
+  cpr_t *p;
+  unsigned int l;
+
+  if (c->l & chanSu)
+    return;
+  c->l |= chanSu;
+  m = 0;
+  WAKE(chanGe, g, 1, ;);
+  WAKE(chanPe, p, 1, ;);
+  WAKE(chanEe, e, 1, ;);
+  WAKE(chanUe, u, 1, ;);
+  WAKE(chanHe, h, 1, ;);
+}
+
 /* Store callback to update chanSs_t and wake threads */
 static int
 chanWake(
@@ -255,15 +274,10 @@ chanWake(
     pthread_mutex_unlock(&c->m);
     return (1);
   }
-  m = 0;
-  if (!s) {
-    c->l |= chanSu;
-    WAKE(chanGe, g, 1, ;);
-    WAKE(chanPe, p, 1, ;);
-    WAKE(chanEe, e, 1, ;);
-    WAKE(chanUe, u, 1, ;);
-    WAKE(chanHe, h, 1, ;);
-  } else {
+  if (!s)
+    shut(c);
+  else {
+    m = 0;
     if (s & chanSsCanGet && !(c->t & chanSsCanGet)) {
       c->t |= chanSsCanGet;
       WAKE(chanGe, g, c->t & chanSsCanGet, break;);
@@ -330,11 +344,11 @@ chan_t *
 chanOpen(
   chan_t *c
 ){
-  if (c) {
-    pthread_mutex_lock(&c->m);
-    ++c->c;
-    pthread_mutex_unlock(&c->m);
-  }
+  if (!c)
+    return (c);
+  pthread_mutex_lock(&c->m);
+  ++c->c;
+  pthread_mutex_unlock(&c->m);
   return (c);
 }
 
@@ -342,24 +356,10 @@ void
 chanShut(
   chan_t *c
 ){
-  cpr_t *m;
-  cpr_t *p;
-  unsigned int l;
-
   if (!c)
     return;
   pthread_mutex_lock(&c->m);
-  if (c->l & chanSu) {
-    pthread_mutex_unlock(&c->m);
-    return;
-  }
-  c->l |= chanSu;
-  m = 0;
-  WAKE(chanGe, g, 1, ;);
-  WAKE(chanPe, p, 1, ;);
-  WAKE(chanEe, e, 1, ;);
-  WAKE(chanUe, u, 1, ;);
-  WAKE(chanHe, h, 1, ;);
+  shut(c);
   pthread_mutex_unlock(&c->m);
 }
 
@@ -433,25 +433,6 @@ chanOp(
   if (chanOne(w, sizeof (p) / sizeof (p[0]), p))
     return p[0].s;
   return chanOsNop;
-}
-
-static void
-shut(
-  chan_t *c
-){
-  cpr_t *m;
-  cpr_t *p;
-  unsigned int l;
-
-  if (c->l & chanSu)
-    return;
-  c->l |= chanSu;
-  m = 0;
-  WAKE(chanGe, g, 1, ;);
-  WAKE(chanPe, p, 1, ;);
-  WAKE(chanEe, e, 1, ;);
-  WAKE(chanUe, u, 1, ;);
-  WAKE(chanHe, h, 1, ;);
 }
 
 unsigned int
