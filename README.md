@@ -292,18 +292,21 @@ Find the API in Blb/chanBlb.h.
 A couple of transport side implementations are provided (file descriptor based interfaces):
 
 * chanBlbTrnFd
-  * File descriptor for non-stream interfaces (e.g. pipe, UDP socket), use close() on inClose() and outClose() and no finClose().
+  * For reliable non-stream interfaces (e.g. pipe, datagram socketpair), use close() on inClose() and outClose() and no finClose().
 
 * chanBlbTrnFdStream
-  * File descriptor for stream interfaces (e.g. TCP socket), use shutdown() on inClose() and outClose() and close() on finClose().
+  * For reliable stream interfaces (e.g. TCP socket), use shutdown() on inClose() and outClose() and close() on finClose().
 
 Several Channel side, "framing", implementations are provided (useful with streaming protocols):
 
-* chanBlbChnFcgi
-  * Read and write framed using [FastCGI](https://en.wikipedia.org/wiki/FastCGI).
+* chanBlbChnVlq
+  * Read and write framed using a [Variable-length quantity](https://en.wikipedia.org/wiki/Variable-length_quantity) length prefix.
 
 * chanBlbChnNetstring
   * Read and write framed using [Netstring](https://en.wikipedia.org/wiki/Netstring).
+
+* chanBlbChnFcgi
+  * Read and write framed using [FastCGI](https://en.wikipedia.org/wiki/FastCGI).
 
 * chanBlbChnNetconf10
   * Read and write framed using [NETCONF](https://en.wikipedia.org/wiki/NETCONF) 1.0.
@@ -336,7 +339,7 @@ Connects two chanBlbs back-to-back, with Channels reversed.
     1. ./sockproxy -T 1 -F 2 -S 2222 -t 1 -f 2 -h localhost -s ssh &
     1. ssh -p 2222 user@localhost
 * pipeproxy
-  * Copy stdin to stdout through chanBlb pipe file descriptors preserving read boundaries using a FIFO Store and Netstring framing.
+  * Copy stdin to stdout through chanBlb pipe file descriptors preserving read boundaries using a FIFO Store and VLQ framing.
 * chanStrBlbSQL
   * Demonstrate a SQLite based Channel Blob FIFO Store.
 * chanBlbTrnKcp

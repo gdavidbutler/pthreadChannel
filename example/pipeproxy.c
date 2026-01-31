@@ -27,7 +27,7 @@
 #include "chanStrFIFO.h"
 #include "chanBlb.h"
 #include "chanBlbTrnFd.h"
-#include "chanBlbChnNetstring.h"
+#include "chanBlbChnVlq.h"
 
 static void *
 outT(
@@ -79,8 +79,8 @@ main(
     return (1);
   }
   if (!chanBlb(realloc, free
-      ,c[1], chanBlbTrnFdOutputCtx(ctx, p[1]), chanBlbTrnFdOutput, chanBlbTrnFdOutputClose, 0, chanBlbChnNetstringEgr
-      ,c[0], chanBlbTrnFdInputCtx(ctx, p[0]), chanBlbTrnFdInput, chanBlbTrnFdInputClose, (void *)65536, chanBlbChnNetstringIgr, 0
+      ,c[1], chanBlbTrnFdOutputCtx(ctx, p[1]), chanBlbTrnFdOutput, chanBlbTrnFdOutputClose, 0, chanBlbChnVlqEgr
+      ,c[0], chanBlbTrnFdInputCtx(ctx, p[0]), chanBlbTrnFdInput, chanBlbTrnFdInputClose, (void *)65536, chanBlbChnVlqIgr, 0
       ,ctx, chanBlbTrnFdFinalClose
       ,0)) {
     close(p[1]);
