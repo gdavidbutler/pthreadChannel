@@ -289,13 +289,20 @@ To limit the number of trivial threads, the API provides callback interfaces for
 
 Find the API in Blb/chanBlb.h.
 
-A couple of transport side implementations are provided (file descriptor based interfaces):
+A few transport side implementations are provided (file descriptor based interfaces):
 
 * chanBlbTrnFd
-  * For reliable non-stream interfaces (e.g. pipe, datagram socketpair), use close() on inClose() and outClose() and no finClose().
+  * For half-duplex interfaces (e.g. pipe) or bound datagram sockets, use close() on inClose() and outClose() and no finClose().
+  * For bound datagram sockets using a single file descriptor, use dup() to create separate input and output fds.
 
 * chanBlbTrnFdStream
-  * For reliable stream interfaces (e.g. TCP socket), use shutdown() on inClose() and outClose() and close() on finClose().
+  * For full-duplex stream interfaces (e.g. TCP socket, STREAM socketpair), use shutdown() on inClose() and outClose() and close() on finClose().
+
+* chanBlbTrnFdDatagram
+  * For unbound datagram sockets using recvfrom/sendto.
+  * Input prepends source address to blob: [1 byte addrlen][address][data].
+  * Output parses destination address from blob prefix and sends data to that address.
+  * Enables address-aware datagram communication through channels.
 
 Several Channel side, "framing", implementations are provided (useful with streaming protocols):
 
@@ -331,13 +338,23 @@ Blob flow (repeats):
 * sockproxy
   * Modeled on tcpproxy.c from [libtask](https://swtch.com/libtask/).
 Connects two chanBlbs back-to-back, with Channels reversed.
+  * Supports both stream sockets (using chanBlbTrnFdStream) and bound datagram sockets (using chanBlbTrnFd with dup()).
   * Sockproxy needs numeric values for socket type (-T, -t) and family type (-F, -f).
   * The options protocol type (-P, -p), service type (-S, -s) and host name (-H, -h) can be symbolic (see getaddrinfo).
   * Upper case options are for the "server" side, lower case options are for the "client" side.
-  * For most BSD compatible socket libraries, SOCK_STREAM is 1 and AF_INET is 2.
+  * For most BSD compatible socket libraries, SOCK_STREAM is 1, SOCK_DGRAM is 2, and AF_INET is 2.
   * For example, to listen (because of the server SOCK_STREAM socket type) for connections on any IPv4 stream socket on service 2222 and connect them to any IPv4 stream socket on service ssh at host localhost (letting the system choose the protocol):
     1. ./sockproxy -T 1 -F 2 -S 2222 -t 1 -f 2 -h localhost -s ssh &
     1. ssh -p 2222 user@localhost
+* datagramchat
+  * Broadcast chat demonstrating chanBlbTrnFdDatagram with unbound datagram sockets.
+  * Each instance binds to a local port and broadcasts messages to configured peers.
+  * Received messages display as [host:port]: message.
+  * When stdin closes, sends a leave notification to all peers.
+  * Example with three instances:
+    1. ./datagramchat -l 5001 127.0.0.1:5002 127.0.0.1:5003 &
+    1. ./datagramchat -l 5002 127.0.0.1:5001 127.0.0.1:5003 &
+    1. ./datagramchat -l 5003 127.0.0.1:5001 127.0.0.1:5002
 * pipeproxy
   * Copy stdin to stdout through chanBlb pipe file descriptors preserving read boundaries using a FIFO Store and VLQ framing.
 * chanStrBlbSQL
@@ -362,6 +379,7 @@ Promela models verify different aspects of the implementation:
 | `chanAll.pml` | Atomic multi-channel operations | All-or-nothing atomicity, lock ladder correctness |
 | `chanStrFIFO.pml` | FIFO Store | FIFO ordering, conservation, capacity bounds |
 | `chanStrFLSO.pml` | Self-tuning FIFO Store | FIFO ordering, size bounds, adaptation safety |
+| `chanBlb.pml` | Blob transport coordination | Shutdown ordering, finalClose timing, message conservation |
 
 #### Running Verification
 
@@ -438,7 +456,18 @@ spin -DTEST_PRODUCER_CONSUMER -a chanAll.pml
 | `adapts_safely` | PASSED | Resizing respects bounds |
 | `progress` | PASSED | Producer/consumer complete (with fairness) |
 
-The models verify that the lock ladder pattern (acquire locks in ascending order, retry on trylock failure) prevents deadlocks, that chanAll's all-or-nothing semantics hold under concurrent interference, and that the Store implementations maintain FIFO ordering and data integrity.
+**chanBlb.pml** - Blob transport coordination (8,727 states):
+
+| Property | Result | Description |
+|----------|--------|-------------|
+| `final_close` | PASSED | finalClose is eventually called |
+| `channels_shut` | PASSED | Both channels eventually shut |
+| `threads_exit` | PASSED | Both threads eventually exit |
+| `egress_conserve` | PASSED | No messages lost on egress path |
+| `ingress_conserve` | PASSED | No messages lost on ingress path |
+| `final_after_shut` | PASSED | finalClose only called after channels shut |
+
+The models verify that the lock ladder pattern (acquire locks in ascending order, retry on trylock failure) prevents deadlocks, that chanAll's all-or-nothing semantics hold under concurrent interference, that the Store implementations maintain FIFO ordering and data integrity, and that chanBlb properly coordinates shutdown and cleanup across egress/ingress threads.
 
 #### Runtime Verification
 

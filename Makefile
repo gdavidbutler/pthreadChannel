@@ -8,25 +8,28 @@ all: chan.o \
      chanStrFIFO.o chanStrFLSO.o chanStrLIFO.o \
      chanBlb.o \
      chanBlbChnVlq.o chanBlbChnNetstring.o chanBlbChnFcgi.o chanBlbChnNetconf10.o chanBlbChnNetconf11.o chanBlbChnHttp1.o \
-     chanBlbTrnFd.o chanBlbTrnFdStream.o \
-     sockproxy pipeproxy squint floydWarshall
+     chanBlbTrnFd.o chanBlbTrnFdStream.o chanBlbTrnFdDatagram.o \
+     sockproxy pipeproxy datagramchat squint floydWarshall
 
 clean:
 	rm -f chan.o
 	rm -f chanStrFIFO.o chanStrFLSO.o chanStrLIFO.o
 	rm -f chanBlb.o
 	rm -f chanBlbChnVlq.o chanBlbChnNetstring.o chanBlbChnFcgi.o chanBlbChnNetconf10.o chanBlbChnNetconf11.o chanBlbChnHttp1.o
-	rm -f chanBlbTrnFd.o chanBlbTrnFdStream.o
-	rm -f sockproxy pipeproxy squint floydWarshall
+	rm -f chanBlbTrnFd.o chanBlbTrnFdStream.o chanBlbTrnFdDatagram.o
+	rm -f sockproxy pipeproxy datagramchat squint floydWarshall
 	rm -f chanBlbTrnKcp.o
 	rm -f chanStrBlbSQL.o
 	rm -f chanStrBlbSQLtest
 
-sockproxy: example/sockproxy.c chan.h Blb/chanBlb.h Blb/chanBlbTrnFdStream.h chan.o chanBlb.o chanBlbTrnFdStream.o
-	$(CC) $(CFLAGS) -o sockproxy example/sockproxy.c chan.o chanBlb.o chanBlbTrnFdStream.o -lpthread
+sockproxy: example/sockproxy.c chan.h Blb/chanBlb.h Blb/chanBlbTrnFd.h Blb/chanBlbTrnFdStream.h chan.o chanBlb.o chanBlbTrnFd.o chanBlbTrnFdStream.o
+	$(CC) $(CFLAGS) -o sockproxy example/sockproxy.c chan.o chanBlb.o chanBlbTrnFd.o chanBlbTrnFdStream.o -lpthread
 
-pipeproxy: example/pipeproxy.c chan.h Blb/chanBlb.h Blb/chanBlbTrnFd.h Blb/chanBlbChnVlq.h chan.o chanStrFIFO.o chanBlb.o chanBlbTrnFd.o chanBlbChnVlq.o
-	$(CC) $(CFLAGS) -o pipeproxy example/pipeproxy.c chan.o chanStrFIFO.o chanBlb.o chanBlbTrnFd.o chanBlbChnVlq.o -lpthread
+pipeproxy: example/pipeproxy.c chan.h Blb/chanBlb.h Blb/chanBlbChnVlq.h Blb/chanBlbTrnFd.h chan.o chanStrFIFO.o chanBlb.o chanBlbTrnFd.o
+	$(CC) $(CFLAGS) -o pipeproxy example/pipeproxy.c chan.o chanStrFIFO.o chanBlb.o chanBlbChnVlq.o chanBlbTrnFd.o -lpthread
+
+datagramchat: example/datagramchat.c chan.h Blb/chanBlb.h Blb/chanBlbTrnFdDatagram.h chan.o chanBlb.o chanBlbTrnFdDatagram.o
+	$(CC) $(CFLAGS) -o datagramchat example/datagramchat.c chan.o chanBlb.o chanBlbTrnFdDatagram.o -lpthread
 
 squint: example/squint.c chan.h chan.o
 	$(CC) $(CFLAGS) -o squint example/squint.c chan.o -lpthread
@@ -87,6 +90,9 @@ chanBlbTrnFd.o: Blb/chanBlbTrnFd.c Blb/chanBlbTrnFd.h Blb/chanBlb.h chan.h
 
 chanBlbTrnFdStream.o: Blb/chanBlbTrnFdStream.c Blb/chanBlbTrnFdStream.h Blb/chanBlb.h chan.h
 	$(CC) $(CFLAGS) -c Blb/chanBlbTrnFdStream.c
+
+chanBlbTrnFdDatagram.o: Blb/chanBlbTrnFdDatagram.c Blb/chanBlbTrnFdDatagram.h Blb/chanBlb.h chan.h
+	$(CC) $(CFLAGS) -c Blb/chanBlbTrnFdDatagram.c
 
 check: squint
 	./squint

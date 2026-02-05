@@ -25,14 +25,14 @@ void *
 chanBlbTrnKcpCtx(
   void *(*malloc)(unsigned long)
  ,void (*free)(void *)
- ,int fd /* datagram socket */
- ,unsigned int cid /* connection id */
- ,unsigned short inwnd /* 0 -> 128 */
- ,unsigned short outwnd /* 0 -> 32 */
- ,unsigned short mtu /* 0 -> 1400 */
- ,unsigned short nodelay /* norm:0 fast:1 */
- ,unsigned short interval /* norm:0 fast:10 */
- ,unsigned short resend /* norm:0 fast:2 */
+ ,int fd                      /* datagram socket */
+ ,unsigned int cid            /* connection id */
+ ,unsigned short inwnd        /* 0 -> 128 */
+ ,unsigned short outwnd       /* 0 -> 32 */
+ ,unsigned short mtu          /* 0 -> 1400 */
+ ,unsigned short nodelay      /* norm:0 fast:1 */
+ ,unsigned short interval     /* norm:0 fast:10 */
+ ,unsigned short resend       /* norm:0 fast:2 */
  ,unsigned short nocongestion /* norm:0 fast:1 */
 );
 

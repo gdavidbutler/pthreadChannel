@@ -29,18 +29,19 @@
 #include <pthread.h>
 #include "chan.h"
 #include "chanBlb.h"
+#include "chanBlbTrnFd.h"
 #include "chanBlbTrnFdStream.h"
 
 struct addrinfo *Caddr;
 
-/* connect two chanSocks back to back, with ingress and egress channels reversed */
+/* connect two stream sockets back to back, with ingress and egress channels reversed */
 static void *
-servT(
+streamT(
   void *v
 ){
   int s[2];        /* server and client sockets */
   void *ctx[2];    /* input and output contexts */
-  chanArr_t p[2]; /* ingress and egress channels */
+  chanArr_t p[2];  /* ingress and egress channels */
 
   s[0] = (int)(long)v;
   if (!(ctx[0] = chanBlbTrnFdStreamCtx(s[0]))) {
@@ -100,6 +101,82 @@ exit0:
   return (0);
 }
 
+/* connect two bound datagram sockets back to back, with ingress and egress channels reversed */
+static void *
+datagramT(
+  void *v
+){
+  int s[2];        /* server and client sockets */
+  int d[2];        /* dup'd fds for output */
+  chanArr_t p[2];  /* ingress and egress channels */
+
+  s[0] = (int)(long)v;
+  if ((s[1] = socket(Caddr->ai_family, Caddr->ai_socktype, Caddr->ai_protocol)) < 0) {
+    perror("socket");
+    close(s[0]);
+    return (0);
+  }
+  if (connect(s[1], Caddr->ai_addr, Caddr->ai_addrlen)) {
+    perror("connect");
+    close(s[1]);
+    close(s[0]);
+    return (0);
+  }
+  if ((d[0] = dup(s[0])) < 0) {
+    perror("dup");
+    close(s[1]);
+    close(s[0]);
+    return (0);
+  }
+  if ((d[1] = dup(s[1])) < 0) {
+    perror("dup");
+    close(d[0]);
+    close(s[1]);
+    close(s[0]);
+    return (0);
+  }
+  if (!(p[0].c = chanCreate(free, 0))) {
+    perror("chanCreate");
+    close(d[1]);
+    close(d[0]);
+    close(s[1]);
+    close(s[0]);
+    return (0);
+  }
+  if (!(p[1].c = chanCreate(free, 0))) {
+    perror("chanCreate");
+    chanClose(p[0].c);
+    close(d[1]);
+    close(d[0]);
+    close(s[1]);
+    close(s[0]);
+    return (0);
+  }
+  if (!chanBlb(realloc, free
+      ,p[0].c, chanBlbTrnFdOutputCtx(0, d[1]), chanBlbTrnFdOutput, chanBlbTrnFdOutputClose, 0, 0
+      ,p[1].c, chanBlbTrnFdInputCtx(0, s[1]), chanBlbTrnFdInput, chanBlbTrnFdInputClose, 0, 0, 0
+      ,0, 0
+      ,0)) {
+    perror("chanBlb");
+    close(d[0]);
+    close(s[0]);
+    return (0);
+  }
+  if (!chanBlb(realloc, free
+      ,p[1].c, chanBlbTrnFdOutputCtx(0, d[0]), chanBlbTrnFdOutput, chanBlbTrnFdOutputClose, 0, 0
+      ,p[0].c, chanBlbTrnFdInputCtx(0, s[0]), chanBlbTrnFdInput, chanBlbTrnFdInputClose, 0, 0, 0
+      ,0, 0
+      ,0)) {
+    perror("chanBlb");
+    return (0);
+  }
+  /* wait for either chanShut */
+  p[0].v = p[1].v = 0;
+  p[0].o = p[1].o = chanOpSht;
+  chanOne(0, sizeof (p) / sizeof (p[0]), p);
+  return (0);
+}
+
 static void *
 listenT(
   void *v
@@ -114,9 +191,9 @@ listenT(
   while ((c = accept(l, &a, &s)) >= 0) {
     pthread_t t;
 
-    if (pthread_create(&t, 0, servT, (void *)(long)c)) {
+    if (pthread_create(&t, 0, streamT, (void *)(long)c)) {
       close(c);
-      perror("chanIt");
+      perror("pthread_create");
     }
     pthread_detach(t);
   }
@@ -250,7 +327,7 @@ main(
       return (1);
     }
   } else {
-    if (pthread_create(&t, 0, servT, (void *)(long)fd)) {
+    if (pthread_create(&t, 0, datagramT, (void *)(long)fd)) {
       perror("pthread_create");
       return (1);
     }

@@ -59,23 +59,27 @@ main(
   int i;
 
   chanInit(realloc, free);
-  if (!(ctx = chanBlbTrnFdCtx())) {
-    perror("chanBlbTrnFdCtx");
-    return (1);
-  }
   if (!(c[0] = chanCreate(free, chanStrFIFOa, 16))) {
     perror("chanCreate");
     return (1);
   }
   if (!(c[1] = chanCreate(free, chanStrFIFOa, 16))) {
-    chanClose(c[0]);
     perror("chanCreate");
+    chanClose(c[0]);
     return (1);
   }
   if (pipe(p)) {
+    perror("pipe");
     chanClose(c[1]);
     chanClose(c[0]);
-    perror("pipe");
+    return (1);
+  }
+  if (!(ctx = chanBlbTrnFdCtx())) {
+    perror("chanBlbTrnFdCtx");
+    close(p[1]);
+    close(p[0]);
+    chanClose(c[1]);
+    chanClose(c[0]);
     return (1);
   }
   if (!chanBlb(realloc, free
@@ -83,19 +87,20 @@ main(
       ,c[0], chanBlbTrnFdInputCtx(ctx, p[0]), chanBlbTrnFdInput, chanBlbTrnFdInputClose, (void *)65536, chanBlbChnVlqIgr, 0
       ,ctx, chanBlbTrnFdFinalClose
       ,0)) {
-    close(p[1]);
-    close(p[0]);
+    perror("chanPipe");
+    /* contexts are destroyed by chanBlb, even on failure */
     chanClose(c[1]);
     chanClose(c[0]);
-    perror("chanPipe");
     return (1);
   }
+  chanOpen(c[0]);
   if (pthread_create(&t, 0, outT, c[0])) {
-    chanShut(c[1]);
-    chanClose(c[1]);
-    chanOp(0, c[0], 0, chanOpSht);
-    chanClose(c[0]);
     perror("pthread_create");
+    chanClose(c[0]);
+    chanShut(c[1]);
+    chanShut(c[0]);
+    chanClose(c[1]);
+    chanClose(c[0]);
     return (1);
   }
   while ((m = malloc(chanBlb_tSize(BUFSIZ)))
@@ -107,6 +112,10 @@ main(
       m = t;
     if (chanOp(0, c[1], (void **)&m, chanOpPut) != chanOsPut) {
       perror("chanOpPut");
+      chanShut(c[1]);
+      chanShut(c[0]);
+      chanClose(c[1]);
+      chanClose(c[0]);
       return (1);
     }
   }
@@ -114,5 +123,7 @@ main(
   chanShut(c[1]);
   chanClose(c[1]);
   pthread_join(t, 0);
+  chanClose(c[0]);
+  /* contexts are destroyed by chanBlb, even on success */
   return (0);
 }

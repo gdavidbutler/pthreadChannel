@@ -43,7 +43,7 @@ struct chanBlbEgrCtx {
   void *outCtx;
   unsigned int (*out)(void *outCtx, const void *buffer, unsigned int length);
   void (*fin)(void *chanBlbEgrCtx);
-  void *opaque[4];
+  void *opaque[2];
 };
 
 struct chanBlbIgrCtx {
@@ -55,7 +55,7 @@ struct chanBlbIgrCtx {
   unsigned int (*inp)(void *inpCtx, void *buffer, unsigned int length);
   chanBlb_t *blb;
   void (*fin)(void *chanBlbIgrCtx);
-  void *opaque[4];
+  void *opaque[2];
 };
 
 /* utility to injest chanBlbIgrCtx->blb */
@@ -73,12 +73,12 @@ chanBlbIgrBlb(
  *
  * Provide realloc and free routines to use.
  *
- * Provide an optional egress chan_t: (if not provided, outputClose(outputCtx),if provided, is called immediately)
+ * Provide an optional egress chan_t: (if not provided, outputClose(outputCtx) is called immediately)
  *  Otherwise, output() is required, outputClose() is optional.
  * Provide an optional egress framer context
  * Provide an optional egress framer
  *
- * Provide an optional ingress chan_t: (if not provided, inputClose(inputCtx), if provided, is called immediately)
+ * Provide an optional ingress chan_t: (if not provided, inputClose(inputCtx) is called immediately)
  *  Otherwise, input() is required, inputClose() is optional.
  * Provide an optional ingress framer context
  * Provide an optional ingress framer
@@ -94,7 +94,14 @@ chanBlbIgrBlb(
  *
  * Provide an optional pthread_create attribute
  *
- * NOTE: This routine takes ownership of the contexts using the provided Close routines.
+ * NOTE: This routine takes ownership of the contexts using the provided Close routines
+ *
+ * On success:
+ *  return non-zero
+ * On failure:
+ *  close routines are called on contexts
+ *  channels are chanShut()
+ *  return 0
  */
 int
 chanBlb(
@@ -120,6 +127,6 @@ chanBlb(
  ,void (*finalClose)(void *finalCtx)
 
  ,pthread_attr_t *attr
-); /* returns 0 on failure */
+);
 
 #endif /* __CHANBLB_H__ */

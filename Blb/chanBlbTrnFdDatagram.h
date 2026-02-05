@@ -18,70 +18,53 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include <unistd.h>
-#include "chanBlbTrnFd.h"
+#ifndef __CHANBLBTRNFDDATAGRAM_H__
+#define __CHANBLBTRNFDDATAGRAM_H__
 
 void *
-chanBlbTrnFdCtx(
+chanBlbTrnFdDatagramCtx(
   void
-){
-  return ((void *)(long)1); /* provide a non-zero value to support the canonical pattern (allocate a context) */
-}
+);
 
 void *
-chanBlbTrnFdInputCtx(
-  void *v
- ,int f
-){
-  return ((void *)(long)f);
-  (void)v;
-}
+chanBlbTrnFdDatagramInputCtx(
+  void *ctx
+ ,int fd
+);
 
 unsigned int
-chanBlbTrnFdInput(
-  void *v
- ,unsigned char *b
- ,unsigned int l
-){
-  int i;
-
-  if ((i = read((int)(long)v, b, l)) < 0)
-    i = 0;
-  return (i);
-}
+chanBlbTrnFdDatagramInput(
+  void *inputCtx
+ ,unsigned char *buffer
+ ,unsigned int length
+);
 
 void
-chanBlbTrnFdInputClose(
-  void *v
-){
-  close((int)(long)v);
-}
+chanBlbTrnFdDatagramInputClose(
+  void *inputCtx
+);
 
 void *
-chanBlbTrnFdOutputCtx(
-  void *v
- ,int f
-){
-  return ((void *)(long)f);
-  (void)v;
-}
+chanBlbTrnFdDatagramOutputCtx(
+  void *ctx
+ ,int fd
+);
 
 unsigned int
-chanBlbTrnFdOutput(
-  void *v
- ,const unsigned char *b
- ,unsigned int l
-){
-  int i;
-
-  if ((i = write((int)(long)v, b, l)) < 0)
-    i = 0;
-  return (i);
-}
+chanBlbTrnFdDatagramOutput(
+  void *outputCtx
+ ,const unsigned char *buffer
+ ,unsigned int length
+);
 
 void
-chanBlbTrnFdOutputClose(
-  void *v
-){
-  close((int)(long)v);
-}
+chanBlbTrnFdDatagramOutputClose(
+  void *outputCtx
+);
+
+void
+chanBlbTrnFdDatagramFinalClose(
+  void *ctx
+);
+
+#endif /* __CHANBLBTRNFDDATAGRAM_H__ */

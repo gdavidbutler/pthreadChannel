@@ -55,5 +55,6 @@ dkms.conf
 primes
 sockproxy
 pipeproxy
+datagramchat
 squint
 floydWarshall

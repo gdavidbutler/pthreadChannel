@@ -19,6 +19,7 @@
  */
 
 #include <stdarg.h>
+#include <time.h>
 #include <pthread.h>
 #include "chan.h"
 #include "chanBlb.h"
@@ -36,14 +37,7 @@ chanBlb_tSize(
 
 /**********************************************************/
 
-struct ctxM {
-  pthread_mutex_t m;
-  unsigned int s;
-};
-
-/**********************************************************/
-
-struct ctxE { /* struct chanBlbEgrCtx with different names */
+struct ctxE { /* struct chanBlbEgrCtx with opaque names */
   void *(*ma)(void *, unsigned long);
   void (*mf)(void *);
   void *g;
@@ -51,10 +45,9 @@ struct ctxE { /* struct chanBlbEgrCtx with different names */
   void *x;
   unsigned int (*xf)(void *, const unsigned char *, unsigned int);
   void (*d)(void *);
-  struct ctxM *m;
+  /* opaque[2] */
   void (*xc)(void *);
-  void *f;
-  void (*fc)(void *);
+  volatile int *ex;
 };
 
 static void
@@ -62,24 +55,11 @@ finE(
   void *v
 ){
 #define V ((struct ctxE *)v)
+  *V->ex = 1;
   chanShut(V->c);
   chanClose(V->c);
   if (V->xc)
     V->xc(V->x);
-  if (V->m) {
-    pthread_mutex_lock(&V->m->m);
-    if (!V->m->s) {
-      V->m->s = 1;
-      pthread_mutex_unlock(&V->m->m);
-      V->mf(v);
-      return;
-    }
-    pthread_mutex_unlock(&V->m->m);
-    pthread_mutex_destroy(&V->m->m);
-    V->mf(V->m);
-  }
-  if (V->fc)
-    V->fc(V->f);
   V->mf(v);
 #undef V
 }
@@ -113,7 +93,7 @@ nfE(
 
 /**********************************************************/
 
-struct ctxI { /* struct chanBlbIgrCtx with different names */
+struct ctxI { /* struct chanBlbIgrCtx with opaque names */
   void *(*ma)(void *, unsigned long);
   void (*mf)(void *);
   void *g;
@@ -122,10 +102,9 @@ struct ctxI { /* struct chanBlbIgrCtx with different names */
   unsigned int (*xf)(void *, unsigned char *, unsigned int);
   chanBlb_t *b;
   void (*d)(void *);
-  struct ctxM *m;
+  /* opaque[2] */
   void (*xc)(void *);
-  void *f;
-  void (*fc)(void *);
+  volatile int *ex;
 };
 
 static void
@@ -133,25 +112,12 @@ finI(
   void *v
 ){
 #define V ((struct ctxI *)v)
+  *V->ex = 1;
   chanShut(V->c);
   chanClose(V->c);
   V->mf(V->b);
   if (V->xc)
     V->xc(V->x);
-  if (V->m) {
-    pthread_mutex_lock(&V->m->m);
-    if (!V->m->s) {
-      V->m->s = 1;
-      pthread_mutex_unlock(&V->m->m);
-      V->mf(v);
-      return;
-    }
-    pthread_mutex_unlock(&V->m->m);
-    pthread_mutex_destroy(&V->m->m);
-    V->mf(V->m);
-  }
-  if (V->fc)
-    V->fc(V->f);
   V->mf(v);
 #undef V
 }
@@ -223,6 +189,75 @@ nfI(
 
 /**********************************************************/
 
+struct monCtx {
+  void (*mf)(void *);
+  chan_t *cE;
+  chan_t *cI;
+  pthread_t tE;
+  pthread_t tI;
+  volatile int exE;
+  volatile int exI;
+  void *f;
+  void (*fc)(void *);
+};
+
+static void
+monFin(
+  void *v
+#define V ((struct monCtx *)v)
+){
+  if (V->cE) {
+    if (!V->exE)
+      pthread_cancel(V->tE);
+    pthread_join(V->tE, 0);
+    chanClose(V->cE);
+  }
+  if (V->cI) {
+    if (!V->exI)
+      pthread_cancel(V->tI);
+    pthread_join(V->tI, 0);
+    chanClose(V->cI);
+  }
+  if (V->fc)
+    V->fc(V->f);
+  V->mf(v);
+#undef V
+}
+
+static void *
+monT(
+  void *v
+#define V ((struct monCtx *)v)
+){
+  chanArr_t p[2];
+  unsigned int n;
+  unsigned int i;
+  struct timespec ts;
+
+  pthread_cleanup_push(monFin, v);
+  p[0].c = V->cE; p[0].v = 0; p[0].o = chanOpSht;
+  p[1].c = V->cI; p[1].v = 0; p[1].o = chanOpSht;
+  while (p[0].c || p[1].c) {
+    if (!(n = chanOne(0, 2, p)))
+      break;
+    --n;
+    if (p[n].s == chanOsSht)
+      p[n].c = 0;
+  }
+  ts.tv_sec = 1;
+  ts.tv_nsec = 0;
+  for (i = 0; i < 1800; ++i) {
+    if ((!V->cE || V->exE) && (!V->cI || V->exI))
+      break;
+    nanosleep(&ts, 0);
+  }
+  pthread_cleanup_pop(1);
+  return (0);
+#undef V
+}
+
+/**********************************************************/
+
 int
 chanBlb(
   void *(*ma)(void *, unsigned long)
@@ -248,25 +283,35 @@ chanBlb(
 
  ,pthread_attr_t *a
 ){
+  pthread_t tE;
+  pthread_t tI;
+  struct monCtx *m;
   pthread_t t;
-  struct ctxM *m;
+  int hE;
+  int hI;
+  int hM;
 
-  m = 0;
+  hE = 0;
+  hI = 0;
+  hM = 0;
   if (!ma || !mf
    || (!e && !i)
    || (e && !otf)
    || (i && !inf)
   )
     goto error;
-  mf(ma(0,1)); /* force exception here and now */
-  if (e && i && fc) { /* need finalClose synchronization */
-    if (!(m = ma(0, sizeof (*m)))
-     || pthread_mutex_init(&m->m, 0)) {
-      mf(m);
-      goto error;
-    }
-    m->s = 0;
-  }
+  mf(ma(0, 1)); /* force exception here and now */
+  if (!(m = ma(0, sizeof (*m))))
+    goto error;
+  hM = 1;
+  m->mf = mf;
+  m->cE = 0;
+  m->cI = 0;
+  m->exE = 0;
+  m->exI = 0;
+  m->f = f;
+  m->fc = fc;
+
   if (e) {
     struct ctxE *x;
 
@@ -277,73 +322,66 @@ chanBlb(
     x->c = chanOpen(e);
     x->x = ot;
     x->xf = otf;
-    x->m = m;
     x->xc = otc;
-    x->f = f;
-    x->fc = fc;
     x->d = finE;
     x->g = eg;
-    if (pthread_create(&t, a, fe ? (void *(*)(void *))fe : nfE, x)) {
+    x->ex = &m->exE;
+    if (pthread_create(&tE, a, fe ? (void *(*)(void *))fe : nfE, x)) {
       chanClose(x->c);
       mf(x);
       goto error;
     }
-    pthread_detach(t);
-    if (!m) /* if no synchronization, only one finalClose on error */
-      fc = 0;
+    hE = 1;
+    m->tE = tE;
+    otc = 0;
   } else if (otc)
     otc(ot);
-  otc = 0; /* only one outputClose on error */
   if (i) {
     struct ctxI *x;
 
-    if (!(x = ma(0, sizeof (*x)))) {
-      if (m) {
-        pthread_mutex_lock(&m->m);
-        if (!m->s) {
-          m->s = 1;
-          pthread_mutex_unlock(&m->m);
-          m = 0;
-        } else
-          pthread_mutex_unlock(&m->m);
-      }
+    if (!(x = ma(0, sizeof (*x))))
       goto error;
-    }
     x->ma = ma;
     x->mf = mf;
     x->c = chanOpen(i);
     x->x = in;
     x->xf = inf;
-    x->m = m;
     x->xc = inc;
-    x->f = f;
-    x->fc = fc;
     x->d = finI;
     x->g = ig;
     x->b = b;
-    if (pthread_create(&t, a, fi ? (void *(*)(void *))fi : nfI, x)) {
-      if (m) {
-        pthread_mutex_lock(&m->m);
-        if (!m->s) {
-          m->s = 1;
-          pthread_mutex_unlock(&m->m);
-          m = 0;
-        } else
-          pthread_mutex_unlock(&m->m);
-      }
+    x->ex = &m->exI;
+    if (pthread_create(&tI, a, fi ? (void *(*)(void *))fi : nfI, x)) {
       chanClose(x->c);
       mf(x);
       goto error;
     }
-    pthread_detach(t);
+    hI = 1;
+    m->tI = tI;
+    b = 0;
+    inc = 0;
   } else if (inc)
     inc(in);
+  m->cE = chanOpen(e);
+  m->cI = chanOpen(i);
+  if (pthread_create(&t, a, monT, m)) {
+    chanClose(m->cE);
+    chanClose(m->cI);
+    goto error;
+  }
+  pthread_detach(t);
   return (1);
 error:
-  if (m) {
-    pthread_mutex_destroy(&m->m);
-    mf(m);
+  if (hE) {
+    chanShut(e);
+    pthread_join(tE, 0);
   }
+  if (hI) {
+    chanShut(i);
+    pthread_join(tI, 0);
+  }
+  if (hM)
+    mf(m);
   chanShut(e);
   chanShut(i);
   if (otc)
