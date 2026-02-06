@@ -18,14 +18,27 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include <stdlib.h>
 #include <unistd.h>
 #include "chanBlbTrnFd.h"
+
+struct ctx {
+  int i;
+  int o;
+};
+#define V ((struct ctx *)v)
 
 void *
 chanBlbTrnFdCtx(
   void
 ){
-  return ((void *)(long)1); /* provide a non-zero value to support the canonical pattern (allocate a context) */
+  void *v;
+
+  if ((v = malloc(sizeof (struct ctx)))) {
+    V->i = -1;
+    V->o = -1;
+  }
+  return (v);
 }
 
 void *
@@ -33,8 +46,8 @@ chanBlbTrnFdInputCtx(
   void *v
  ,int f
 ){
-  return ((void *)(long)f);
-  (void)v;
+  V->i = f;
+  return (v);
 }
 
 unsigned int
@@ -45,7 +58,7 @@ chanBlbTrnFdInput(
 ){
   int i;
 
-  if ((i = read((int)(long)v, b, l)) < 0)
+  if ((i = read(V->i, b, l)) < 0)
     i = 0;
   return (i);
 }
@@ -54,7 +67,8 @@ void
 chanBlbTrnFdInputClose(
   void *v
 ){
-  close((int)(long)v);
+  if (V->i >= 0 && V->i != V->o)
+    close(V->i);
 }
 
 void *
@@ -62,8 +76,8 @@ chanBlbTrnFdOutputCtx(
   void *v
  ,int f
 ){
-  return ((void *)(long)f);
-  (void)v;
+  V->o = f;
+  return (v);
 }
 
 unsigned int
@@ -74,7 +88,7 @@ chanBlbTrnFdOutput(
 ){
   int i;
 
-  if ((i = write((int)(long)v, b, l)) < 0)
+  if ((i = write(V->o, b, l)) < 0)
     i = 0;
   return (i);
 }
@@ -83,5 +97,17 @@ void
 chanBlbTrnFdOutputClose(
   void *v
 ){
-  close((int)(long)v);
+  if (V->o >= 0 && V->o != V->i)
+    close(V->o);
 }
+
+void
+chanBlbTrnFdFinalClose(
+  void *v
+){
+  if (V->i == V->o)
+    close(V->i);
+  free(v);
+}
+
+#undef V

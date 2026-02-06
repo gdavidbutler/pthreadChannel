@@ -278,7 +278,7 @@ To limit the number of trivial threads, the API provides callback interfaces for
                 │                                     │
                 ▼           Transport Layer           │
            ═══════════════════════════════════════════════
-                  (pipe, socket, UDP datagram, etc.)
+                          (pipe, socket, etc.)
 ````
 
 * Chn callbacks replace the default Egress/Ingress thread logic to frame/deframe blobs.
@@ -292,17 +292,17 @@ Find the API in Blb/chanBlb.h.
 A few transport side implementations are provided (file descriptor based interfaces):
 
 * chanBlbTrnFd
-  * For half-duplex interfaces (e.g. pipe) or bound datagram sockets, use close() on inClose() and outClose() and no finClose().
-  * For bound datagram sockets using a single file descriptor, use dup() to create separate input and output fds.
-
-* chanBlbTrnFdStream
-  * For full-duplex stream interfaces (e.g. TCP socket, STREAM socketpair), use shutdown() on inClose() and outClose() and close() on finClose().
+  * For half-duplex interfaces (e.g. pipe).
+  * For bound datagram sockets using read/write.
 
 * chanBlbTrnFdDatagram
-  * For unbound datagram sockets using recvfrom/sendto.
-  * Input prepends source address to blob: [1 byte addrlen][address][data].
+  * For datagram sockets using recvfrom/sendto.
+  * Input prepends source address to blob: [1 unsigned byte addrlen][address][data].
   * Output parses destination address from blob prefix and sends data to that address.
   * Enables address-aware datagram communication through channels.
+
+* chanBlbTrnFdStream
+  * For full-duplex stream interfaces (e.g. TCP socket, STREAM socketpair)
 
 Several Channel side, "framing", implementations are provided (useful with streaming protocols):
 
@@ -338,7 +338,7 @@ Blob flow (repeats):
 * sockproxy
   * Modeled on tcpproxy.c from [libtask](https://swtch.com/libtask/).
 Connects two chanBlbs back-to-back, with Channels reversed.
-  * Supports both stream sockets (using chanBlbTrnFdStream) and bound datagram sockets (using chanBlbTrnFd with dup()).
+  * Supports both stream sockets (using chanBlbTrnFdStream) and bound datagram sockets (using chanBlbTrnFd).
   * Sockproxy needs numeric values for socket type (-T, -t) and family type (-F, -f).
   * The options protocol type (-P, -p), service type (-S, -s) and host name (-H, -h) can be symbolic (see getaddrinfo).
   * Upper case options are for the "server" side, lower case options are for the "client" side.
@@ -352,11 +352,11 @@ Connects two chanBlbs back-to-back, with Channels reversed.
   * Received messages display as [host:port]: message.
   * When stdin closes, sends a leave notification to all peers.
   * Example with three instances:
-    1. ./datagramchat -l 5001 127.0.0.1:5002 127.0.0.1:5003 &
-    1. ./datagramchat -l 5002 127.0.0.1:5001 127.0.0.1:5003 &
+    1. ./datagramchat -l 5001 127.0.0.1:5002 127.0.0.1:5003
+    1. ./datagramchat -l 5002 127.0.0.1:5001 127.0.0.1:5003
     1. ./datagramchat -l 5003 127.0.0.1:5001 127.0.0.1:5002
 * pipeproxy
-  * Copy stdin to stdout through chanBlb pipe file descriptors preserving read boundaries using a FIFO Store and VLQ framing.
+  * Copy stdin to stdout through chanBlb pipe file descriptors using a FIFO Store and preserving read boundaries using VLQ framing.
 * chanStrBlbSQL
   * Demonstrate a SQLite based Channel Blob FIFO Store.
 * chanBlbTrnKcp

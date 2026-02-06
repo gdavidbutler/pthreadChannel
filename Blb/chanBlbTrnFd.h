@@ -62,6 +62,9 @@ chanBlbTrnFdOutputClose(
   void *outputCtx
 );
 
-#define chanBlbTrnFdFinalClose 0
+void
+chanBlbTrnFdFinalClose(
+  void *v
+);
 
 #endif /* __CHANBLBTRNFD_H__ */

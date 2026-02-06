@@ -183,8 +183,6 @@ main(
     perror("chanBlbTrnFdDatagramCtx");
     return (1);
   }
-  chanBlbTrnFdDatagramInputCtx(ctx, fd);
-  chanBlbTrnFdDatagramOutputCtx(ctx, fd);
 
   /* create channels */
   if (!(InChan = chanCreate(free, 0))) {
@@ -198,8 +196,8 @@ main(
 
   /* start chanBlb for both directions */
   if (!chanBlb(realloc, free
-      ,OutChan, ctx, chanBlbTrnFdDatagramOutput, chanBlbTrnFdDatagramOutputClose, 0, 0
-      ,InChan, ctx, chanBlbTrnFdDatagramInput, chanBlbTrnFdDatagramInputClose, 0, 0, 0
+      ,OutChan, chanBlbTrnFdDatagramOutputCtx(ctx, fd), chanBlbTrnFdDatagramOutput, chanBlbTrnFdDatagramOutputClose, 0, 0
+      ,InChan, chanBlbTrnFdDatagramInputCtx(ctx, fd), chanBlbTrnFdDatagramInput, chanBlbTrnFdDatagramInputClose, 0, 0, 0
       ,ctx, chanBlbTrnFdDatagramFinalClose
       ,0)) {
     perror("chanBlb");

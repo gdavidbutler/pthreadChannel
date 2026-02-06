@@ -25,21 +25,22 @@
 #include "chanBlbTrnFdDatagram.h"
 
 struct ctx {
-  int inFd;
-  int outFd;
+  int i;
+  int o;
 };
+#define V ((struct ctx *)v)
 
 void *
 chanBlbTrnFdDatagramCtx(
   void
 ){
-  struct ctx *c;
+  void *v;
 
-  if (!(c = malloc(sizeof (*c))))
-    return (0);
-  c->inFd = -1;
-  c->outFd = -1;
-  return (c);
+  if ((v = malloc(sizeof (struct ctx)))) {
+    V->i = -1;
+    V->o = -1;
+  }
+  return (v);
 }
 
 void *
@@ -47,10 +48,8 @@ chanBlbTrnFdDatagramInputCtx(
   void *v
  ,int f
 ){
-  struct ctx *c = v;
-
-  c->inFd = f;
-  return (c);
+  V->i = f;
+  return (v);
 }
 
 unsigned int
@@ -59,7 +58,6 @@ chanBlbTrnFdDatagramInput(
  ,unsigned char *b
  ,unsigned int l
 ){
-  struct ctx *c = v;
   struct sockaddr_storage a;
   socklen_t al;
   int i;
@@ -67,7 +65,7 @@ chanBlbTrnFdDatagramInput(
   if (l < sizeof (a) + 2)
     return (0);
   al = sizeof (a);
-  if ((i = recvfrom(c->inFd, b + sizeof (a) + 1, l - sizeof (a) - 1, 0, (struct sockaddr *)&a, &al)) <= 0)
+  if ((i = recvfrom(V->i, b + sizeof (a) + 1, l - sizeof (a) - 1, 0, (struct sockaddr *)&a, &al)) <= 0)
     return (0);
   b[0] = (unsigned char)al;
   memcpy(b + 1, &a, al);
@@ -79,7 +77,8 @@ void
 chanBlbTrnFdDatagramInputClose(
   void *v
 ){
-  (void)v;
+  if (V->i >= 0 && V->i != V->o)
+    close(V->i);
 }
 
 void *
@@ -87,10 +86,8 @@ chanBlbTrnFdDatagramOutputCtx(
   void *v
  ,int f
 ){
-  struct ctx *c = v;
-
-  c->outFd = f;
-  return (c);
+  V->o = f;
+  return (v);
 }
 
 unsigned int
@@ -99,7 +96,6 @@ chanBlbTrnFdDatagramOutput(
  ,const unsigned char *b
  ,unsigned int l
 ){
-  struct ctx *c = v;
   struct sockaddr_storage a;
   unsigned int al;
 
@@ -107,7 +103,7 @@ chanBlbTrnFdDatagramOutput(
   if (al > sizeof (a) || l < 1 + al)
     return (0);
   memcpy(&a, b + 1, al);
-  if (sendto(c->outFd, b + 1 + al, l - 1 - al, 0, (struct sockaddr *)&a, al) < 0)
+  if (sendto(V->o, b + 1 + al, l - 1 - al, 0, (struct sockaddr *)&a, al) < 0)
     return (0);
   return (l);
 }
@@ -116,17 +112,17 @@ void
 chanBlbTrnFdDatagramOutputClose(
   void *v
 ){
-  (void)v;
+  if (V->o >= 0 && V->o != V->i)
+    close(V->o);
 }
 
 void
 chanBlbTrnFdDatagramFinalClose(
   void *v
 ){
-  struct ctx *c = v;
-
-  close(c->inFd);
-  if (c->outFd != c->inFd)
-    close(c->outFd);
-  free(c);
+  if (V->i == V->o)
+    close(V->i);
+  free(v);
 }
+
+#undef V
