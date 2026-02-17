@@ -1479,8 +1479,6 @@ printS(
   }
   putchar('\n'),fflush(stdout);
   chanShut(c);
-  while (chanOp(0, c, (void **)&o, chanOpGet) == chanOsGet)
-    free(o);
 }
 
 int
