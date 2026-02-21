@@ -1,0 +1,63 @@
+/*
+ * pthreadChannel - an implementation of channels for pthreads
+ * Copyright (C) 2016-2025 G. David Butler <gdb@dbSystems.com>
+ *
+ * This file is part of pthreadChannel
+ *
+ * pthreadChannel is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published
+ * by the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * pthreadChannel is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+#ifndef __CHANBLBCHNRSEC_H__
+#define __CHANBLBCHNRSEC_H__
+
+/* This multiplexer / demultiplexer depends on datagram semantics (write boundaries are preserved) */
+struct chanBlbChnRsecCtx {
+  void *hmacCtx;
+  void (*hmacSign)(void *hmacCtx, unsigned char *dst, const unsigned char *src, unsigned int len);
+  int (*hmacVrfy)(void *hmacCtx, const unsigned char *mac, const unsigned char *src, unsigned int len);
+  unsigned int dgramMax;  /* max datagram payload size (transport MTU minus headers, e.g. UDP/IPv4 508) */
+  unsigned int tagSize;   /* correlation tag size in bytes */
+  unsigned int tableSize; /* max in-flight sequences (ingress collection) */
+  unsigned int hmacSize;  /* HMAC size in bytes (0 = no HMAC) */
+  unsigned int egrMsg;    /* egress: messages sent */
+  unsigned int egrFrg;    /* egress: fragments sent */
+  unsigned int igrFrg;    /* ingress: fragments received */
+  unsigned int igrHash;   /* ingress: small hash failures */
+  unsigned int igrHmac;   /* ingress: HMAC failures */
+  unsigned int igrDup;    /* ingress: duplicate/late fragments */
+  unsigned int igrMsg;    /* ingress: messages delivered */
+  unsigned int igrDcd;    /* ingress: messages via RS decode */
+  unsigned int igrLost;   /* ingress: incomplete entries evicted */
+};
+
+/* Return max payload bytes for a given m */
+unsigned int
+chanBlbChnRsecMax(
+  const struct chanBlbChnRsecCtx *ctx
+ ,unsigned char m
+);
+
+/* Egress blob: [addrlen(1)][addr(addrlen)][tag(tagSize)][m(1)][delay_ms(1)][payload(N)] */
+void *
+chanBlbChnRsecEgr(
+  struct chanBlbEgrCtx *v
+);
+
+/* Ingress blob: [addrlen(1)][addr(addrlen)][tag(tagSize)][m(1)][payload(N)] */
+void *
+chanBlbChnRsecIgr(
+  struct chanBlbIgrCtx *v
+);
+
+#endif /* __CHANBLBCHNRSEC_H__ */

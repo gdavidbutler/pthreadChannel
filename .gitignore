@@ -56,5 +56,7 @@ primes
 sockproxy
 pipeproxy
 datagramchat
+datagramchat-rsec
 squint
 floydWarshall
+test_rsec

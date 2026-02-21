@@ -1,4 +1,6 @@
 CFLAGS = -I. -IStr -IBlb -Os -g
+RSEC = ../ReedSolomonErasureCoding
+RMD128 = ../rmd128
 SQLITE_INC =
 SQLITE_LIB = -lsqlite3
 SQLITE_CFLAGS = $(SQLITE_INC) $(CFLAGS)
@@ -17,10 +19,12 @@ clean:
 	rm -f chanBlb.o
 	rm -f chanBlbChnVlq.o chanBlbChnNetstring.o chanBlbChnFcgi.o chanBlbChnNetconf10.o chanBlbChnNetconf11.o chanBlbChnHttp1.o
 	rm -f chanBlbTrnFd.o chanBlbTrnFdStream.o chanBlbTrnFdDatagram.o
-	rm -f sockproxy pipeproxy datagramchat squint floydWarshall
+	rm -f sockproxy pipeproxy datagramchat datagramchat-rsec squint floydWarshall
+	rm -f chanBlbChnRsec.o
 	rm -f chanBlbTrnKcp.o
 	rm -f chanStrBlbSQL.o
 	rm -f chanStrBlbSQLtest
+	rm -f test_rsec
 
 sockproxy: example/sockproxy.c chan.h Blb/chanBlb.h Blb/chanBlbTrnFd.h Blb/chanBlbTrnFdStream.h chan.o chanBlb.o chanBlbTrnFd.o chanBlbTrnFdStream.o
 	$(CC) $(CFLAGS) -o sockproxy example/sockproxy.c chan.o chanBlb.o chanBlbTrnFd.o chanBlbTrnFdStream.o -lpthread
@@ -30,6 +34,12 @@ pipeproxy: example/pipeproxy.c chan.h Blb/chanBlb.h Blb/chanBlbChnVlq.h Blb/chan
 
 datagramchat: example/datagramchat.c chan.h Blb/chanBlb.h Blb/chanBlbTrnFdDatagram.h chan.o chanBlb.o chanBlbTrnFdDatagram.o
 	$(CC) $(CFLAGS) -o datagramchat example/datagramchat.c chan.o chanBlb.o chanBlbTrnFdDatagram.o -lpthread
+
+chanBlbChnRsec.o: Blb/chanBlbChnRsec.c Blb/chanBlbChnRsec.h Blb/chanBlb.h chan.h $(RSEC)/rsec.h
+	$(CC) $(CFLAGS) -I$(RSEC) -c Blb/chanBlbChnRsec.c
+
+datagramchat-rsec: example/datagramchat.c chan.h Blb/chanBlb.h Blb/chanBlbTrnFdDatagram.h Blb/chanBlbChnRsec.h chan.o chanBlb.o chanBlbTrnFdDatagram.o chanBlbChnRsec.o
+	$(CC) $(CFLAGS) -I$(RSEC) -I$(RMD128) -DRSEC -o datagramchat-rsec example/datagramchat.c chan.o chanBlb.o chanBlbTrnFdDatagram.o chanBlbChnRsec.o $(RSEC)/rsec.o $(RMD128)/rmd128.o -lpthread
 
 squint: example/squint.c chan.h chan.o
 	$(CC) $(CFLAGS) -o squint example/squint.c chan.o -lpthread
@@ -94,7 +104,10 @@ chanBlbTrnFdStream.o: Blb/chanBlbTrnFdStream.c Blb/chanBlbTrnFdStream.h Blb/chan
 chanBlbTrnFdDatagram.o: Blb/chanBlbTrnFdDatagram.c Blb/chanBlbTrnFdDatagram.h Blb/chanBlb.h chan.h
 	$(CC) $(CFLAGS) -c Blb/chanBlbTrnFdDatagram.c
 
-check: squint
+test_rsec: test/test_rsec.c chan.h Blb/chanBlb.h Blb/chanBlbTrnFdDatagram.h Blb/chanBlbChnRsec.h chan.o chanBlb.o chanBlbChnRsec.o
+	$(CC) $(CFLAGS) -I$(RSEC) -I$(RMD128) -o test_rsec test/test_rsec.c test/chanBlbTrnFdDatagramStress.c chan.o chanBlb.o chanBlbChnRsec.o $(RSEC)/rsec.o $(RMD128)/rmd128.o -lpthread
+
+check: squint pipeproxy floydWarshall
 	./squint
 	./pipeproxy < example/floydWarshall.stdin
 	./floydWarshall < example/floydWarshall.stdin

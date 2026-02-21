@@ -71,7 +71,6 @@ This enables RPC-style request/response patterns:
      Requester                                      Responder
          │                                              │
          │  1. chanOpen(responseChan)                   │
-         │     (increment ref count before sending)     │
          │                                              │
          │  2. Put responseChan    ┌─────────────┐      │
          ├────────────────────────►│ serviceChan │──────┤ 3. Get responseChan
@@ -291,18 +290,19 @@ Find the API in Blb/chanBlb.h.
 
 A few transport side implementations are provided (file descriptor based interfaces):
 
+* chanBlbTrnFdStream
+  * Uses read()/write().
+  * For full-duplex stream interfaces (e.g. TCP socket, STREAM socketpair).
+
 * chanBlbTrnFd
-  * For half-duplex interfaces (e.g. pipe).
-  * For bound datagram sockets using read/write.
+  * Uses read()/write().
+  * For half-duplex interfaces (e.g. pipe, bound datagram sockets).
 
 * chanBlbTrnFdDatagram
-  * For datagram sockets using recvfrom/sendto.
-  * Input prepends source address to blob: [1 unsigned byte addrlen][address][data].
-  * Output parses destination address from blob prefix and sends data to that address.
-  * Enables address-aware datagram communication through channels.
-
-* chanBlbTrnFdStream
-  * For full-duplex stream interfaces (e.g. TCP socket, STREAM socketpair)
+  * Uses recvfrom()/sendto().
+  * For half-duplex interfaces (e.g. unbound datagram sockets).
+  * Ingress prepends source address to blob: [1 unsigned byte addrlen][addr].
+  * Egress parses destination address from blob: [1 unsigned byte addrlen][addr].
 
 Several Channel side, "framing", implementations are provided (useful with streaming protocols):
 
@@ -333,6 +333,19 @@ Blob flow (repeats):
       * Non-zero content Blob
   * Write is not framed.
 
+* chanBlbChnRsec
+  * Not a framer, per se. It is a multiplexer / demultiplexer that adds [Reed-Solomon erasure coding](https://en.wikipedia.org/wiki/Reed-Solomon_error_correction) for forward error correction over lossy datagram transports.
+  * Use with chanBlbTrnFdDatagram (e.g. UDP/IPv4: 576 - 20(IP) - 40(options) - 8(UDP) = 508 byte dgramMax to prevent IP fragmentation).
+  * The application sets `dgramMax` (max datagram payload the transport can carry); the RSEC overhead is computed internally. `chanBlbChnRsecMax()` returns the max application payload for a given parity level m.
+  * Egress fragments each blob into k data + m parity shards (k+m <= 256). Any k of k+m shards reconstruct the original.
+  * Ingress reassembles fragments, using RS decode when data shards are missing, and suppresses duplicate/late fragment delivery.
+  * Defense in depth: 1-byte small hash (always) + optional HMAC callbacks for authentication.
+  * Statistics counters in the context struct for production monitoring (egrMsg, egrFrg, igrFrg, igrHash, igrHmac, igrDup, igrMsg, igrDcd, igrLost).
+  * Write multiplexed Reed-Solomon erasure coded datagram fragments
+    * Egress blob: [addrlen(1)][addr(addrlen)][tag(tagSize)][m(1)][delay_ms(1)][payload(N)]
+  * Read demultiplexed Reed-Solomon erasure coded datagram fragments
+    * Ingress blob: [addrlen(1)][addr(addrlen)][tag(tagSize)][m(1)][payload(N)]
+
 ### Examples
 
 * sockproxy
@@ -346,7 +359,7 @@ Connects two chanBlbs back-to-back, with Channels reversed.
   * For example, to listen (because of the server SOCK_STREAM socket type) for connections on any IPv4 stream socket on service 2222 and connect them to any IPv4 stream socket on service ssh at host localhost (letting the system choose the protocol):
     1. ./sockproxy -T 1 -F 2 -S 2222 -t 1 -f 2 -h localhost -s ssh &
     1. ssh -p 2222 user@localhost
-* datagramchat
+* datagramchat and datagramchat-rsec
   * Broadcast chat demonstrating chanBlbTrnFdDatagram with unbound datagram sockets.
   * Each instance binds to a local port and broadcasts messages to configured peers.
   * Received messages display as [host:port]: message.
