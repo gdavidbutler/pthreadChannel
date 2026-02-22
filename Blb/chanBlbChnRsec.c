@@ -205,7 +205,7 @@ chanBlbChnRsecEgr(
     /* last data shard (k-1) excludes padding to avoid encrypting known zeros */
     if (ctx->encrypt) {
       for (i = 0; i < km; ++i)
-        ctx->encrypt(ctx->cryptCtx, work + 1 + addrlen,
+        ctx->encrypt(ctx->cryptCtx, work + (unsigned long)i * stride,
           work + (unsigned long)i * stride + headerGap,
           i == k - 1 && padding > 0 ? shardSize - padding : shardSize);
     }
@@ -219,7 +219,7 @@ chanBlbChnRsecEgr(
       wp = 1 + addrlen;
       /* HMAC covers wire payload: tag through shard_data */
       if (hmacSize > 0)
-        ctx->hmacSign(ctx->hmacCtx, slot + wp,
+        ctx->hmacSign(ctx->hmacCtx, slot,
           slot + headerGap + shardSize,
           slot + wp, headerGap + shardSize - wp);
       /* small hash covers wire payload: tag through hmac */
@@ -347,7 +347,7 @@ chanBlbChnRsecIgr(
 
     /* validate HMAC if enabled */
     if (hmacSize > 0) {
-      if (!ctx->hmacVrfy(ctx->hmacCtx, buf + wp,
+      if (!ctx->hmacVrfy(ctx->hmacCtx, buf,
                          buf + n - hmacSize,
                          buf + wp, n - wp - hmacSize)) {
         ++ctx->igrHmac;
@@ -383,7 +383,7 @@ chanBlbChnRsecIgr(
     /* decrypt shard data (after HMAC verify: MAC-then-decrypt) */
     /* last data shard (k-1) excludes padding to match egress */
     if (ctx->decrypt)
-      ctx->decrypt(ctx->cryptCtx, buf + wp, buf + headerLen,
+      ctx->decrypt(ctx->cryptCtx, buf, buf + headerLen,
         shardIdx == k - 1 && padding > 0 ? fragDataLen - padding : fragDataLen);
 
     ++age;
