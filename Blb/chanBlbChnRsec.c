@@ -310,14 +310,13 @@ chanBlbChnRsecIgr(
     if (!n)
       break;
     ++ctx->igrFrg;
+    addrlen = buf[0];
+    /* need at least: addrlen + tagSize + k + m + shard_index + vlq + hmacSize + smallhash */
+    if (n < 1 + addrlen + tagSize + 1 + 1 + 1 + 1 + hmacSize + 1)
+      continue;
 
     /* validate small hash: covers wire payload (after addr prefix) except last byte */
-    addrlen = buf[0];
     wp = 1 + addrlen;
-    if (n < wp + 2) { /* need at least 1 byte wire data + small hash */
-      ++ctx->igrHash;
-      continue;
-    }
     if (smallHash(buf + wp, n - wp - 1) != buf[n - 1]) {
       ++ctx->igrHash;
       continue;
@@ -326,10 +325,6 @@ chanBlbChnRsecIgr(
 
     /* validate HMAC if enabled */
     if (hmacSize > 0) {
-      if (n < wp + hmacSize + 1) { /* need wire data + hmac */
-        ++ctx->igrHmac;
-        continue;
-      }
       if (!ctx->hmacVrfy(ctx->hmacCtx, buf + n - hmacSize,
                          buf + wp, n - wp - hmacSize)) {
         ++ctx->igrHmac;
@@ -340,9 +335,6 @@ chanBlbChnRsecIgr(
 
     /* parse fragment header */
     prefixSize = 1 + addrlen + tagSize;
-    if (n < prefixSize + 4) /* k-1, m, shard_index, at least 1 byte vlq */
-      continue;
-
     k = (unsigned int)buf[prefixSize] + 1;
     mVal = buf[prefixSize + 1];
     shardIdx = buf[prefixSize + 2];
@@ -352,8 +344,6 @@ chanBlbChnRsecIgr(
 
     /* decode padding VLQ */
     if (buf[prefixSize + 3] & 0x80) {
-      if (n < prefixSize + 5)
-        continue;
       padding = (unsigned int)(buf[prefixSize + 3] & 0x7f);
       padding = ((padding << 7) | (unsigned int)buf[prefixSize + 4]) + 1;
       vlqLen = 2;
