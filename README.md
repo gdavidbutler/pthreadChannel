@@ -336,10 +336,11 @@ Blob flow (repeats):
 * chanBlbChnRsec
   * Not a framer, per se. It is a multiplexer / demultiplexer that adds [Reed-Solomon erasure coding](https://en.wikipedia.org/wiki/Reed-Solomon_error_correction) for forward error correction over lossy datagram transports.
   * Use with chanBlbTrnFdDatagram (e.g. UDP/IPv4: 576 - 20(IP) - 40(options) - 8(UDP) = 508 byte dgramMax to prevent IP fragmentation).
-  * The application sets `dgramMax` (max datagram payload the transport can carry); the RSEC overhead is computed internally. `chanBlbChnRsecMax()` returns the max application payload for a given parity level m.
+  * The application sets `dgramMax` (max datagram payload the transport can carry); the RSEC overhead is computed internally. `chanBlbChnRsecShard()` returns the shard size and `chanBlbChnRsecMax()` returns the max application payload for a given parity level m.
   * Egress fragments each blob into k data + m parity shards (k+m <= 256). Any k of k+m shards reconstruct the original.
   * Ingress reassembles fragments, using RS decode when data shards are missing, and suppresses duplicate/late fragment delivery.
   * Defense in depth: 1-byte small hash (always) + optional HMAC callbacks for authentication.
+  * Optional per-shard encrypt/decrypt callbacks for confidentiality.
   * Statistics counters in the context struct for production monitoring (egrMsg, egrFrg, igrFrg, igrHash, igrHmac, igrDup, igrMsg, igrDcd, igrLost).
   * Write multiplexed Reed-Solomon erasure coded datagram fragments
     * Egress blob: [addrlen(1)][addr(addrlen)][tag(tagSize)][m(1)][delay_ms(1)][payload(N)]

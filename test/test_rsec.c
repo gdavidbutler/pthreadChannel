@@ -47,12 +47,14 @@ struct hmacKeyCtx {
 static void
 hmacSignCb(
   void *ctx
+ ,const unsigned char *tag
  ,unsigned char *dst
  ,const unsigned char *src
  ,unsigned int len
 ){
   struct hmacKeyCtx *k;
 
+  (void)tag;
   k = (struct hmacKeyCtx *)ctx;
   rmd128hmac(k->key, k->keyLen, src, len, dst);
 }
@@ -60,6 +62,7 @@ hmacSignCb(
 static int
 hmacVrfyCb(
   void *ctx
+ ,const unsigned char *tag
  ,const unsigned char *mac
  ,const unsigned char *src
  ,unsigned int len
@@ -69,12 +72,35 @@ hmacVrfyCb(
   unsigned char diff;
   unsigned int i;
 
+  (void)tag;
   k = (struct hmacKeyCtx *)ctx;
   rmd128hmac(k->key, k->keyLen, src, len, computed);
   diff = 0;
   for (i = 0; i < RMD128_SZ; ++i)
     diff |= mac[i] ^ computed[i];
   return (diff == 0);
+}
+
+/* Encrypt/Decrypt callbacks (XOR stream cipher for testing) */
+struct cryptKeyCtx {
+  const unsigned char *key;
+  unsigned int keyLen;
+};
+
+static void
+xorCryptCb(
+  void *ctx
+ ,const unsigned char *tag
+ ,unsigned char *data
+ ,unsigned int len
+){
+  struct cryptKeyCtx *k;
+  unsigned int i;
+
+  (void)tag;
+  k = (struct cryptKeyCtx *)ctx;
+  for (i = 0; i < len; ++i)
+    data[i] ^= k->key[i % k->keyLen];
 }
 
 /*
@@ -1093,6 +1119,169 @@ testCountersDedup(void)
   teardown(&env);
 }
 
+/* ===== SHARD SIZE API TESTS ===== */
+
+static void
+testShardApi(void)
+{
+  struct chanBlbChnRsecCtx rsecCtx;
+
+  printf("=== Test: chanBlbChnRsecShard API ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 2;
+  rsecCtx.dgramMax = 520; /* overhead=2+0+6=8, shardSize=512 */
+
+  check("shard=512", chanBlbChnRsecShard(&rsecCtx) == 512);
+
+  rsecCtx.hmacSize = 16; /* overhead=2+16+6=24, shardSize=496 */
+  check("shard=496 with hmac", chanBlbChnRsecShard(&rsecCtx) == 496);
+
+  rsecCtx.dgramMax = 16;
+  rsecCtx.hmacSize = 0; /* overhead=2+0+6=8, shardSize=8 */
+  check("shard=8 small dgram", chanBlbChnRsecShard(&rsecCtx) == 8);
+
+  rsecCtx.dgramMax = 8; /* overhead=8, shardSize=0: too small */
+  check("dgramMax==overhead => 0", chanBlbChnRsecShard(&rsecCtx) == 0);
+}
+
+/* ===== ENCRYPT/DECRYPT TESTS ===== */
+
+static void
+testEncryptBasic(void)
+{
+  struct testEnv env;
+  struct chanBlbChnRsecCtx rsecCtx;
+  struct cryptKeyCtx cryptCtx;
+  chanBlb_t *m;
+  const char *msg = "encrypted hello";
+  const char *key = "cryptkey42";
+
+  printf("=== Test: encrypt basic m=1 ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 2;
+  rsecCtx.dgramMax = 520;
+  rsecCtx.tableSize = 64;
+  cryptCtx.key = (const unsigned char *)key;
+  cryptCtx.keyLen = strlen(key);
+  rsecCtx.cryptCtx = &cryptCtx;
+  rsecCtx.encrypt = xorCryptCb;
+  rsecCtx.decrypt = xorCryptCb;
+
+  if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
+
+  m = mkBlob(&env.sa, 2, 1, 1, 0, msg, strlen(msg));
+  check("send", sendBlob(env.outChan, m));
+  m = recvBlob(env.inChan, 2000000000L);
+  check("received", m != 0);
+  if (m) { check("payload correct", verifyBlob(m, 2, msg, strlen(msg))); free(m); }
+  teardown(&env);
+}
+
+static void
+testEncryptMultiShard(void)
+{
+  struct testEnv env;
+  struct chanBlbChnRsecCtx rsecCtx;
+  struct cryptKeyCtx cryptCtx;
+  chanBlb_t *m;
+  const char *msg = "encrypted multi shard message requiring several fragments";
+  const char *key = "multishard-key";
+
+  printf("=== Test: encrypt multi-shard dgramMax=16 m=2 ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 2;
+  rsecCtx.dgramMax = 16;
+  rsecCtx.tableSize = 64;
+  cryptCtx.key = (const unsigned char *)key;
+  cryptCtx.keyLen = strlen(key);
+  rsecCtx.cryptCtx = &cryptCtx;
+  rsecCtx.encrypt = xorCryptCb;
+  rsecCtx.decrypt = xorCryptCb;
+
+  if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
+
+  m = mkBlob(&env.sa, 2, 1, 2, 0, msg, strlen(msg));
+  check("send", sendBlob(env.outChan, m));
+  m = recvBlob(env.inChan, 3000000000L);
+  check("received", m != 0);
+  if (m) { check("payload correct", verifyBlob(m, 2, msg, strlen(msg))); free(m); }
+  teardown(&env);
+}
+
+static void
+testEncryptHmac(void)
+{
+  struct testEnv env;
+  struct chanBlbChnRsecCtx rsecCtx;
+  struct hmacKeyCtx hmacCtx;
+  struct cryptKeyCtx cryptCtx;
+  chanBlb_t *m;
+  const char *msg = "encrypted and hmac authenticated";
+  const char *hmacKey = "hmacSecret";
+  const char *cryptKey = "cryptSecret";
+
+  printf("=== Test: encrypt + HMAC m=1 ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 2;
+  rsecCtx.dgramMax = 536;
+  rsecCtx.tableSize = 64;
+  hmacCtx.key = (const unsigned char *)hmacKey;
+  hmacCtx.keyLen = strlen(hmacKey);
+  rsecCtx.hmacSize = RMD128_SZ;
+  rsecCtx.hmacCtx = &hmacCtx;
+  rsecCtx.hmacSign = hmacSignCb;
+  rsecCtx.hmacVrfy = hmacVrfyCb;
+  cryptCtx.key = (const unsigned char *)cryptKey;
+  cryptCtx.keyLen = strlen(cryptKey);
+  rsecCtx.cryptCtx = &cryptCtx;
+  rsecCtx.encrypt = xorCryptCb;
+  rsecCtx.decrypt = xorCryptCb;
+
+  if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
+
+  m = mkBlob(&env.sa, 2, 1, 1, 0, msg, strlen(msg));
+  check("send", sendBlob(env.outChan, m));
+  m = recvBlob(env.inChan, 2000000000L);
+  check("received", m != 0);
+  if (m) { check("payload correct", verifyBlob(m, 2, msg, strlen(msg))); free(m); }
+  teardown(&env);
+}
+
+static void
+testEncryptDrop(void)
+{
+  struct testEnv env;
+  struct chanBlbChnRsecCtx rsecCtx;
+  struct cryptKeyCtx cryptCtx;
+  chanBlb_t *m;
+  const char *msg = "encrypted drop recovery test!";
+  const char *key = "dropkey";
+
+  printf("=== Test: encrypt + 20%% drop, multi-shard dgramMax=16 m=4 ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 2;
+  rsecCtx.dgramMax = 16;
+  rsecCtx.tableSize = 64;
+  cryptCtx.key = (const unsigned char *)key;
+  cryptCtx.keyLen = strlen(key);
+  rsecCtx.cryptCtx = &cryptCtx;
+  rsecCtx.encrypt = xorCryptCb;
+  rsecCtx.decrypt = xorCryptCb;
+
+  chanBlbTrnFdDatagramDropPct = 20;
+
+  if (!setup(&env, &rsecCtx)) { check("setup", 0); chanBlbTrnFdDatagramDropPct = 0; return; }
+
+  m = mkBlob(&env.sa, 2, 1, 4, 0, msg, strlen(msg));
+  check("send", sendBlob(env.outChan, m));
+  m = recvBlob(env.inChan, 5000000000L);
+  check("received after drops", m != 0);
+  if (m) { check("payload correct", verifyBlob(m, 2, msg, strlen(msg))); free(m); }
+
+  chanBlbTrnFdDatagramDropPct = 0;
+  teardown(&env);
+}
+
 int
 main(
   void
@@ -1139,6 +1328,15 @@ main(
   testCountersMultiShard();
   testCountersDrop();
   testCountersDedup();
+
+  /* shard size API */
+  testShardApi();
+
+  /* encrypt/decrypt tests */
+  testEncryptBasic();
+  testEncryptMultiShard();
+  testEncryptHmac();
+  testEncryptDrop();
 
   printf("\n=======================================\n");
   printf("Results: %d passed, %d failed\n", Pass, Fail);

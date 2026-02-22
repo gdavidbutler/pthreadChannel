@@ -63,12 +63,14 @@ struct hmacKeyCtx {
 static void
 hmacSignCb(
   void *ctx
+ ,const unsigned char *tag
  ,unsigned char *dst
  ,const unsigned char *src
  ,unsigned int len
 ){
   struct hmacKeyCtx *k;
 
+  (void)tag;
   k = (struct hmacKeyCtx *)ctx;
   rmd128hmac(k->key, k->keyLen, src, len, dst);
 }
@@ -76,6 +78,7 @@ hmacSignCb(
 static int
 hmacVrfyCb(
   void *ctx
+ ,const unsigned char *tag
  ,const unsigned char *mac
  ,const unsigned char *src
  ,unsigned int len
@@ -85,6 +88,7 @@ hmacVrfyCb(
   unsigned char diff;
   unsigned int i;
 
+  (void)tag;
   k = (struct hmacKeyCtx *)ctx;
   rmd128hmac(k->key, k->keyLen, src, len, computed);
   diff = 0;

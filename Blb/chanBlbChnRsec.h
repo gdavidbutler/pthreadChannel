@@ -24,8 +24,11 @@
 /* This multiplexer / demultiplexer depends on datagram semantics (write boundaries are preserved) */
 struct chanBlbChnRsecCtx {
   void *hmacCtx;
-  void (*hmacSign)(void *hmacCtx, unsigned char *dst, const unsigned char *src, unsigned int len);
-  int (*hmacVrfy)(void *hmacCtx, const unsigned char *mac, const unsigned char *src, unsigned int len);
+  void (*hmacSign)(void *hmacCtx, const unsigned char *tag, unsigned char *dst, const unsigned char *src, unsigned int len);
+  int (*hmacVrfy)(void *hmacCtx, const unsigned char *tag, const unsigned char *mac, const unsigned char *src, unsigned int len);
+  void *cryptCtx;
+  void (*encrypt)(void *cryptCtx, const unsigned char *tag, unsigned char *data, unsigned int len);
+  void (*decrypt)(void *cryptCtx, const unsigned char *tag, unsigned char *data, unsigned int len);
   unsigned int dgramMax;  /* max datagram payload size (transport MTU minus headers, e.g. UDP/IPv4 508) */
   unsigned int tagSize;   /* correlation tag size in bytes */
   unsigned int tableSize; /* max in-flight sequences (ingress collection) */
@@ -40,6 +43,12 @@ struct chanBlbChnRsecCtx {
   unsigned int igrDcd;    /* ingress: messages via RS decode */
   unsigned int igrLost;   /* ingress: incomplete entries evicted */
 };
+
+/* Return shard size in bytes (0 if dgramMax too small) */
+unsigned int
+chanBlbChnRsecShard(
+  const struct chanBlbChnRsecCtx *ctx
+);
 
 /* Return max payload bytes for a given m */
 unsigned int

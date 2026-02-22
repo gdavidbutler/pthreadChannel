@@ -28,6 +28,18 @@
 #include "chanBlbChnRsec.h"
 
 unsigned int
+chanBlbChnRsecShard(
+  const struct chanBlbChnRsecCtx *ctx
+){
+  unsigned int overhead;
+
+  overhead = ctx->tagSize + ctx->hmacSize + 6;
+  if (ctx->dgramMax <= overhead)
+    return (0);
+  return (ctx->dgramMax - overhead);
+}
+
+unsigned int
 chanBlbChnRsecMax(
   const struct chanBlbChnRsecCtx *ctx
  ,unsigned char m
@@ -189,6 +201,15 @@ chanBlbChnRsecEgr(
     if (mVal > 0)
       rsecEncode(dataPtrs, parityPtrs, shardSize, k, (unsigned int)mVal);
 
+    /* encrypt each shard (before HMAC: encrypt-then-MAC) */
+    /* last data shard (k-1) excludes padding to avoid encrypting known zeros */
+    if (ctx->encrypt) {
+      for (i = 0; i < km; ++i)
+        ctx->encrypt(ctx->cryptCtx, work + 1 + addrlen,
+          work + (unsigned long)i * stride + headerGap,
+          i == k - 1 && padding > 0 ? shardSize - padding : shardSize);
+    }
+
     /* sign and hash each slot */
     for (i = 0; i < km; ++i) {
       unsigned char *slot;
@@ -198,7 +219,8 @@ chanBlbChnRsecEgr(
       wp = 1 + addrlen;
       /* HMAC covers wire payload: tag through shard_data */
       if (hmacSize > 0)
-        ctx->hmacSign(ctx->hmacCtx, slot + headerGap + shardSize,
+        ctx->hmacSign(ctx->hmacCtx, slot + wp,
+          slot + headerGap + shardSize,
           slot + wp, headerGap + shardSize - wp);
       /* small hash covers wire payload: tag through hmac */
       slot[stride - 1] = smallHash(slot + wp, stride - wp - 1);
@@ -325,7 +347,8 @@ chanBlbChnRsecIgr(
 
     /* validate HMAC if enabled */
     if (hmacSize > 0) {
-      if (!ctx->hmacVrfy(ctx->hmacCtx, buf + n - hmacSize,
+      if (!ctx->hmacVrfy(ctx->hmacCtx, buf + wp,
+                         buf + n - hmacSize,
                          buf + wp, n - wp - hmacSize)) {
         ++ctx->igrHmac;
         continue;
@@ -356,6 +379,12 @@ chanBlbChnRsecIgr(
     if (n <= headerLen)
       continue;
     fragDataLen = n - headerLen;
+
+    /* decrypt shard data (after HMAC verify: MAC-then-decrypt) */
+    /* last data shard (k-1) excludes padding to match egress */
+    if (ctx->decrypt)
+      ctx->decrypt(ctx->cryptCtx, buf + wp, buf + headerLen,
+        shardIdx == k - 1 && padding > 0 ? fragDataLen - padding : fragDataLen);
 
     ++age;
 
