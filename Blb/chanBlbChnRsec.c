@@ -20,7 +20,6 @@
 
 #include <string.h>
 #include <time.h>
-#include <stdarg.h>
 #include <pthread.h>
 #include "chan.h"
 #include "chanBlb.h"

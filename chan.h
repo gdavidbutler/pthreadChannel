@@ -21,6 +21,8 @@
 #ifndef __CHAN_H__
 #define __CHAN_H__
 
+#include <stdarg.h>
+
 /*
  * Channel Store
  */

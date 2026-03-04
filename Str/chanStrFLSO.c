@@ -18,7 +18,6 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include <stdarg.h>
 #include "chan.h"
 #include "chanStrFLSO.h"
 
