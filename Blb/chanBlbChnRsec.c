@@ -470,7 +470,7 @@ chanBlbChnRsecIgr(
       /* write blob prefix: [addrlen][addr][tag][m] */
       memcpy(ent->blob->b, buf, 1 + addrlen);
       memcpy(ent->blob->b + 1 + addrlen, buf + 1 + addrlen, tagSize);
-      ent->blob->b[1 + addrlen + tagSize] = (unsigned char)mVal;
+      ent->blob->b[1 + addrlen + tagSize] = 0;
 
       table[slot] = ent;
     }
@@ -585,6 +585,19 @@ chanBlbChnRsecIgr(
         ent->blob->l = ent->prefixSize + k * ent->shardSize - ent->padding;
         decoded = 1;
       }
+    }
+
+    /* fraction of sender's m consumed (0-255) */
+    {
+      unsigned int dp;
+
+      dp = 0;
+      for (ti = 0; ti < k; ++ti)
+        dp += ent->present[ti] ? 1 : 0;
+      ent->blob->b[ent->prefixSize - 1] =
+        ent->m > 0
+          ? (unsigned char)((ent->k - dp) * 255 / ent->m)
+          : 0;
     }
 
     /* put blob on channel */

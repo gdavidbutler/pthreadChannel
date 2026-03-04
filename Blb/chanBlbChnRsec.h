@@ -63,7 +63,7 @@ chanBlbChnRsecEgr(
   struct chanBlbEgrCtx *v
 );
 
-/* Ingress blob: [addrlen(1)][addr(addrlen)][tag(tagSize)][m(1)][payload(N)] */
+/* Ingress blob: [addrlen(1)][addr(addrlen)][tag(tagSize)][mfract(1)][payload(N)] */
 void *
 chanBlbChnRsecIgr(
   struct chanBlbIgrCtx *v
