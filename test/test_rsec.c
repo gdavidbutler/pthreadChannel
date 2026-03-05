@@ -1005,7 +1005,7 @@ testCountersBasic(void)
   check("igrHmac == 0", rsecCtx.igrHmac == 0);
   check("igrMsg == 1", rsecCtx.igrMsg == 1);
   check("igrDcd == 0", rsecCtx.igrDcd == 0);
-  check("igrDup > 0", rsecCtx.igrDup > 0);
+  check("igrDup == 0", rsecCtx.igrDup == 0);
   check("igrLost == 0", rsecCtx.igrLost == 0);
   teardown(&env);
 }
@@ -1099,7 +1099,7 @@ testCountersDedup(void)
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
 
-  /* k=1 m=2 => 3 fragments. First arrival delivers. 2 are late/dup. */
+  /* k=1 m=2 => 3 fragments. First arrival delivers. 0 are dup. */
   m = mkBlob(&env.sa, 2, 1, 2, 0, msg, strlen(msg));
   check("send", sendBlob(env.outChan, m));
   m = recvBlob(env.inChan, 2000000000L);
@@ -1114,7 +1114,7 @@ testCountersDedup(void)
   check("egrFrg == 3", rsecCtx.egrFrg == 3);
   check("igrFrg == 3", rsecCtx.igrFrg == 3);
   check("igrMsg == 1", rsecCtx.igrMsg == 1);
-  check("igrDup == 2", rsecCtx.igrDup == 2);
+  check("igrDup == 0", rsecCtx.igrDup == 0);
   check("igrLost == 0", rsecCtx.igrLost == 0);
   teardown(&env);
 }

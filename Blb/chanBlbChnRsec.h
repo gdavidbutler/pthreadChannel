@@ -38,7 +38,7 @@ struct chanBlbChnRsecCtx {
   unsigned int igrFrg;    /* ingress: fragments received */
   unsigned int igrHash;   /* ingress: small hash failures */
   unsigned int igrHmac;   /* ingress: HMAC failures */
-  unsigned int igrDup;    /* ingress: duplicate/late fragments */
+  unsigned int igrDup;    /* ingress: duplicate fragments */
   unsigned int igrMsg;    /* ingress: messages delivered */
   unsigned int igrDcd;    /* ingress: messages via RS decode */
   unsigned int igrLost;   /* ingress: incomplete entries evicted */
