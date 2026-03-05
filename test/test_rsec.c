@@ -1006,6 +1006,7 @@ testCountersBasic(void)
   check("igrMsg == 1", rsecCtx.igrMsg == 1);
   check("igrDcd == 0", rsecCtx.igrDcd == 0);
   check("igrDup == 0", rsecCtx.igrDup == 0);
+  check("igrLate > 0", rsecCtx.igrLate > 0);
   check("igrLost == 0", rsecCtx.igrLost == 0);
   teardown(&env);
 }
@@ -1115,6 +1116,7 @@ testCountersDedup(void)
   check("igrFrg == 3", rsecCtx.igrFrg == 3);
   check("igrMsg == 1", rsecCtx.igrMsg == 1);
   check("igrDup == 0", rsecCtx.igrDup == 0);
+  check("igrLate == 2", rsecCtx.igrLate == 2);
   check("igrLost == 0", rsecCtx.igrLost == 0);
   teardown(&env);
 }

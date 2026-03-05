@@ -477,8 +477,10 @@ chanBlbChnRsecIgr(
     ent = table[slot];
 
     /* already delivered: ignore late fragments */
-    if (!ent->blob)
+    if (!ent->blob) {
+      ++ctx->igrLate;
       continue;
+    }
 
     /* ignore duplicate shard */
     if (ent->present[shardIdx]) {
