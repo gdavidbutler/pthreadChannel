@@ -31,10 +31,11 @@ struct chanBlbChnRsecCtx {
   void (*decrypt)(void *cryptCtx, const unsigned char *hdr, unsigned char *data, unsigned int len);
   unsigned int dgramMax;  /* max datagram payload size (transport MTU minus headers, e.g. UDP/IPv4 508) */
   unsigned int tagSize;   /* correlation tag size in bytes */
-  unsigned int tableSize; /* max in-flight sequences (ingress collection) */
+  unsigned int tableSize; /* max in-flight sequences (ingress and egress) */
   unsigned int hmacSize;  /* HMAC size in bytes (0 = no HMAC) */
   unsigned int egrMsg;    /* egress: messages sent */
   unsigned int egrFrg;    /* egress: fragments sent */
+  unsigned int egrLost;   /* egress: fragments evicted */
   unsigned int igrFrg;    /* ingress: fragments received */
   unsigned int igrHash;   /* ingress: small hash failures */
   unsigned int igrHmac;   /* ingress: HMAC failures */
@@ -42,7 +43,7 @@ struct chanBlbChnRsecCtx {
   unsigned int igrLate;   /* ingress: late fragments */
   unsigned int igrMsg;    /* ingress: messages delivered */
   unsigned int igrDcd;    /* ingress: messages via RS decode */
-  unsigned int igrLost;   /* ingress: incomplete entries evicted */
+  unsigned int igrLost;   /* ingress: incomplete messages evicted */
 };
 
 /* Return shard size in bytes (0 if dgramMax too small) */

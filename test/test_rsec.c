@@ -1284,6 +1284,148 @@ testEncryptDrop(void)
   teardown(&env);
 }
 
+/* ===== EGRESS PACING TESTS ===== */
+
+static void
+testEgressInterleave(void)
+{
+  struct testEnv env;
+  struct chanBlbChnRsecCtx rsecCtx;
+  chanBlb_t *m;
+  const char *msgs[2];
+  int seen[2];
+  unsigned int i;
+  unsigned int ok;
+
+  msgs[0] = "interleave one";
+  msgs[1] = "interleave two";
+
+  printf("=== Test: egress interleave tableSize=2 delayMs=10 ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 2;
+  rsecCtx.dgramMax = 520;
+  rsecCtx.tableSize = 2;
+
+  if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
+
+  m = mkBlob(&env.sa, 2, 1, 1, 10, msgs[0], strlen(msgs[0]));
+  check("send1", sendBlob(env.outChan, m));
+  m = mkBlob(&env.sa, 2, 2, 1, 10, msgs[1], strlen(msgs[1]));
+  check("send2", sendBlob(env.outChan, m));
+
+  ok = 0;
+  memset(seen, 0, sizeof (seen));
+  for (i = 0; i < 2; ++i) {
+    unsigned int j;
+
+    m = recvBlob(env.inChan, 3000000000L);
+    if (!m) continue;
+    for (j = 0; j < 2; ++j) {
+      if (!seen[j] && verifyBlob(m, 2, msgs[j], strlen(msgs[j]))) {
+        seen[j] = 1;
+        ++ok;
+        break;
+      }
+    }
+    free(m);
+  }
+  check("both received", ok == 2);
+  usleep(100000);
+  check("egrMsg == 2", rsecCtx.egrMsg == 2);
+  check("egrLost == 0", rsecCtx.egrLost == 0);
+  teardown(&env);
+}
+
+static void
+testEgressEvict(void)
+{
+  struct testEnv env;
+  struct chanBlbChnRsecCtx rsecCtx;
+  chanBlb_t *m;
+  const char *msg1 = "evict me";
+  const char *msg2 = "I survive";
+  int seen1;
+  int seen2;
+  unsigned int i;
+
+  printf("=== Test: egress evict tableSize=1 delayMs=200 ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 2;
+  rsecCtx.dgramMax = 520;
+  rsecCtx.tableSize = 1;
+
+  if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
+
+  /* blob1: k=1 m=1 km=2, delayMs=200 => shard 0 sent now, shard 1 at +200ms */
+  m = mkBlob(&env.sa, 2, 1, 1, 200, msg1, strlen(msg1));
+  check("send1", sendBlob(env.outChan, m));
+  /* blob2 evicts blob1 (egrLost += 2-1 = 1) */
+  m = mkBlob(&env.sa, 2, 2, 1, 0, msg2, strlen(msg2));
+  check("send2", sendBlob(env.outChan, m));
+
+  /* blob1's data shard was sent (k=1), so ingress delivers it */
+  /* blob2 is fully sent */
+  seen1 = 0;
+  seen2 = 0;
+  for (i = 0; i < 2; ++i) {
+    m = recvBlob(env.inChan, 3000000000L);
+    if (!m) continue;
+    if (verifyBlob(m, 2, msg1, strlen(msg1)))
+      seen1 = 1;
+    else if (verifyBlob(m, 2, msg2, strlen(msg2)))
+      seen2 = 1;
+    free(m);
+  }
+  check("blob1 received (data shard sent before evict)", seen1);
+  check("blob2 received", seen2);
+
+  usleep(100000);
+  check("egrMsg == 1", rsecCtx.egrMsg == 1);
+  check("egrLost == 1", rsecCtx.egrLost == 1);
+  teardown(&env);
+}
+
+static void
+testCountersEgrLost(void)
+{
+  struct testEnv env;
+  struct chanBlbChnRsecCtx rsecCtx;
+  chanBlb_t *m;
+  const char *msg1 = "evict counter test message!!";
+  const char *msg2 = "ok";
+
+  printf("=== Test: egrLost counter tableSize=1 multi-shard ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 2;
+  rsecCtx.dgramMax = 16;
+  rsecCtx.tableSize = 1;
+
+  if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
+
+  /* blob1: 28 bytes / 8 = 4 data, m=2, km=6, delayMs=100 */
+  /* shard 0 sent immediately, shards 1-5 at +100ms..+500ms */
+  m = mkBlob(&env.sa, 2, 1, 2, 100, msg1, strlen(msg1));
+  check("send1", sendBlob(env.outChan, m));
+  /* blob2 arrives before shard 1, evicts blob1: egrLost += 6-1 = 5 */
+  m = mkBlob(&env.sa, 2, 2, 0, 0, msg2, strlen(msg2));
+  check("send2", sendBlob(env.outChan, m));
+
+  /* blob2 is receivable (k=1, m=0, single shard) */
+  m = recvBlob(env.inChan, 3000000000L);
+  check("blob2 received", m != 0 && verifyBlob(m, 2, msg2, strlen(msg2)));
+  if (m) free(m);
+  /* blob1 is NOT receivable (only 1 of 4 data shards sent) */
+  m = recvBlob(env.inChan, 500000000L);
+  check("blob1 not received (insufficient shards)", m == 0);
+  if (m) free(m);
+
+  usleep(100000);
+  check("egrMsg == 1", rsecCtx.egrMsg == 1);
+  check("egrFrg == 2", rsecCtx.egrFrg == 2);
+  check("egrLost == 5", rsecCtx.egrLost == 5);
+  teardown(&env);
+}
+
 int
 main(
   void
@@ -1333,6 +1475,11 @@ main(
 
   /* shard size API */
   testShardApi();
+
+  /* egress pacing tests */
+  testEgressInterleave();
+  testEgressEvict();
+  testCountersEgrLost();
 
   /* encrypt/decrypt tests */
   testEncryptBasic();

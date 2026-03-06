@@ -301,6 +301,7 @@ A few transport side implementations are provided (file descriptor based interfa
 * chanBlbTrnFdDatagram
   * Uses recvfrom()/sendto().
   * For half-duplex interfaces (e.g. unbound datagram sockets).
+  * Supports dual-stack IPv4/IPv6 via separate fd4 and fd6 file descriptors, dispatching by address family.
   * Ingress prepends source address to blob: [1 unsigned byte addrlen][addr].
   * Egress parses destination address from blob: [1 unsigned byte addrlen][addr].
 
@@ -338,10 +339,11 @@ Blob flow (repeats):
   * Use with chanBlbTrnFdDatagram (e.g. UDP/IPv4: 576 - 20(IP) - 40(options) - 8(UDP) = 508 byte dgramMax to prevent IP fragmentation).
   * The application sets `dgramMax` (max datagram payload the transport can carry); the RSEC overhead is computed internally. `chanBlbChnRsecShard()` returns the shard size and `chanBlbChnRsecMax()` returns the max application payload for a given parity level m.
   * Egress fragments each blob into k data + m parity shards (k+m <= 256). Any k of k+m shards reconstruct the original.
-  * Ingress reassembles fragments, using RS decode when data shards are missing, and suppresses duplicate/late fragment delivery.
+  * Egress maintains a table of `tableSize` in-flight messages with paced shard scheduling (per-blob `delay_ms`). Multiple blobs' shards are interleaved in send-time order. When the table is full, the oldest entry is evicted (LRU) and its unsent shards are counted in `egrLost`.
+  * Ingress maintains a table of `tableSize` in-flight reassembly entries. Uses RS decode when data shards are missing, and suppresses duplicate/late fragment delivery. When the table is full, the oldest entry is evicted (LRU) and counted in `igrLost`.
   * Defense in depth: 1-byte small hash (always) + optional HMAC callbacks for authentication.
   * Optional per-shard encrypt/decrypt callbacks for confidentiality.
-  * Statistics counters in the context struct for production monitoring (egrMsg, egrFrg, igrFrg, igrHash, igrHmac, igrDup, igrMsg, igrDcd, igrLost).
+  * Statistics counters in the context struct for production monitoring (egrMsg, egrFrg, egrLost, igrFrg, igrHash, igrHmac, igrDup, igrLate, igrMsg, igrDcd, igrLost).
   * Write multiplexed Reed-Solomon erasure coded datagram fragments
     * Egress blob: [addrlen(1)][addr(addrlen)][tag(tagSize)][m(1)][delay_ms(1)][payload(N)]
   * Read demultiplexed Reed-Solomon erasure coded datagram fragments
