@@ -29,7 +29,8 @@ chanBlbTrnFdDatagramCtx(
 void *
 chanBlbTrnFdDatagramInputCtx(
   void *ctx
- ,int fd
+ ,int fd4
+ ,int fd6
 );
 
 /* prepends source address to blob: [1 unsigned byte addrlen][addr] */
@@ -48,7 +49,8 @@ chanBlbTrnFdDatagramInputClose(
 void *
 chanBlbTrnFdDatagramOutputCtx(
   void *ctx
- ,int fd
+ ,int fd4
+ ,int fd6
 );
 
 /* strips destination address from blob: [1 unsigned byte addrlen][addr] */

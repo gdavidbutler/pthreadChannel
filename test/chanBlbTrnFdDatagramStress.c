@@ -33,6 +33,7 @@
 #include <time.h>
 #include <pthread.h>
 #include <sys/socket.h>
+#include <poll.h>
 #include <sched.h>
 #include "chanBlbTrnFdDatagram.h"
 
@@ -50,14 +51,44 @@ struct qMsg {
 };
 
 struct ctx {
-  int i;
-  int o;
+  int i4;
+  int o4;
+  int i6;
+  int o6;
   int s; /* bit 2: output active, bit 4: thread running */
   pthread_mutex_t m;
   pthread_cond_t r;
   struct qMsg *qHead;
 };
 #define V ((struct ctx *)v)
+
+/* dispatch sendto to the correct fd based on sa_family */
+static int
+sendByFamily(
+  struct ctx *c
+ ,const unsigned char *b
+ ,unsigned int l
+){
+  unsigned int al;
+
+  if (l < 1)
+    return (-1);
+  al = b[0];
+  if (al > sizeof (struct sockaddr_storage) || l <= 1 + al)
+    return (-1);
+  switch (((struct sockaddr *)(b + 1))->sa_family) {
+  case AF_INET:
+    if (c->o4 < 0)
+      return (-1);
+    return (sendto(c->o4, b + 1 + al, l - 1 - al, 0, (struct sockaddr *)(b + 1), al));
+  case AF_INET6:
+    if (c->o6 < 0)
+      return (-1);
+    return (sendto(c->o6, b + 1 + al, l - 1 - al, 0, (struct sockaddr *)(b + 1), al));
+  default:
+    return (-1);
+  }
+}
 
 static void *
 delayT(
@@ -83,16 +114,7 @@ delayT(
       q = V->qHead;
       V->qHead = q->next;
       pthread_mutex_unlock(&V->m);
-      {
-        struct sockaddr_storage a;
-        unsigned int al;
-
-        al = q->data[0];
-        if (al <= sizeof (a) && q->len >= 1 + al) {
-          memcpy(&a, q->data + 1, al);
-          sendto(V->o, q->data + 1 + al, q->len - 1 - al, 0, (struct sockaddr *)&a, al);
-        }
-      }
+      sendByFamily(V, q->data, q->len);
       free(q);
       pthread_mutex_lock(&V->m);
     }
@@ -109,8 +131,10 @@ chanBlbTrnFdDatagramCtx(
   void *v;
 
   if ((v = malloc(sizeof (struct ctx)))) {
-    V->i = -1;
-    V->o = -1;
+    V->i4 = -1;
+    V->o4 = -1;
+    V->i6 = -1;
+    V->o6 = -1;
     V->s = 0;
     V->qHead = 0;
   }
@@ -120,9 +144,11 @@ chanBlbTrnFdDatagramCtx(
 void *
 chanBlbTrnFdDatagramInputCtx(
   void *v
- ,int f
+ ,int f4
+ ,int f6
 ){
-  V->i = f;
+  V->i4 = f4;
+  V->i6 = f6;
   return (v);
 }
 
@@ -132,35 +158,62 @@ chanBlbTrnFdDatagramInput(
  ,unsigned char *b
  ,unsigned int l
 ){
-  struct sockaddr_storage a;
-  socklen_t al;
+  struct pollfd p[2];
+  socklen_t sl;
   int i;
 
-  if (l < sizeof (a) + 2)
+  if (l <= 1 + sizeof (struct sockaddr_storage))
     return (0);
-  al = sizeof (a);
-  if ((i = recvfrom(V->i, b + sizeof (a) + 1, l - sizeof (a) - 1, 0, (struct sockaddr *)&a, &al)) <= 0)
+  sl = sizeof (struct sockaddr_storage);
+  if (V->i6 < 0)
+    i = recvfrom(V->i4, b + 1 + sizeof (struct sockaddr_storage), l - 1 - sizeof (struct sockaddr_storage), 0, (struct sockaddr *)&b[1], &sl);
+  else if (V->i4 < 0)
+    i = recvfrom(V->i6, b + 1 + sizeof (struct sockaddr_storage), l - 1 - sizeof (struct sockaddr_storage), 0, (struct sockaddr *)&b[1], &sl);
+  else {
+    if ((p[0].fd = V->i4) < 0)
+      p[0].events = 0;
+    else
+      p[0].events = POLLIN;
+    p[0].revents = 0;
+    if ((p[1].fd = V->i6) < 0)
+      p[1].events = 0;
+    else
+      p[1].events = POLLIN;
+    p[1].revents = 0;
+    if (poll(p, sizeof (p) / sizeof (p[0]), -1) < 0)
+      return (0);
+    if (p[0].revents == POLLIN)
+      i = recvfrom(p[0].fd, b + 1 + sizeof (struct sockaddr_storage), l - 1 - sizeof (struct sockaddr_storage), 0, (struct sockaddr *)&b[1], &sl);
+    else if (p[1].revents == POLLIN)
+      i = recvfrom(p[1].fd, b + 1 + sizeof (struct sockaddr_storage), l - 1 - sizeof (struct sockaddr_storage), 0, (struct sockaddr *)&b[1], &sl);
+    else
+      i = 0;
+  }
+  if (i <= 0)
     return (0);
-  b[0] = (unsigned char)al;
-  memcpy(b + 1, &a, al);
-  memmove(b + 1 + al, b + sizeof (a) + 1, i);
-  return (1 + al + i);
+  if ((b[0] = sl) < sizeof (struct sockaddr_storage))
+    memmove(b + 1 + sl, b + 1 + sizeof (struct sockaddr_storage), i);
+  return (1 + sl + i);
 }
 
 void
 chanBlbTrnFdDatagramInputClose(
   void *v
 ){
-  if (V->i >= 0 && V->i != V->o)
-    close(V->i);
+  if (V->i4 >= 0 && V->i4 != V->o4)
+    close(V->i4);
+  if (V->i6 >= 0 && V->i6 != V->o6)
+    close(V->i6);
 }
 
 void *
 chanBlbTrnFdDatagramOutputCtx(
   void *v
- ,int f
+ ,int f4
+ ,int f6
 ){
-  V->o = f;
+  V->o4 = f4;
+  V->o6 = f6;
   if (chanBlbTrnFdDatagramDelayMs > 0) {
     pthread_t th;
 
@@ -194,14 +247,7 @@ chanBlbTrnFdDatagramOutput(
     return (l); /* pretend success but don't send */
 
   if (chanBlbTrnFdDatagramDelayMs == 0) {
-    struct sockaddr_storage a;
-    unsigned int al;
-
-    al = b[0];
-    if (al > sizeof (a) || l < 1 + al)
-      return (0);
-    memcpy(&a, b + 1, al);
-    if (sendto(V->o, b + 1 + al, l - 1 - al, 0, (struct sockaddr *)&a, al) < 0)
+    if (sendByFamily(V, b, l) < 0)
       return (0);
     return (l);
   }
@@ -248,8 +294,10 @@ chanBlbTrnFdDatagramOutputClose(
     pthread_cond_signal(&V->r);
     pthread_mutex_unlock(&V->m);
   } else {
-    if (V->o >= 0 && V->o != V->i)
-      close(V->o);
+    if (V->o4 >= 0 && V->o4 != V->i4)
+      close(V->o4);
+    if (V->o6 >= 0 && V->o6 != V->i6)
+      close(V->o6);
   }
 }
 
@@ -268,11 +316,15 @@ chanBlbTrnFdDatagramFinalClose(
     pthread_cond_destroy(&V->r);
     pthread_mutex_destroy(&V->m);
     /* OutputClose deferred close in delay mode; close o now */
-    if (V->o >= 0 && V->o != V->i)
-      close(V->o);
+    if (V->o4 >= 0 && V->o4 != V->i4)
+      close(V->o4);
+    if (V->o6 >= 0 && V->o6 != V->i6)
+      close(V->o6);
   }
-  if (V->i == V->o)
-    close(V->i);
+  if (V->i4 >= 0 && V->i4 == V->o4)
+    close(V->i4);
+  if (V->i6 >= 0 && V->i6 == V->o6)
+    close(V->i6);
   free(v);
 }
 

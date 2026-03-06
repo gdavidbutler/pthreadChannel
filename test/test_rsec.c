@@ -216,8 +216,8 @@ setup(
   }
 
   if (!chanBlb(realloc, free
-      ,env->outChan, chanBlbTrnFdDatagramOutputCtx(dgramCtx, env->fd), chanBlbTrnFdDatagramOutput, chanBlbTrnFdDatagramOutputClose, rsecCtx, chanBlbChnRsecEgr
-      ,env->inChan, chanBlbTrnFdDatagramInputCtx(dgramCtx, env->fd), chanBlbTrnFdDatagramInput, chanBlbTrnFdDatagramInputClose, rsecCtx, chanBlbChnRsecIgr, 0
+      ,env->outChan, chanBlbTrnFdDatagramOutputCtx(dgramCtx, env->fd, -1), chanBlbTrnFdDatagramOutput, chanBlbTrnFdDatagramOutputClose, rsecCtx, chanBlbChnRsecEgr
+      ,env->inChan, chanBlbTrnFdDatagramInputCtx(dgramCtx, env->fd, -1), chanBlbTrnFdDatagramInput, chanBlbTrnFdDatagramInputClose, rsecCtx, chanBlbChnRsecIgr, 0
       ,dgramCtx, chanBlbTrnFdDatagramFinalClose
       ,0)) {
     close(env->fd);

@@ -26,6 +26,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/socket.h>
+#include <netinet/in.h>
 #include <netdb.h>
 #include <pthread.h>
 #include "chan.h"
@@ -174,7 +175,7 @@ main(
   struct addrinfo *addr;
   char *lport;
   int i;
-  int fd;
+  int fd4, fd6;
   void *ctx;
   pthread_t dt;
 
@@ -250,29 +251,48 @@ main(
     freeaddrinfo(addr);
   }
 
-  /* create and bind socket */
+  /* create and bind IPv4 socket */
+  fd4 = -1;
   memset(&hint, 0, sizeof (hint));
   hint.ai_family = AF_INET;
   hint.ai_socktype = SOCK_DGRAM;
   hint.ai_flags = AI_PASSIVE;
-  if (getaddrinfo(0, lport, &hint, &addr) || !addr) {
-    perror("getaddrinfo(listen)");
+  if (!getaddrinfo(0, lport, &hint, &addr) && addr) {
+    if ((fd4 = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol)) >= 0) {
+      i = 1;
+      setsockopt(fd4, SOL_SOCKET, SO_REUSEADDR, &i, sizeof (i));
+      if (bind(fd4, addr->ai_addr, addr->ai_addrlen)) {
+        close(fd4);
+        fd4 = -1;
+      }
+    }
+    freeaddrinfo(addr);
+  }
+
+  /* create and bind IPv6 socket */
+  fd6 = -1;
+  memset(&hint, 0, sizeof (hint));
+  hint.ai_family = AF_INET6;
+  hint.ai_socktype = SOCK_DGRAM;
+  hint.ai_flags = AI_PASSIVE;
+  if (!getaddrinfo(0, lport, &hint, &addr) && addr) {
+    if ((fd6 = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol)) >= 0) {
+      i = 1;
+      setsockopt(fd6, SOL_SOCKET, SO_REUSEADDR, &i, sizeof (i));
+      i = 1;
+      setsockopt(fd6, IPPROTO_IPV6, IPV6_V6ONLY, &i, sizeof (i));
+      if (bind(fd6, addr->ai_addr, addr->ai_addrlen)) {
+        close(fd6);
+        fd6 = -1;
+      }
+    }
+    freeaddrinfo(addr);
+  }
+
+  if (fd4 < 0 && fd6 < 0) {
+    fprintf(stderr, "%s: could not bind port %s\n", ProgName, lport);
     return (1);
   }
-  if ((fd = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol)) < 0) {
-    perror("socket");
-    return (1);
-  }
-  i = 1;
-  if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &i, sizeof (i))) {
-    perror("setsockopt");
-    return (1);
-  }
-  if (bind(fd, addr->ai_addr, addr->ai_addrlen)) {
-    perror("bind");
-    return (1);
-  }
-  freeaddrinfo(addr);
 
   chanInit(realloc, free);
 
@@ -310,8 +330,8 @@ main(
     }
     /* start chanBlb with RSEC framing for both directions */
     if (!chanBlb(realloc, free
-        ,OutChan, chanBlbTrnFdDatagramOutputCtx(ctx, fd), chanBlbTrnFdDatagramOutput, chanBlbTrnFdDatagramOutputClose, &rsecCtx, chanBlbChnRsecEgr
-        ,InChan, chanBlbTrnFdDatagramInputCtx(ctx, fd), chanBlbTrnFdDatagramInput, chanBlbTrnFdDatagramInputClose, &rsecCtx, chanBlbChnRsecIgr, 0
+        ,OutChan, chanBlbTrnFdDatagramOutputCtx(ctx, fd4, fd6), chanBlbTrnFdDatagramOutput, chanBlbTrnFdDatagramOutputClose, &rsecCtx, chanBlbChnRsecEgr
+        ,InChan, chanBlbTrnFdDatagramInputCtx(ctx, fd4, fd6), chanBlbTrnFdDatagramInput, chanBlbTrnFdDatagramInputClose, &rsecCtx, chanBlbChnRsecIgr, 0
         ,ctx, chanBlbTrnFdDatagramFinalClose
         ,0)) {
       perror("chanBlb");
@@ -321,8 +341,8 @@ main(
 #else
   /* start chanBlb for both directions */
   if (!chanBlb(realloc, free
-      ,OutChan, chanBlbTrnFdDatagramOutputCtx(ctx, fd), chanBlbTrnFdDatagramOutput, chanBlbTrnFdDatagramOutputClose, 0, 0
-      ,InChan, chanBlbTrnFdDatagramInputCtx(ctx, fd), chanBlbTrnFdDatagramInput, chanBlbTrnFdDatagramInputClose, 0, 0, 0
+      ,OutChan, chanBlbTrnFdDatagramOutputCtx(ctx, fd4, fd6), chanBlbTrnFdDatagramOutput, chanBlbTrnFdDatagramOutputClose, 0, 0
+      ,InChan, chanBlbTrnFdDatagramInputCtx(ctx, fd4, fd6), chanBlbTrnFdDatagramInput, chanBlbTrnFdDatagramInputClose, 0, 0, 0
       ,ctx, chanBlbTrnFdDatagramFinalClose
       ,0)) {
     perror("chanBlb");
