@@ -633,12 +633,15 @@ testMaxBoundary(void)
     free(m);
   }
 
-  /* one byte over: egress silently drops (km=257 > 256) */
+  /* one byte over: m clamped from 1 to 0 (k=256, km would be 257) */
   m = mkBlob(&env.sa, 2, 2, 1, 0, payload, maxLen + 1);
   check("send over", sendBlob(env.outChan, m));
-  m = recvBlob(env.inChan, 500000000L);
-  check("over-limit silently dropped", m == 0);
-  if (m) free(m);
+  m = recvBlob(env.inChan, 5000000000L);
+  check("over-limit received (m clamped)", m != 0);
+  if (m) {
+    check("over-limit payload correct", verifyBlob(m, 2, payload, maxLen + 1));
+    free(m);
+  }
 
   free(payload);
   teardown(&env);
@@ -1332,23 +1335,22 @@ testEgressInterleave(void)
   check("both received", ok == 2);
   usleep(100000);
   check("egrMsg == 2", rsecCtx.egrMsg == 2);
-  check("egrLost == 0", rsecCtx.egrLost == 0);
   teardown(&env);
 }
 
 static void
-testEgressEvict(void)
+testEgressBackpressure(void)
 {
   struct testEnv env;
   struct chanBlbChnRsecCtx rsecCtx;
   chanBlb_t *m;
-  const char *msg1 = "evict me";
-  const char *msg2 = "I survive";
+  const char *msg1 = "first msg";
+  const char *msg2 = "second msg";
   int seen1;
   int seen2;
   unsigned int i;
 
-  printf("=== Test: egress evict tableSize=1 delayMs=200 ===\n");
+  printf("=== Test: egress backpressure tableSize=1 delayMs=50 ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
   rsecCtx.dgramMax = 520;
@@ -1356,15 +1358,14 @@ testEgressEvict(void)
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
 
-  /* blob1: k=1 m=1 km=2, delayMs=200 => shard 0 sent now, shard 1 at +200ms */
-  m = mkBlob(&env.sa, 2, 1, 1, 200, msg1, strlen(msg1));
+  /* blob1: k=1 m=1 km=2, delayMs=50 => paced over 50ms */
+  m = mkBlob(&env.sa, 2, 1, 1, 50, msg1, strlen(msg1));
   check("send1", sendBlob(env.outChan, m));
-  /* blob2 evicts blob1 (egrLost += 2-1 = 1) */
+  /* blob2 blocks until blob1 completes (backpressure) */
   m = mkBlob(&env.sa, 2, 2, 1, 0, msg2, strlen(msg2));
   check("send2", sendBlob(env.outChan, m));
 
-  /* blob1's data shard was sent (k=1), so ingress delivers it */
-  /* blob2 is fully sent */
+  /* both messages delivered */
   seen1 = 0;
   seen2 = 0;
   for (i = 0; i < 2; ++i) {
@@ -1376,25 +1377,27 @@ testEgressEvict(void)
       seen2 = 1;
     free(m);
   }
-  check("blob1 received (data shard sent before evict)", seen1);
+  check("blob1 received", seen1);
   check("blob2 received", seen2);
 
   usleep(100000);
-  check("egrMsg == 1", rsecCtx.egrMsg == 1);
-  check("egrLost == 1", rsecCtx.egrLost == 1);
+  check("egrMsg == 2", rsecCtx.egrMsg == 2);
   teardown(&env);
 }
 
 static void
-testCountersEgrLost(void)
+testCountersBackpressure(void)
 {
   struct testEnv env;
   struct chanBlbChnRsecCtx rsecCtx;
   chanBlb_t *m;
-  const char *msg1 = "evict counter test message!!";
+  const char *msg1 = "backpressure counter test!!";
   const char *msg2 = "ok";
+  int seen1;
+  int seen2;
+  unsigned int i;
 
-  printf("=== Test: egrLost counter tableSize=1 multi-shard ===\n");
+  printf("=== Test: backpressure counter tableSize=1 multi-shard ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
   rsecCtx.dgramMax = 16;
@@ -1402,27 +1405,324 @@ testCountersEgrLost(void)
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
 
-  /* blob1: 28 bytes / 8 = 4 data, m=2, km=6, delayMs=100 */
-  /* shard 0 sent immediately, shards 1-5 at +100ms..+500ms */
-  m = mkBlob(&env.sa, 2, 1, 2, 100, msg1, strlen(msg1));
+  /* blob1: 26 bytes / 8 = 4 data, m=2, km=6, delayMs=10 */
+  m = mkBlob(&env.sa, 2, 1, 2, 10, msg1, strlen(msg1));
   check("send1", sendBlob(env.outChan, m));
-  /* blob2 arrives before shard 1, evicts blob1: egrLost += 6-1 = 5 */
+  /* blob2 blocks until blob1 completes (backpressure) */
   m = mkBlob(&env.sa, 2, 2, 0, 0, msg2, strlen(msg2));
   check("send2", sendBlob(env.outChan, m));
 
-  /* blob2 is receivable (k=1, m=0, single shard) */
-  m = recvBlob(env.inChan, 3000000000L);
-  check("blob2 received", m != 0 && verifyBlob(m, 2, msg2, strlen(msg2)));
-  if (m) free(m);
-  /* blob1 is NOT receivable (only 1 of 4 data shards sent) */
-  m = recvBlob(env.inChan, 500000000L);
-  check("blob1 not received (insufficient shards)", m == 0);
-  if (m) free(m);
+  /* both messages delivered */
+  seen1 = 0;
+  seen2 = 0;
+  for (i = 0; i < 2; ++i) {
+    m = recvBlob(env.inChan, 5000000000L);
+    if (!m) continue;
+    if (verifyBlob(m, 2, msg1, strlen(msg1)))
+      seen1 = 1;
+    else if (verifyBlob(m, 2, msg2, strlen(msg2)))
+      seen2 = 1;
+    free(m);
+  }
+  check("blob1 received", seen1);
+  check("blob2 received", seen2);
 
   usleep(100000);
+  check("egrMsg == 2", rsecCtx.egrMsg == 2);
+  /* blob1: 6 frags, blob2: 1 frag */
+  check("egrFrg == 7", rsecCtx.egrFrg == 7);
+  teardown(&env);
+}
+
+/* ===== COVERAGE GAP TESTS ===== */
+
+static void
+testRsDecodeAliasing(void)
+{
+  struct testEnv env;
+  struct chanBlbChnRsecCtx rsecCtx;
+  chanBlb_t *m;
+  unsigned int i;
+  unsigned int j;
+  unsigned int ok;
+  int seen[3];
+  const char *msgs[3];
+
+  msgs[0] = "rs decode alias test msg zero";
+  msgs[1] = "rs decode alias test msg one!";
+  msgs[2] = "rs decode alias test msg two!";
+
+  printf("=== Test: RS decode with mixed data+parity (aliasing fix) ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 2;
+  rsecCtx.dgramMax = 16; /* shardSize=8, k=4 for ~29 byte msgs */
+  rsecCtx.tableSize = 64;
+
+  chanBlbTrnFdDatagramDropPct = 30;
+
+  if (!setup(&env, &rsecCtx)) { check("setup", 0); chanBlbTrnFdDatagramDropPct = 0; return; }
+
+  /* k=4 m=8 => 12 shards, need 4. 30% drop => P(loss) < 0.2% per msg */
+  for (i = 0; i < 3; ++i) {
+    m = mkBlob(&env.sa, 2, (unsigned short)(i + 1), 8, 0,
+               msgs[i], strlen(msgs[i]));
+    if (!sendBlob(env.outChan, m)) { check("send", 0); goto rsAliasDone; }
+  }
+  ok = 0;
+  memset(seen, 0, sizeof (seen));
+  for (i = 0; i < 3; ++i) {
+    m = recvBlob(env.inChan, 5000000000L);
+    if (!m) continue;
+    for (j = 0; j < 3; ++j) {
+      if (!seen[j] && verifyBlob(m, 2, msgs[j], strlen(msgs[j]))) {
+        seen[j] = 1;
+        ++ok;
+        break;
+      }
+    }
+    free(m);
+  }
+  check("all 3 messages delivered", ok == 3);
+  printf("    (igrDcd=%u)\n", rsecCtx.igrDcd);
+  check("RS decode was used (igrDcd > 0)", rsecCtx.igrDcd > 0);
+
+rsAliasDone:
+  chanBlbTrnFdDatagramDropPct = 0;
+  teardown(&env);
+}
+
+static void
+testMClampIntermediate(void)
+{
+  struct testEnv env;
+  struct chanBlbChnRsecCtx rsecCtx;
+  chanBlb_t *m;
+  unsigned char *payload;
+  unsigned int payloadLen;
+  unsigned int i;
+
+  printf("=== Test: m clamping k=250 m=10->6 ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 2;
+  rsecCtx.dgramMax = 16; /* shardSize=8 */
+  rsecCtx.tableSize = 64;
+
+  /* k = ceil(2000/8) = 250, m=10 requested => km=260>256 => m clamped to 6 */
+  payloadLen = 2000;
+  payload = (unsigned char *)malloc(payloadLen);
+  if (!payload) { check("malloc", 0); return; }
+  for (i = 0; i < payloadLen; ++i)
+    payload[i] = (unsigned char)(i & 0xff);
+
+  if (!setup(&env, &rsecCtx)) { check("setup", 0); free(payload); return; }
+
+  m = mkBlob(&env.sa, 2, 1, 10, 0, payload, payloadLen);
+  check("send", sendBlob(env.outChan, m));
+  m = recvBlob(env.inChan, 10000000000L);
+  check("received", m != 0);
+  if (m) {
+    check("payload correct", verifyBlob(m, 2, payload, payloadLen));
+    free(m);
+  }
+  usleep(100000);
+  /* m clamped from 10 to 6: 250 data + 6 parity = 256 fragments */
+  check("egrFrg == 256", rsecCtx.egrFrg == 256);
   check("egrMsg == 1", rsecCtx.egrMsg == 1);
-  check("egrFrg == 2", rsecCtx.egrFrg == 2);
-  check("egrLost == 5", rsecCtx.egrLost == 5);
+
+  free(payload);
+  teardown(&env);
+}
+
+static void
+testMalformedBlob(void)
+{
+  struct testEnv env;
+  struct chanBlbChnRsecCtx rsecCtx;
+  chanBlb_t *m;
+
+  printf("=== Test: malformed blob protocol violation ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 2;
+  rsecCtx.dgramMax = 520;
+  rsecCtx.tableSize = 64;
+
+  if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
+
+  /* blob too short: only 2 bytes, needs at least prefixSize+2 */
+  m = (chanBlb_t *)malloc(chanBlb_tSize(2));
+  if (!m) { check("malloc", 0); teardown(&env); return; }
+  m->l = 2;
+  m->b[0] = 1;
+  m->b[1] = 0;
+  check("send malformed", sendBlob(env.outChan, m));
+
+  /* egress should have exited on protocol violation; no message on ingress */
+  m = recvBlob(env.inChan, 1000000000L);
+  check("no message after protocol violation", m == 0);
+  if (m) free(m);
+
+  teardown(&env);
+}
+
+static void
+testEmptyPayloadDrop(void)
+{
+  struct testEnv env;
+  struct chanBlbChnRsecCtx rsecCtx;
+  chanBlb_t *m;
+
+  printf("=== Test: empty payload with 30%% drop, m=4 ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 2;
+  rsecCtx.dgramMax = 520;
+  rsecCtx.tableSize = 64;
+
+  chanBlbTrnFdDatagramDropPct = 30;
+
+  if (!setup(&env, &rsecCtx)) { check("setup", 0); chanBlbTrnFdDatagramDropPct = 0; return; }
+
+  /* k=1 m=4 => 5 shards, need 1. P(all dropped) = 0.3^5 < 0.25% */
+  m = mkBlob(&env.sa, 2, 1, 4, 0, 0, 0);
+  check("send", sendBlob(env.outChan, m));
+  m = recvBlob(env.inChan, 3000000000L);
+  check("received", m != 0);
+  if (m) { check("empty payload", verifyBlob(m, 2, 0, 0)); free(m); }
+
+  chanBlbTrnFdDatagramDropPct = 0;
+  teardown(&env);
+}
+
+static void
+testTagSizeZero(void)
+{
+  struct testEnv env;
+  struct chanBlbChnRsecCtx rsecCtx;
+  chanBlb_t *m;
+  const char *msg = "zero tag size test";
+
+  printf("=== Test: tagSize=0 ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 0;
+  rsecCtx.dgramMax = 520;
+  rsecCtx.tableSize = 64;
+
+  if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
+
+  m = mkBlob(&env.sa, 0, 0, 1, 0, msg, strlen(msg));
+  check("send", sendBlob(env.outChan, m));
+  m = recvBlob(env.inChan, 2000000000L);
+  check("received", m != 0);
+  if (m) { check("payload correct", verifyBlob(m, 0, msg, strlen(msg))); free(m); }
+
+  teardown(&env);
+}
+
+static void
+testLargeK(void)
+{
+  struct testEnv env;
+  struct chanBlbChnRsecCtx rsecCtx;
+  chanBlb_t *m;
+  unsigned char *payload;
+  unsigned int payloadLen;
+  unsigned int i;
+
+  printf("=== Test: large k=250 m=1 (251 fragments) ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 2;
+  rsecCtx.dgramMax = 16; /* shardSize=8 */
+  rsecCtx.tableSize = 64;
+
+  payloadLen = 2000; /* k = ceil(2000/8) = 250, m=1 => 251 fragments */
+  payload = (unsigned char *)malloc(payloadLen);
+  if (!payload) { check("malloc", 0); return; }
+  for (i = 0; i < payloadLen; ++i)
+    payload[i] = (unsigned char)(i & 0xff);
+
+  if (!setup(&env, &rsecCtx)) { check("setup", 0); free(payload); return; }
+
+  m = mkBlob(&env.sa, 2, 1, 1, 0, payload, payloadLen);
+  check("send", sendBlob(env.outChan, m));
+  m = recvBlob(env.inChan, 5000000000L);
+  check("received", m != 0);
+  if (m) {
+    check("payload correct", verifyBlob(m, 2, payload, payloadLen));
+    free(m);
+  }
+  usleep(100000);
+  check("egrFrg == 251", rsecCtx.egrFrg == 251);
+  check("egrMsg == 1", rsecCtx.egrMsg == 1);
+
+  free(payload);
+  teardown(&env);
+}
+
+static void
+testEncryptRsDecode(void)
+{
+  struct testEnv env;
+  struct chanBlbChnRsecCtx rsecCtx;
+  struct hmacKeyCtx hmacCtx;
+  struct cryptKeyCtx cryptCtx;
+  chanBlb_t *m;
+  unsigned int i;
+  unsigned int j;
+  unsigned int ok;
+  int seen[3];
+  const char *hmacKey = "hmacRsDecode";
+  const char *cryptKey = "cryptRsDecode";
+  const char *msgs[3];
+
+  msgs[0] = "encrypt rs decode msg zero!";
+  msgs[1] = "encrypt rs decode msg one!!";
+  msgs[2] = "encrypt rs decode msg two!!";
+
+  printf("=== Test: encrypt+HMAC+RS decode (50%% drop dgramMax=40 m=8) ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 2;
+  rsecCtx.dgramMax = 40; /* room for hmac */
+  rsecCtx.tableSize = 64;
+  hmacCtx.key = (const unsigned char *)hmacKey;
+  hmacCtx.keyLen = strlen(hmacKey);
+  rsecCtx.hmacSize = RMD128_SZ;
+  rsecCtx.hmacCtx = &hmacCtx;
+  rsecCtx.hmacSign = hmacSignCb;
+  rsecCtx.hmacVrfy = hmacVrfyCb;
+  cryptCtx.key = (const unsigned char *)cryptKey;
+  cryptCtx.keyLen = strlen(cryptKey);
+  rsecCtx.cryptCtx = &cryptCtx;
+  rsecCtx.encrypt = xorCryptCb;
+  rsecCtx.decrypt = xorCryptCb;
+
+  chanBlbTrnFdDatagramDropPct = 50;
+
+  if (!setup(&env, &rsecCtx)) { check("setup", 0); chanBlbTrnFdDatagramDropPct = 0; return; }
+
+  for (i = 0; i < 3; ++i) {
+    m = mkBlob(&env.sa, 2, (unsigned short)(i + 1), 8, 0,
+               msgs[i], strlen(msgs[i]));
+    if (!sendBlob(env.outChan, m)) { check("send", 0); goto encRsDone; }
+  }
+  ok = 0;
+  memset(seen, 0, sizeof (seen));
+  for (i = 0; i < 3; ++i) {
+    m = recvBlob(env.inChan, 5000000000L);
+    if (!m) continue;
+    for (j = 0; j < 3; ++j) {
+      if (!seen[j] && verifyBlob(m, 2, msgs[j], strlen(msgs[j]))) {
+        seen[j] = 1;
+        ++ok;
+        break;
+      }
+    }
+    free(m);
+  }
+  check("all 3 encrypted+HMAC messages delivered", ok == 3);
+  printf("    (igrDcd=%u)\n", rsecCtx.igrDcd);
+  check("RS decode was used (igrDcd > 0)", rsecCtx.igrDcd > 0);
+
+encRsDone:
+  chanBlbTrnFdDatagramDropPct = 0;
   teardown(&env);
 }
 
@@ -1478,14 +1778,23 @@ main(
 
   /* egress pacing tests */
   testEgressInterleave();
-  testEgressEvict();
-  testCountersEgrLost();
+  testEgressBackpressure();
+  testCountersBackpressure();
 
   /* encrypt/decrypt tests */
   testEncryptBasic();
   testEncryptMultiShard();
   testEncryptHmac();
   testEncryptDrop();
+
+  /* coverage gap tests */
+  testRsDecodeAliasing();
+  testMClampIntermediate();
+  testMalformedBlob();
+  testEmptyPayloadDrop();
+  testTagSizeZero();
+  testLargeK();
+  testEncryptRsDecode();
 
   printf("\n=======================================\n");
   printf("Results: %d passed, %d failed\n", Pass, Fail);

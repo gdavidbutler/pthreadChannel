@@ -72,7 +72,6 @@ struct egrEntry {
   unsigned int stride;
   unsigned int km;
   unsigned int sent;    /* shards sent so far */
-  unsigned int age;     /* for LRU eviction */
 };
 
 struct shardItem {
@@ -107,24 +106,6 @@ shardInsert(
   base[lo] = *item;
 }
 
-static unsigned long
-shardEvict(
-  struct shardItem *base
- ,unsigned long nel
- ,unsigned int entry
-){
-  unsigned long r;
-  unsigned long w;
-
-  for (r = w = 0; r < nel; ++r) {
-    if (base[r].entry != entry) {
-      if (w != r)
-        base[w] = base[r];
-      ++w;
-    }
-  }
-  return (w);
-}
 
 /* Wire fragment: [addrlen(1)][addr(addrlen)][tag(tagSize)][k-1(1)][m(1)][shard_index(1)][padding_vlq(1-2)][shard_data(shardSize)][hmac(hmacSize)][smallhash(1)] */
 void *
@@ -141,7 +122,6 @@ chanBlbChnRsecEgr(
   unsigned int tableSize;
   unsigned int overhead;
   unsigned int shardSize;
-  unsigned int age;
   unsigned long shardCount;
   unsigned long shardAlloc;
   unsigned int ti;
@@ -174,7 +154,6 @@ chanBlbChnRsecEgr(
   p[0].c = v->chan;
   p[0].v = (void **)&m;
   p[0].o = chanOpGet;
-  age = 0;
 
   for (;;) {
     long ns;
@@ -231,25 +210,49 @@ chanBlbChnRsecEgr(
         }
       }
 
-      /* table full: evict LRU */
-      if (slot == tableSize) {
-        unsigned int minAge;
+      /* table full: pace out shards until a message completes */
+      while (slot == tableSize) {
+        unsigned int ei;
+        unsigned int si;
+        struct timespec now;
 
-        minAge = age + 1;
-        for (ti = 0; ti < tableSize; ++ti) {
-          if (table[ti].work && table[ti].age < minAge) {
-            minAge = table[ti].age;
-            slot = ti;
+        /* wait for next scheduled shard */
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        if (shards[0].ts.tv_sec > now.tv_sec
+         || (shards[0].ts.tv_sec == now.tv_sec
+          && shards[0].ts.tv_nsec > now.tv_nsec)) {
+          struct timespec rem;
+
+          rem.tv_sec = shards[0].ts.tv_sec - now.tv_sec;
+          rem.tv_nsec = shards[0].ts.tv_nsec - now.tv_nsec;
+          if (rem.tv_nsec < 0) {
+            rem.tv_sec--;
+            rem.tv_nsec += 1000000000L;
           }
+          nanosleep(&rem, 0);
         }
-        if (slot < tableSize) {
-          ctx->egrLost += table[slot].km - table[slot].sent;
-          shardCount = shardEvict(shards, shardCount, slot);
-          v->free(table[slot].work);
-          table[slot].work = 0;
-        } else {
-          v->free(m);
-          continue;
+
+        ei = shards[0].entry;
+        si = shards[0].shard;
+
+        /* pop head */
+        --shardCount;
+        if (shardCount > 0)
+          memmove(shards, shards + 1,
+            shardCount * sizeof (struct shardItem));
+
+        if (!v->out(v->outCtx,
+          table[ei].work + (unsigned long)si * table[ei].stride,
+          table[ei].stride))
+          goto exit;
+        ++ctx->egrFrg;
+        ++table[ei].sent;
+
+        if (table[ei].sent >= table[ei].km) {
+          ++ctx->egrMsg;
+          v->free(table[ei].work);
+          table[ei].work = 0;
+          slot = ei;
         }
       }
 
@@ -258,7 +261,7 @@ chanBlbChnRsecEgr(
       prefixSize = 1 + addrlen + tagSize;
       if (m->l < prefixSize + 2) {
         v->free(m);
-        continue;
+        break;
       }
       mVal = m->b[prefixSize];
       delayMs = m->b[prefixSize + 1];
@@ -268,8 +271,8 @@ chanBlbChnRsecEgr(
       k = payloadLen > 0 ? (payloadLen + shardSize - 1) / shardSize : 1;
       km = k + (unsigned int)mVal;
       if (km > 256) {
-        v->free(m);
-        continue;
+        mVal = (unsigned char)(256 - k);
+        km = 256;
       }
 
       /* padding and VLQ encode */
@@ -370,7 +373,6 @@ chanBlbChnRsecEgr(
       table[slot].stride = stride;
       table[slot].km = km;
       table[slot].sent = 0;
-      table[slot].age = ++age;
 
       /* grow shard schedule if needed */
       if (shardCount + km > shardAlloc) {
@@ -450,7 +452,7 @@ exit:
   return (0);
 }
 
-struct rsecEntry {
+struct igrEntry {
   unsigned int k;
   unsigned int m;
   unsigned int shardSize;
@@ -470,7 +472,7 @@ chanBlbChnRsecIgr(
   struct chanBlbIgrCtx *v
 ){
   struct chanBlbChnRsecCtx *ctx;
-  struct rsecEntry **table;
+  struct igrEntry **table;
   unsigned char *buf;
   chanArr_t p[1];
   unsigned int tagSize;
@@ -486,13 +488,13 @@ chanBlbChnRsecIgr(
   hmacSize = ctx->hmacSize;
 
   /* allocate collection table */
-  table = (struct rsecEntry **)v->realloc(0,
-    (unsigned long)tableSize * sizeof (struct rsecEntry *));
+  table = (struct igrEntry **)v->realloc(0,
+    (unsigned long)tableSize * sizeof (struct igrEntry *));
   if (!table) {
     v->fin(v);
     return (0);
   }
-  memset(table, 0, (unsigned long)tableSize * sizeof (struct rsecEntry *));
+  memset(table, 0, (unsigned long)tableSize * sizeof (struct igrEntry *));
 
   /* allocate receive buffer: max datagram size */
   bufSize = 1 + 128 + ctx->dgramMax;
@@ -521,7 +523,7 @@ chanBlbChnRsecIgr(
     unsigned int vlqLen;
     unsigned int headerLen;
     unsigned int fragDataLen;
-    struct rsecEntry *ent;
+    struct igrEntry *ent;
     int slot;
     int decoded;
 
@@ -566,6 +568,8 @@ chanBlbChnRsecIgr(
 
     /* decode padding VLQ */
     if (buf[prefixSize + 3] & 0x80) {
+      if (n < prefixSize + 5)
+        continue;
       padding = (unsigned int)(buf[prefixSize + 3] & 0x7f);
       padding = ((padding << 7) | (unsigned int)buf[prefixSize + 4]) + 1;
       vlqLen = 2;
@@ -578,6 +582,10 @@ chanBlbChnRsecIgr(
     if (n <= headerLen)
       continue;
     fragDataLen = n - headerLen;
+
+    /* validate padding against total data capacity */
+    if (padding > k * fragDataLen)
+      continue;
 
     /* decrypt shard data (after HMAC verify: MAC-then-decrypt) */
     /* last data shard (k-1) excludes padding to match egress */
@@ -642,8 +650,8 @@ chanBlbChnRsecIgr(
       }
 
       /* create new entry: struct + parity storage + tag copy */
-      ent = (struct rsecEntry *)v->realloc(0,
-        sizeof (struct rsecEntry)
+      ent = (struct igrEntry *)v->realloc(0,
+        sizeof (struct igrEntry)
         + (unsigned long)mVal * fragDataLen + tagSize);
       if (!ent)
         break;
@@ -654,7 +662,7 @@ chanBlbChnRsecIgr(
       ent->received = 0;
       ent->age = age;
       ent->prefixSize = 1 + addrlen + tagSize + 1;
-      ent->parity = (unsigned char *)ent + sizeof (struct rsecEntry);
+      ent->parity = (unsigned char *)ent + sizeof (struct igrEntry);
       ent->tag = ent->parity + (unsigned long)mVal * fragDataLen;
       memcpy(ent->tag, buf + 1 + addrlen, tagSize);
       memset(ent->present, 0, sizeof (ent->present));
@@ -729,11 +737,14 @@ chanBlbChnRsecIgr(
         unsigned char **outPtrs;
         unsigned char *indices;
         unsigned char *workArea;
+        unsigned char *shardCopies;
         unsigned int ri;
+        unsigned int ci;
 
         wsSize = (unsigned long)k * sizeof (const unsigned char *)
                + (unsigned long)k * sizeof (unsigned char *)
-               + k + RS_WORK_SIZE(k);
+               + k + RS_WORK_SIZE(k)
+               + (unsigned long)dataPresent * ent->shardSize;
         workspace = (unsigned char *)v->realloc(0, wsSize);
         if (!workspace) {
           v->free(ent->blob);
@@ -747,15 +758,23 @@ chanBlbChnRsecIgr(
         indices = (unsigned char *)outPtrs
           + (unsigned long)k * sizeof (unsigned char *);
         workArea = indices + k;
+        shardCopies = workArea + RS_WORK_SIZE(k);
 
         /* collect any k received shards */
+        /* copy present data shards to avoid aliasing with outPtrs */
         ri = 0;
+        ci = 0;
         for (ti = 0; ti < k && ri < k; ++ti) {
           if (ent->present[ti]) {
-            recvPtrs[ri] = ent->blob->b + ent->prefixSize
-              + (unsigned long)ti * ent->shardSize;
+            memcpy(shardCopies + (unsigned long)ci * ent->shardSize,
+              ent->blob->b + ent->prefixSize
+                + (unsigned long)ti * ent->shardSize,
+              ent->shardSize);
+            recvPtrs[ri] = shardCopies
+              + (unsigned long)ci * ent->shardSize;
             indices[ri] = (unsigned char)ti;
             ++ri;
+            ++ci;
           }
         }
         for (ti = k; ti < k + ent->m && ri < k; ++ti) {

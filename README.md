@@ -339,7 +339,7 @@ Blob flow (repeats):
   * Use with chanBlbTrnFdDatagram (e.g. UDP/IPv4: 576 - 20(IP) - 40(options) - 8(UDP) = 508 byte dgramMax to prevent IP fragmentation).
   * The application sets `dgramMax` (max datagram payload the transport can carry); the RSEC overhead is computed internally. `chanBlbChnRsecShard()` returns the shard size and `chanBlbChnRsecMax()` returns the max application payload for a given parity level m.
   * Egress fragments each blob into k data + m parity shards (k+m <= 256). Any k of k+m shards reconstruct the original.
-  * Egress maintains a table of `tableSize` in-flight messages with paced shard scheduling (per-blob `delay_ms`). Multiple blobs' shards are interleaved in send-time order. When the table is full, the oldest entry is evicted (LRU) and its unsent shards are counted in `egrLost`.
+  * Egress maintains a table of `tableSize` in-flight messages with paced shard scheduling (per-blob `delay_ms`). Multiple blobs' shards are interleaved in send-time order. When the table is full, shards are paced until there is room for the message, causing backpressure.
   * Ingress maintains a table of `tableSize` in-flight reassembly entries. Uses RS decode when data shards are missing, and suppresses duplicate/late fragment delivery. When the table is full, the oldest entry is evicted (LRU) and counted in `igrLost`.
   * Defense in depth: 1-byte small hash (always) + optional HMAC callbacks for authentication.
   * Optional per-shard encrypt/decrypt callbacks for confidentiality.
