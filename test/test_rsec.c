@@ -184,6 +184,7 @@ setup(
   void *dgramCtx;
   socklen_t sl;
   int one;
+  int bufsz;
 
   memset(&env->sa, 0, sizeof (env->sa));
   env->sa.sin_family = AF_INET;
@@ -194,6 +195,9 @@ setup(
     return (0);
   one = 1;
   setsockopt(env->fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof (one));
+  bufsz = 256 * 1024;
+  setsockopt(env->fd, SOL_SOCKET, SO_SNDBUF, &bufsz, sizeof (bufsz));
+  setsockopt(env->fd, SOL_SOCKET, SO_RCVBUF, &bufsz, sizeof (bufsz));
   if (bind(env->fd, (struct sockaddr *)&env->sa, sizeof (env->sa))) {
     close(env->fd);
     return (0);
@@ -546,6 +550,58 @@ testVlq2Byte(void)
   check("received", m != 0);
   if (m) { check("payload correct", verifyBlob(m, 2, msg, 1)); free(m); }
   teardown(&env);
+}
+
+static void
+testVlqMaxShard(void)
+{
+  struct testEnv env;
+  struct chanBlbChnRsecCtx rsecCtx;
+  chanBlb_t *m;
+  const char *msg = "x";
+
+  printf("=== Test: VLQ max shard (dgramMax=16392, shardSize=16384) ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 2;
+  rsecCtx.dgramMax = 16392; /* overhead=8, shardSize=16384, padding=16383 */
+  rsecCtx.tableSize = 64;
+
+  if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
+
+  /* 1-byte payload, shardSize=16384 => padding=16383 (max 2-byte VLQ) */
+  m = mkBlob(&env.sa, 2, 1, 1, 0, msg, 1);
+  check("send", sendBlob(env.outChan, m));
+  m = recvBlob(env.inChan, 3000000000L);
+  check("received", m != 0);
+  if (m) { check("payload correct", verifyBlob(m, 2, msg, 1)); free(m); }
+  teardown(&env);
+}
+
+static void
+testDgramMaxValidation(void)
+{
+  struct chanBlbChnRsecCtx rsecCtx;
+
+  printf("=== Test: dgramMax validation (VLQ limit) ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 2;
+
+  /* overhead=2+0+6=8, max shardSize=16384, max dgramMax=16392 */
+  rsecCtx.dgramMax = 16392;
+  check("16392 shard == 16384", chanBlbChnRsecShard(&rsecCtx) == 16384);
+  check("16392 max > 0", chanBlbChnRsecMax(&rsecCtx, 1) > 0);
+
+  rsecCtx.dgramMax = 16393;
+  check("16393 shard == 0", chanBlbChnRsecShard(&rsecCtx) == 0);
+  check("16393 max == 0", chanBlbChnRsecMax(&rsecCtx, 1) == 0);
+
+  /* with HMAC: overhead=2+16+6=24, max dgramMax=16408 */
+  rsecCtx.hmacSize = 16;
+  rsecCtx.dgramMax = 16408;
+  check("hmac 16408 shard == 16384", chanBlbChnRsecShard(&rsecCtx) == 16384);
+
+  rsecCtx.dgramMax = 16409;
+  check("hmac 16409 shard == 0", chanBlbChnRsecShard(&rsecCtx) == 0);
 }
 
 static void
@@ -1030,7 +1086,7 @@ testCountersMultiShard(void)
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
 
-  /* 28 bytes / 8 = 4 data shards, m=1 => 5 fragments */
+  /* 29 bytes / 8 = 4 data shards, m=1 => 5 fragments */
   m = mkBlob(&env.sa, 2, 1, 1, 0, msg, strlen(msg));
   check("send", sendBlob(env.outChan, m));
   m = recvBlob(env.inChan, 3000000000L);
@@ -1405,7 +1461,7 @@ testCountersBackpressure(void)
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
 
-  /* blob1: 26 bytes / 8 = 4 data, m=2, km=6, delayMs=10 */
+  /* blob1: 27 bytes / 8 = 4 data, m=2, km=6, delayMs=10 */
   m = mkBlob(&env.sa, 2, 1, 2, 10, msg1, strlen(msg1));
   check("send1", sendBlob(env.outChan, m));
   /* blob2 blocks until blob1 completes (backpressure) */
@@ -1748,6 +1804,8 @@ main(
   testHmacMultiShard();
   testTinyShard();
   testVlq2Byte();
+  testVlqMaxShard();
+  testDgramMaxValidation();
   testHighParity();
 
   /* max payload tests */

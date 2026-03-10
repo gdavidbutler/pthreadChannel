@@ -22,14 +22,28 @@
 #define __CHANBLBCHNRSEC_H__
 
 /* This multiplexer / demultiplexer depends on datagram semantics (write boundaries are preserved) */
+
 struct chanBlbChnRsecCtx {
   void *hmacCtx;
+  /* hdr points to blob header ([addrlen][addr][tag]) for key selection */
   void (*hmacSign)(void *hmacCtx, const unsigned char *hdr, unsigned char *dst, const unsigned char *src, unsigned int len);
   int (*hmacVrfy)(void *hmacCtx, const unsigned char *hdr, const unsigned char *mac, const unsigned char *src, unsigned int len);
   void *cryptCtx;
+  /* hdr as above; len excludes padding on last data shard (OTP safety) */
   void (*encrypt)(void *cryptCtx, const unsigned char *hdr, unsigned char *data, unsigned int len);
   void (*decrypt)(void *cryptCtx, const unsigned char *hdr, unsigned char *data, unsigned int len);
-  unsigned int dgramMax;  /* max datagram payload size (transport MTU minus headers, e.g. UDP/IPv4 508) */
+  /*
+   * Max datagram payload size (transport MTU minus headers).
+   * Shard size (dgramMax - tagSize - hmacSize - 6) must not
+   * exceed 16384; chanBlbChnRsecShard() returns 0 if violated.
+   *
+   * WARNING: Datagrams exceeding the path MTU are IP-fragmented;
+   * loss of any IP fragment drops the entire datagram, defeating
+   * erasure coding at this layer.  For best results do not exceed
+   * the expected minimum MTU minus IP and UDP headers
+   * (e.g. IPv4 Internet: 576 - 60 - 8 = 508).
+   */
+  unsigned int dgramMax;
   unsigned int tagSize;   /* correlation tag size in bytes */
   unsigned int tableSize; /* max in-flight sequences (ingress and egress) */
   unsigned int hmacSize;  /* HMAC size in bytes (0 = no HMAC) */
@@ -45,13 +59,13 @@ struct chanBlbChnRsecCtx {
   unsigned int igrLost;   /* ingress: incomplete messages evicted */
 };
 
-/* Return shard size in bytes (0 if dgramMax too small) */
+/* Return shard size in bytes (0 if dgramMax too small or too large) */
 unsigned int
 chanBlbChnRsecShard(
   const struct chanBlbChnRsecCtx *ctx
 );
 
-/* Return max payload bytes for a given m */
+/* Return max payload bytes for a given m parity count (0 if invalid config) */
 unsigned int
 chanBlbChnRsecMax(
   const struct chanBlbChnRsecCtx *ctx
@@ -59,12 +73,14 @@ chanBlbChnRsecMax(
 );
 
 /* Egress blob: [addrlen(1)][addr(addrlen)][tag(tagSize)][m(1)][delay_ms(1)][payload(N)] */
+/* delay_ms: inter-shard pacing delay in milliseconds (0 = send all at once) */
 void *
 chanBlbChnRsecEgr(
   struct chanBlbEgrCtx *v
 );
 
 /* Ingress blob: [addrlen(1)][addr(addrlen)][tag(tagSize)][mfract(1)][payload(N)] */
+/* mfract: fraction of sender's parity consumed (0=none, 255=all; AIMD signal) */
 void *
 chanBlbChnRsecIgr(
   struct chanBlbIgrCtx *v

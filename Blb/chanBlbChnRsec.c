@@ -33,7 +33,8 @@ chanBlbChnRsecShard(
   unsigned int overhead;
 
   overhead = ctx->tagSize + ctx->hmacSize + 6;
-  if (ctx->dgramMax <= overhead)
+  if (ctx->dgramMax <= overhead
+   || ctx->dgramMax - overhead > 16384) /* max 2-byte VLQ padding */
     return (0);
   return (ctx->dgramMax - overhead);
 }
@@ -46,7 +47,8 @@ chanBlbChnRsecMax(
   unsigned int overhead;
 
   overhead = ctx->tagSize + ctx->hmacSize + 6;
-  if (ctx->dgramMax <= overhead)
+  if (ctx->dgramMax <= overhead
+   || ctx->dgramMax - overhead > 16384) /* max 2-byte VLQ padding */
     return (0);
   return ((256 - (unsigned int)m) * (ctx->dgramMax - overhead));
 }
@@ -131,7 +133,7 @@ chanBlbChnRsecEgr(
   hmacSize = ctx->hmacSize;
   tableSize = ctx->tableSize;
   overhead = tagSize + hmacSize + 6;
-  if (ctx->dgramMax <= overhead || !tableSize) {
+  if (ctx->dgramMax <= overhead || ctx->dgramMax - overhead > 16384 || !tableSize) {
     v->fin(v);
     return (0);
   }
