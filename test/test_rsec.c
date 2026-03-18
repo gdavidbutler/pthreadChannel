@@ -103,6 +103,95 @@ xorCryptCb(
     data[i] ^= k->key[i % k->keyLen];
 }
 
+/* hdr-dependent HMAC callbacks - derive key by XORing with tag from hdr */
+struct hmacHdrCtx {
+  const unsigned char *key;
+  unsigned int keyLen;
+  unsigned int tagSize;
+};
+
+static void
+hmacHdrSignCb(
+  void *ctx
+ ,const unsigned char *hdr
+ ,unsigned char *dst
+ ,const unsigned char *src
+ ,unsigned int len
+){
+  struct hmacHdrCtx *k;
+  unsigned char dk[64];
+  unsigned int tagOff;
+  unsigned int dkLen;
+  unsigned int i;
+
+  k = (struct hmacHdrCtx *)ctx;
+  dkLen = k->keyLen < sizeof (dk) / sizeof (dk[0])
+        ? k->keyLen : (unsigned int)(sizeof (dk) / sizeof (dk[0]));
+  tagOff = 1 + (unsigned int)hdr[0];
+  for (i = 0; i < dkLen; ++i)
+    dk[i] = k->key[i] ^ hdr[tagOff + i % k->tagSize];
+  rmd128hmac(dk, dkLen, src, len, dst);
+}
+
+static int
+hmacHdrVrfyCb(
+  void *ctx
+ ,const unsigned char *hdr
+ ,const unsigned char *mac
+ ,const unsigned char *src
+ ,unsigned int len
+){
+  struct hmacHdrCtx *k;
+  unsigned char dk[64];
+  unsigned char computed[RMD128_SZ];
+  unsigned char diff;
+  unsigned int tagOff;
+  unsigned int dkLen;
+  unsigned int i;
+
+  k = (struct hmacHdrCtx *)ctx;
+  dkLen = k->keyLen < sizeof (dk) / sizeof (dk[0])
+        ? k->keyLen : (unsigned int)(sizeof (dk) / sizeof (dk[0]));
+  tagOff = 1 + (unsigned int)hdr[0];
+  for (i = 0; i < dkLen; ++i)
+    dk[i] = k->key[i] ^ hdr[tagOff + i % k->tagSize];
+  rmd128hmac(dk, dkLen, src, len, computed);
+  diff = 0;
+  for (i = 0; i < RMD128_SZ; ++i)
+    diff |= mac[i] ^ computed[i];
+  return (diff == 0);
+}
+
+/* hdr-dependent encrypt/decrypt - derive key by XORing with tag from hdr */
+struct cryptHdrCtx {
+  const unsigned char *key;
+  unsigned int keyLen;
+  unsigned int tagSize;
+};
+
+static void
+xorHdrCryptCb(
+  void *ctx
+ ,const unsigned char *hdr
+ ,unsigned char *data
+ ,unsigned int len
+){
+  struct cryptHdrCtx *k;
+  unsigned char dk[64];
+  unsigned int tagOff;
+  unsigned int dkLen;
+  unsigned int i;
+
+  k = (struct cryptHdrCtx *)ctx;
+  dkLen = k->keyLen < sizeof (dk) / sizeof (dk[0])
+        ? k->keyLen : (unsigned int)(sizeof (dk) / sizeof (dk[0]));
+  tagOff = 1 + (unsigned int)hdr[0];
+  for (i = 0; i < dkLen; ++i)
+    dk[i] = k->key[i] ^ hdr[tagOff + i % k->tagSize];
+  for (i = 0; i < len; ++i)
+    data[i] ^= dk[i % dkLen];
+}
+
 /*
  * Build an RSEC egress blob:
  * [addrlen(1)][addr(addrlen)][tag(tagSize)][m(1)][delay_ms(1)][payload]
@@ -358,7 +447,7 @@ testMultiShard(void)
   chanBlb_t *m;
   const char *msg = "multi shard message requiring several fragments";
 
-  printf("=== Test: multi-shard (dgramMax=16) ===\n");
+  printf("=== Test: multi-shard (dgramMax=16, shardSize=6) ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
   rsecCtx.dgramMax = 16;
@@ -512,7 +601,7 @@ testTinyShard(void)
   chanBlb_t *m;
   const char *msg = "stress test with tiny shards yep";
 
-  printf("=== Test: tiny dgramMax=12 m=2 (many fragments) ===\n");
+  printf("=== Test: tiny dgramMax=12 shardSize=2 m=2 (many fragments) ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
   rsecCtx.dgramMax = 12;
@@ -536,10 +625,10 @@ testVlq2Byte(void)
   chanBlb_t *m;
   const char *msg = "x";
 
-  printf("=== Test: 2-byte VLQ padding (dgramMax=264, 1-byte payload) ===\n");
+  printf("=== Test: 2-byte VLQ padding (dgramMax=266, 1-byte payload) ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
-  rsecCtx.dgramMax = 264;
+  rsecCtx.dgramMax = 266; /* overhead=10, shardSize=256, 1-byte payload => padding=255 (2-byte VLQ) */
   rsecCtx.tableSize = 64;
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
@@ -560,10 +649,10 @@ testVlqMaxShard(void)
   chanBlb_t *m;
   const char *msg = "x";
 
-  printf("=== Test: VLQ max shard (dgramMax=16392, shardSize=16384) ===\n");
+  printf("=== Test: VLQ max shard (dgramMax=16394, shardSize=16384) ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
-  rsecCtx.dgramMax = 16392; /* overhead=8, shardSize=16384, padding=16383 */
+  rsecCtx.dgramMax = 16394; /* overhead=10, shardSize=16384, padding=16383 */
   rsecCtx.tableSize = 64;
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
@@ -586,22 +675,22 @@ testDgramMaxValidation(void)
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
 
-  /* overhead=2+0+6=8, max shardSize=16384, max dgramMax=16392 */
-  rsecCtx.dgramMax = 16392;
-  check("16392 shard == 16384", chanBlbChnRsecShard(&rsecCtx) == 16384);
-  check("16392 max > 0", chanBlbChnRsecMax(&rsecCtx, 1) > 0);
+  /* overhead=2+0+8=10, max shardSize=16384, max dgramMax=16394 */
+  rsecCtx.dgramMax = 16394;
+  check("16394 shard == 16384", chanBlbChnRsecShard(&rsecCtx) == 16384);
+  check("16394 max > 0", chanBlbChnRsecMax(&rsecCtx, 1) > 0);
 
-  rsecCtx.dgramMax = 16393;
-  check("16393 shard == 0", chanBlbChnRsecShard(&rsecCtx) == 0);
-  check("16393 max == 0", chanBlbChnRsecMax(&rsecCtx, 1) == 0);
+  rsecCtx.dgramMax = 16395;
+  check("16395 shard == 0", chanBlbChnRsecShard(&rsecCtx) == 0);
+  check("16395 max == 0", chanBlbChnRsecMax(&rsecCtx, 1) == 0);
 
-  /* with HMAC: overhead=2+16+6=24, max dgramMax=16408 */
+  /* with HMAC: overhead=2+16+8=26, max dgramMax=16410 */
   rsecCtx.hmacSize = 16;
-  rsecCtx.dgramMax = 16408;
-  check("hmac 16408 shard == 16384", chanBlbChnRsecShard(&rsecCtx) == 16384);
+  rsecCtx.dgramMax = 16410;
+  check("hmac 16410 shard == 16384", chanBlbChnRsecShard(&rsecCtx) == 16384);
 
-  rsecCtx.dgramMax = 16409;
-  check("hmac 16409 shard == 0", chanBlbChnRsecShard(&rsecCtx) == 0);
+  rsecCtx.dgramMax = 16411;
+  check("hmac 16411 shard == 0", chanBlbChnRsecShard(&rsecCtx) == 0);
 }
 
 static void
@@ -641,17 +730,17 @@ testMaxApi(void)
   printf("=== Test: chanBlbChnRsecMax API ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
-  rsecCtx.dgramMax = 520; /* overhead=2+0+6=8, shardSize=512 */
+  rsecCtx.dgramMax = 520; /* overhead=2+0+8=10, shardSize=510 */
 
-  check("m=0 => 256*512=131072", chanBlbChnRsecMax(&rsecCtx, 0) == 131072);
-  check("m=1 => 255*512=130560", chanBlbChnRsecMax(&rsecCtx, 1) == 130560);
-  check("m=5 => 251*512=128512", chanBlbChnRsecMax(&rsecCtx, 5) == 128512);
-  check("m=255 => 1*512=512", chanBlbChnRsecMax(&rsecCtx, 255) == 512);
+  check("m=0 => 256*510=130560", chanBlbChnRsecMax(&rsecCtx, 0) == 130560);
+  check("m=1 => 255*510=130050", chanBlbChnRsecMax(&rsecCtx, 1) == 130050);
+  check("m=5 => 251*510=128010", chanBlbChnRsecMax(&rsecCtx, 5) == 128010);
+  check("m=255 => 1*510=510", chanBlbChnRsecMax(&rsecCtx, 255) == 510);
 
-  rsecCtx.dgramMax = 16; /* overhead=8, shardSize=8 */
-  check("d=16 m=2 => 254*8=2032", chanBlbChnRsecMax(&rsecCtx, 2) == 2032);
+  rsecCtx.dgramMax = 16; /* overhead=10, shardSize=6 */
+  check("d=16 m=2 => 254*6=1524", chanBlbChnRsecMax(&rsecCtx, 2) == 1524);
 
-  rsecCtx.dgramMax = 8; /* overhead=8, shardSize=0: too small */
+  rsecCtx.dgramMax = 10; /* overhead=10, shardSize=0: too small */
   check("dgramMax==overhead => 0", chanBlbChnRsecMax(&rsecCtx, 0) == 0);
 }
 
@@ -670,8 +759,8 @@ testMaxBoundary(void)
   rsecCtx.dgramMax = 16;
   rsecCtx.tableSize = 64;
 
-  maxLen = chanBlbChnRsecMax(&rsecCtx, 1); /* 255 * 8 = 2040 */
-  check("maxLen == 2040", maxLen == 2040);
+  maxLen = chanBlbChnRsecMax(&rsecCtx, 1); /* 255 * 6 = 1530 */
+  check("maxLen == 1530", maxLen == 1530);
 
   payload = (unsigned char *)malloc(maxLen + 1);
   if (!payload) { check("malloc", 0); return; }
@@ -713,7 +802,7 @@ testDropRecovery(void)
   chanBlb_t *m;
   const char *msg = "drop recovery test message";
 
-  printf("=== Test: 30%% drop, m=4 single shard ===\n");
+  printf("=== Test: 30%% drop, m=7 single shard ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
   rsecCtx.dgramMax = 520;
@@ -723,8 +812,8 @@ testDropRecovery(void)
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); chanBlbTrnFdDatagramDropPct = 0; return; }
 
-  /* k=1, m=4 => 5 shards. Need any 1 of 5. P(all 5 dropped) = 0.3^5 = 0.24% */
-  m = mkBlob(&env.sa, 2, 1, 4, 0, msg, strlen(msg));
+  /* k=1, m=7 => 8 shards. Need any 1 of 8. P(all 8 dropped) = 0.3^8 < 0.007% */
+  m = mkBlob(&env.sa, 2, 1, 7, 0, msg, strlen(msg));
   check("send", sendBlob(env.outChan, m));
   m = recvBlob(env.inChan, 3000000000L);
   check("received after drops", m != 0);
@@ -742,18 +831,18 @@ testDropMultiShard(void)
   chanBlb_t *m;
   const char *msg = "drop multi shard recovery test!";
 
-  printf("=== Test: 20%% drop, multi-shard dgramMax=16 m=4 ===\n");
+  printf("=== Test: 20%% drop, multi-shard dgramMax=18 m=8 ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
-  rsecCtx.dgramMax = 16;
+  rsecCtx.dgramMax = 18; /* overhead=10, shardSize=8 */
   rsecCtx.tableSize = 64;
 
   chanBlbTrnFdDatagramDropPct = 20;
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); chanBlbTrnFdDatagramDropPct = 0; return; }
 
-  /* 31 bytes / 8 = 4 data shards, m=4 => 8 total. Need any 4 of 8. */
-  m = mkBlob(&env.sa, 2, 1, 4, 0, msg, strlen(msg));
+  /* 4 data shards, m=8 => 12 total. Need any 4 of 12. */
+  m = mkBlob(&env.sa, 2, 1, 8, 0, msg, strlen(msg));
   check("send", sendBlob(env.outChan, m));
   m = recvBlob(env.inChan, 3000000000L);
   check("received after drops", m != 0);
@@ -784,7 +873,7 @@ testDropMultipleMessages(void)
   msgs[8] = "drop msg 8";
   msgs[9] = "drop msg 9";
 
-  printf("=== Test: 25%% drop, 10 sequential messages, m=5 ===\n");
+  printf("=== Test: 25%% drop, 10 sequential messages, m=8 ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
   rsecCtx.dgramMax = 520;
@@ -794,9 +883,9 @@ testDropMultipleMessages(void)
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); chanBlbTrnFdDatagramDropPct = 0; return; }
 
-  /* k=1, m=5 => 6 shards each. P(all 6 dropped) = 0.25^6 < 0.025% per msg */
+  /* k=1, m=8 => 9 shards each. P(all 9 dropped) = 0.25^9 < 0.0004% per msg */
   for (i = 0; i < 10; ++i) {
-    m = mkBlob(&env.sa, 2, (unsigned short)(i + 1), 5, 0,
+    m = mkBlob(&env.sa, 2, (unsigned short)(i + 1), 8, 0,
                msgs[i], strlen(msgs[i]));
     if (!sendBlob(env.outChan, m)) { check("send", 0); goto dropMsgDone; }
   }
@@ -834,7 +923,7 @@ testDelayReorder(void)
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); chanBlbTrnFdDatagramDelayMs = 0; return; }
 
-  /* 31 bytes / 8 = 4 data + 1 parity = 5 fragments, randomly delayed */
+  /* 31 bytes / 6 = 6 data + 1 parity = 7 fragments, randomly delayed */
   m = mkBlob(&env.sa, 2, 1, 1, 0, msg, strlen(msg));
   check("send", sendBlob(env.outChan, m));
   m = recvBlob(env.inChan, 3000000000L);
@@ -984,10 +1073,10 @@ testStressMultiShardHmac(void)
   msgs[3] = "hmac stress fourth one too!";
   msgs[4] = "hmac stress fifth final msg";
 
-  printf("=== Test: 15%% drop + 30ms delay, multi-shard dgramMax=40 m=3, HMAC ===\n");
+  printf("=== Test: 15%% drop + 30ms delay, multi-shard dgramMax=42 m=6, HMAC ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
-  rsecCtx.dgramMax = 40;
+  rsecCtx.dgramMax = 42; /* overhead=26, shardSize=16 */
   rsecCtx.tableSize = 64;
   hmacCtx.key = (const unsigned char *)key;
   hmacCtx.keyLen = strlen(key);
@@ -1002,7 +1091,7 @@ testStressMultiShardHmac(void)
   if (!setup(&env, &rsecCtx)) { check("setup", 0); goto stressHmacDone; }
 
   for (i = 0; i < 5; ++i) {
-    m = mkBlob(&env.sa, 2, (unsigned short)(i + 1), 3, 0,
+    m = mkBlob(&env.sa, 2, (unsigned short)(i + 1), 6, 0,
                msgs[i], strlen(msgs[i]));
     if (!sendBlob(env.outChan, m)) { check("send", 0); goto stressHmacTeardown; }
   }
@@ -1078,7 +1167,7 @@ testCountersMultiShard(void)
   chanBlb_t *m;
   const char *msg = "multi shard counter test msg!";
 
-  printf("=== Test: counters multi-shard s=8 m=1 ===\n");
+  printf("=== Test: counters multi-shard s=6 m=1 ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
   rsecCtx.dgramMax = 16;
@@ -1086,7 +1175,7 @@ testCountersMultiShard(void)
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
 
-  /* 29 bytes / 8 = 4 data shards, m=1 => 5 fragments */
+  /* 28 bytes / 6 = 5 data shards, m=1 => 6 fragments */
   m = mkBlob(&env.sa, 2, 1, 1, 0, msg, strlen(msg));
   check("send", sendBlob(env.outChan, m));
   m = recvBlob(env.inChan, 3000000000L);
@@ -1095,8 +1184,7 @@ testCountersMultiShard(void)
   usleep(100000);
 
   check("egrMsg == 1", rsecCtx.egrMsg == 1);
-  check("egrFrg == 5", rsecCtx.egrFrg == 5);
-  check("igrFrg == 5", rsecCtx.igrFrg == 5);
+  check("egrFrg == 6", rsecCtx.egrFrg == 6);
   check("igrMsg == 1", rsecCtx.igrMsg == 1);
   check("igrDcd == 0", rsecCtx.igrDcd == 0);
   check("igrLost == 0", rsecCtx.igrLost == 0);
@@ -1111,18 +1199,18 @@ testCountersDrop(void)
   chanBlb_t *m;
   const char *msg = "drop counter test message!!";
 
-  printf("=== Test: counters with 20%% drop, multi-shard s=8 m=5 ===\n");
+  printf("=== Test: counters with 20%% drop, multi-shard s=8 m=8 ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
-  rsecCtx.dgramMax = 16;
+  rsecCtx.dgramMax = 18; /* overhead=10, shardSize=8 */
   rsecCtx.tableSize = 64;
 
   chanBlbTrnFdDatagramDropPct = 20;
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); chanBlbTrnFdDatagramDropPct = 0; return; }
 
-  /* 27 bytes / 8 = 4 data, m=5 => 9 fragments sent, need 4 */
-  m = mkBlob(&env.sa, 2, 1, 5, 0, msg, strlen(msg));
+  /* 4 data, m=8 => 12 fragments sent, need 4 */
+  m = mkBlob(&env.sa, 2, 1, 8, 0, msg, strlen(msg));
   check("send", sendBlob(env.outChan, m));
   m = recvBlob(env.inChan, 5000000000L);
   check("received", m != 0);
@@ -1130,9 +1218,7 @@ testCountersDrop(void)
   usleep(100000);
 
   check("egrMsg == 1", rsecCtx.egrMsg == 1);
-  check("egrFrg == 9", rsecCtx.egrFrg == 9);
-  check("igrFrg <= 9", rsecCtx.igrFrg <= 9);
-  check("igrFrg >= 4", rsecCtx.igrFrg >= 4);
+  check("egrFrg == 12", rsecCtx.egrFrg == 12);
   check("igrMsg == 1", rsecCtx.igrMsg == 1);
   /* if any data shard was dropped, RS decode was needed */
   printf("    (igrDcd=%u igrFrg=%u igrDup=%u)\n",
@@ -1190,18 +1276,18 @@ testShardApi(void)
   printf("=== Test: chanBlbChnRsecShard API ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
-  rsecCtx.dgramMax = 520; /* overhead=2+0+6=8, shardSize=512 */
+  rsecCtx.dgramMax = 520; /* overhead=2+0+8=10, shardSize=510 */
 
-  check("shard=512", chanBlbChnRsecShard(&rsecCtx) == 512);
+  check("shard=510", chanBlbChnRsecShard(&rsecCtx) == 510);
 
-  rsecCtx.hmacSize = 16; /* overhead=2+16+6=24, shardSize=496 */
-  check("shard=496 with hmac", chanBlbChnRsecShard(&rsecCtx) == 496);
+  rsecCtx.hmacSize = 16; /* overhead=2+16+8=26, shardSize=494 */
+  check("shard=494 with hmac", chanBlbChnRsecShard(&rsecCtx) == 494);
 
   rsecCtx.dgramMax = 16;
-  rsecCtx.hmacSize = 0; /* overhead=2+0+6=8, shardSize=8 */
-  check("shard=8 small dgram", chanBlbChnRsecShard(&rsecCtx) == 8);
+  rsecCtx.hmacSize = 0; /* overhead=2+0+8=10, shardSize=6 */
+  check("shard=6 small dgram", chanBlbChnRsecShard(&rsecCtx) == 6);
 
-  rsecCtx.dgramMax = 8; /* overhead=8, shardSize=0: too small */
+  rsecCtx.dgramMax = 10; /* overhead=10, shardSize=0: too small */
   check("dgramMax==overhead => 0", chanBlbChnRsecShard(&rsecCtx) == 0);
 }
 
@@ -1318,10 +1404,10 @@ testEncryptDrop(void)
   const char *msg = "encrypted drop recovery test!";
   const char *key = "dropkey";
 
-  printf("=== Test: encrypt + 20%% drop, multi-shard dgramMax=16 m=4 ===\n");
+  printf("=== Test: encrypt + 20%% drop, multi-shard dgramMax=18 m=8 ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
-  rsecCtx.dgramMax = 16;
+  rsecCtx.dgramMax = 18; /* overhead=10, shardSize=8 */
   rsecCtx.tableSize = 64;
   cryptCtx.key = (const unsigned char *)key;
   cryptCtx.keyLen = strlen(key);
@@ -1333,12 +1419,206 @@ testEncryptDrop(void)
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); chanBlbTrnFdDatagramDropPct = 0; return; }
 
-  m = mkBlob(&env.sa, 2, 1, 4, 0, msg, strlen(msg));
+  m = mkBlob(&env.sa, 2, 1, 8, 0, msg, strlen(msg));
   check("send", sendBlob(env.outChan, m));
   m = recvBlob(env.inChan, 5000000000L);
   check("received after drops", m != 0);
   if (m) { check("payload correct", verifyBlob(m, 2, msg, strlen(msg))); free(m); }
 
+  chanBlbTrnFdDatagramDropPct = 0;
+  teardown(&env);
+}
+
+/* ===== HDR CALLBACK TESTS ===== */
+
+static void
+testHmacHdr(void)
+{
+  struct testEnv env;
+  struct chanBlbChnRsecCtx rsecCtx;
+  struct hmacHdrCtx hmacCtx;
+  chanBlb_t *m;
+  const char *msg = "hmac hdr key derivation";
+  const char *key = "hdrhmackey12";
+
+  printf("=== Test: HMAC with hdr-dependent key ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 4;
+  rsecCtx.dgramMax = 540;
+  rsecCtx.tableSize = 64;
+  hmacCtx.key = (const unsigned char *)key;
+  hmacCtx.keyLen = strlen(key);
+  hmacCtx.tagSize = 4;
+  rsecCtx.hmacSize = RMD128_SZ;
+  rsecCtx.hmacCtx = &hmacCtx;
+  rsecCtx.hmacSign = hmacHdrSignCb;
+  rsecCtx.hmacVrfy = hmacHdrVrfyCb;
+
+  if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
+
+  m = mkBlob(&env.sa, 4, 0x1234, 1, 0, msg, strlen(msg));
+  check("send", sendBlob(env.outChan, m));
+  m = recvBlob(env.inChan, 2000000000L);
+  check("received", m != 0);
+  if (m) { check("payload correct", verifyBlob(m, 4, msg, strlen(msg))); free(m); }
+  teardown(&env);
+}
+
+static void
+testHmacHdrMultiTag(void)
+{
+  struct testEnv env;
+  struct chanBlbChnRsecCtx rsecCtx;
+  struct hmacHdrCtx hmacCtx;
+  chanBlb_t *m;
+  unsigned int i;
+  unsigned int ok;
+  int seen[3];
+  const char *key = "multitaghdr";
+  const char *msgs[3];
+
+  msgs[0] = "hdr tag msg zero";
+  msgs[1] = "hdr tag msg one!";
+  msgs[2] = "hdr tag msg two!";
+
+  printf("=== Test: HMAC hdr multi-tag (different derived keys) ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 4;
+  rsecCtx.dgramMax = 540;
+  rsecCtx.tableSize = 64;
+  hmacCtx.key = (const unsigned char *)key;
+  hmacCtx.keyLen = strlen(key);
+  hmacCtx.tagSize = 4;
+  rsecCtx.hmacSize = RMD128_SZ;
+  rsecCtx.hmacCtx = &hmacCtx;
+  rsecCtx.hmacSign = hmacHdrSignCb;
+  rsecCtx.hmacVrfy = hmacHdrVrfyCb;
+
+  if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
+
+  for (i = 0; i < 3; ++i) {
+    m = mkBlob(&env.sa, 4, (unsigned short)(i + 1), 1, 0,
+               msgs[i], strlen(msgs[i]));
+    if (!sendBlob(env.outChan, m)) { check("send", 0); teardown(&env); return; }
+  }
+  ok = 0;
+  memset(seen, 0, sizeof (seen));
+  for (i = 0; i < 3; ++i) {
+    unsigned int j;
+
+    m = recvBlob(env.inChan, 2000000000L);
+    if (!m) continue;
+    for (j = 0; j < 3; ++j) {
+      if (!seen[j] && verifyBlob(m, 4, msgs[j], strlen(msgs[j]))) {
+        seen[j] = 1;
+        ++ok;
+        break;
+      }
+    }
+    free(m);
+  }
+  check("all 3 hdr-derived key messages correct", ok == 3);
+  teardown(&env);
+}
+
+static void
+testEncryptHdr(void)
+{
+  struct testEnv env;
+  struct chanBlbChnRsecCtx rsecCtx;
+  struct cryptHdrCtx cryptCtx;
+  chanBlb_t *m;
+  const char *msg = "encrypt hdr key derivation";
+  const char *key = "hdrcryptkey1";
+
+  printf("=== Test: encrypt with hdr-dependent key ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 4;
+  rsecCtx.dgramMax = 520;
+  rsecCtx.tableSize = 64;
+  cryptCtx.key = (const unsigned char *)key;
+  cryptCtx.keyLen = strlen(key);
+  cryptCtx.tagSize = 4;
+  rsecCtx.cryptCtx = &cryptCtx;
+  rsecCtx.encrypt = xorHdrCryptCb;
+  rsecCtx.decrypt = xorHdrCryptCb;
+
+  if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
+
+  m = mkBlob(&env.sa, 4, 0x1234, 1, 0, msg, strlen(msg));
+  check("send", sendBlob(env.outChan, m));
+  m = recvBlob(env.inChan, 2000000000L);
+  check("received", m != 0);
+  if (m) { check("payload correct", verifyBlob(m, 4, msg, strlen(msg))); free(m); }
+  teardown(&env);
+}
+
+static void
+testEncryptHmacHdrDrop(void)
+{
+  struct testEnv env;
+  struct chanBlbChnRsecCtx rsecCtx;
+  struct hmacHdrCtx hmacCtx;
+  struct cryptHdrCtx cryptCtx;
+  chanBlb_t *m;
+  unsigned int i;
+  unsigned int j;
+  unsigned int ok;
+  int seen[3];
+  const char *hmacKey = "hmacHdrDrop!";
+  const char *cryptKey = "cryptHdrDrop";
+  const char *msgs[3];
+
+  msgs[0] = "hdr drop test msg zero!";
+  msgs[1] = "hdr drop test msg one!!";
+  msgs[2] = "hdr drop test msg two!!";
+
+  printf("=== Test: encrypt+HMAC hdr + 40%% drop dgramMax=44 m=13 ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 4;
+  rsecCtx.dgramMax = 44;
+  rsecCtx.tableSize = 64;
+  hmacCtx.key = (const unsigned char *)hmacKey;
+  hmacCtx.keyLen = strlen(hmacKey);
+  hmacCtx.tagSize = 4;
+  rsecCtx.hmacSize = RMD128_SZ;
+  rsecCtx.hmacCtx = &hmacCtx;
+  rsecCtx.hmacSign = hmacHdrSignCb;
+  rsecCtx.hmacVrfy = hmacHdrVrfyCb;
+  cryptCtx.key = (const unsigned char *)cryptKey;
+  cryptCtx.keyLen = strlen(cryptKey);
+  cryptCtx.tagSize = 4;
+  rsecCtx.cryptCtx = &cryptCtx;
+  rsecCtx.encrypt = xorHdrCryptCb;
+  rsecCtx.decrypt = xorHdrCryptCb;
+
+  chanBlbTrnFdDatagramDropPct = 40;
+
+  if (!setup(&env, &rsecCtx)) { check("setup", 0); chanBlbTrnFdDatagramDropPct = 0; return; }
+
+  for (i = 0; i < 3; ++i) {
+    m = mkBlob(&env.sa, 4, (unsigned short)(i + 1), 13, 0,
+               msgs[i], strlen(msgs[i]));
+    if (!sendBlob(env.outChan, m)) { check("send", 0); goto hdrDropDone; }
+  }
+  ok = 0;
+  memset(seen, 0, sizeof (seen));
+  for (i = 0; i < 3; ++i) {
+    m = recvBlob(env.inChan, 5000000000L);
+    if (!m) continue;
+    for (j = 0; j < 3; ++j) {
+      if (!seen[j] && verifyBlob(m, 4, msgs[j], strlen(msgs[j]))) {
+        seen[j] = 1;
+        ++ok;
+        break;
+      }
+    }
+    free(m);
+  }
+  check("all 3 hdr-keyed messages delivered despite drops", ok == 3);
+  printf("    (igrDcd=%u)\n", rsecCtx.igrDcd);
+
+hdrDropDone:
   chanBlbTrnFdDatagramDropPct = 0;
   teardown(&env);
 }
@@ -1461,7 +1741,7 @@ testCountersBackpressure(void)
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
 
-  /* blob1: 27 bytes / 8 = 4 data, m=2, km=6, delayMs=10 */
+  /* blob1: 27 bytes / 6 = 5 data, m=2, km=7, delayMs=10 */
   m = mkBlob(&env.sa, 2, 1, 2, 10, msg1, strlen(msg1));
   check("send1", sendBlob(env.outChan, m));
   /* blob2 blocks until blob1 completes (backpressure) */
@@ -1485,8 +1765,8 @@ testCountersBackpressure(void)
 
   usleep(100000);
   check("egrMsg == 2", rsecCtx.egrMsg == 2);
-  /* blob1: 6 frags, blob2: 1 frag */
-  check("egrFrg == 7", rsecCtx.egrFrg == 7);
+  /* blob1: 7 frags, blob2: 1 frag */
+  check("egrFrg == 8", rsecCtx.egrFrg == 8);
   teardown(&env);
 }
 
@@ -1511,16 +1791,16 @@ testRsDecodeAliasing(void)
   printf("=== Test: RS decode with mixed data+parity (aliasing fix) ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
-  rsecCtx.dgramMax = 16; /* shardSize=8, k=4 for ~29 byte msgs */
+  rsecCtx.dgramMax = 18; /* overhead=10, shardSize=8, k=4 for ~29 byte msgs */
   rsecCtx.tableSize = 64;
 
-  chanBlbTrnFdDatagramDropPct = 30;
+  chanBlbTrnFdDatagramDropPct = 50;
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); chanBlbTrnFdDatagramDropPct = 0; return; }
 
-  /* k=4 m=8 => 12 shards, need 4. 30% drop => P(loss) < 0.2% per msg */
+  /* k=4 m=20 => 24 shards, need 4. 50% drop => P(loss) < 0.02% per msg */
   for (i = 0; i < 3; ++i) {
-    m = mkBlob(&env.sa, 2, (unsigned short)(i + 1), 8, 0,
+    m = mkBlob(&env.sa, 2, (unsigned short)(i + 1), 20, 0,
                msgs[i], strlen(msgs[i]));
     if (!sendBlob(env.outChan, m)) { check("send", 0); goto rsAliasDone; }
   }
@@ -1560,7 +1840,7 @@ testMClampIntermediate(void)
   printf("=== Test: m clamping k=250 m=10->6 ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
-  rsecCtx.dgramMax = 16; /* shardSize=8 */
+  rsecCtx.dgramMax = 18; /* overhead=10, shardSize=8 */
   rsecCtx.tableSize = 64;
 
   /* k = ceil(2000/8) = 250, m=10 requested => km=260>256 => m clamped to 6 */
@@ -1627,7 +1907,7 @@ testEmptyPayloadDrop(void)
   struct chanBlbChnRsecCtx rsecCtx;
   chanBlb_t *m;
 
-  printf("=== Test: empty payload with 30%% drop, m=4 ===\n");
+  printf("=== Test: empty payload with 30%% drop, m=7 ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
   rsecCtx.dgramMax = 520;
@@ -1637,8 +1917,8 @@ testEmptyPayloadDrop(void)
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); chanBlbTrnFdDatagramDropPct = 0; return; }
 
-  /* k=1 m=4 => 5 shards, need 1. P(all dropped) = 0.3^5 < 0.25% */
-  m = mkBlob(&env.sa, 2, 1, 4, 0, 0, 0);
+  /* k=1 m=7 => 8 shards, need 1. P(all dropped) = 0.3^8 < 0.007% */
+  m = mkBlob(&env.sa, 2, 1, 7, 0, 0, 0);
   check("send", sendBlob(env.outChan, m));
   m = recvBlob(env.inChan, 3000000000L);
   check("received", m != 0);
@@ -1686,7 +1966,7 @@ testLargeK(void)
   printf("=== Test: large k=250 m=1 (251 fragments) ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
-  rsecCtx.dgramMax = 16; /* shardSize=8 */
+  rsecCtx.dgramMax = 18; /* overhead=10, shardSize=8 */
   rsecCtx.tableSize = 64;
 
   payloadLen = 2000; /* k = ceil(2000/8) = 250, m=1 => 251 fragments */
@@ -1724,16 +2004,18 @@ testEncryptRsDecode(void)
   unsigned int i;
   unsigned int j;
   unsigned int ok;
-  int seen[3];
+  int seen[5];
   const char *hmacKey = "hmacRsDecode";
   const char *cryptKey = "cryptRsDecode";
-  const char *msgs[3];
+  const char *msgs[5];
 
   msgs[0] = "encrypt rs decode msg zero!";
   msgs[1] = "encrypt rs decode msg one!!";
   msgs[2] = "encrypt rs decode msg two!!";
+  msgs[3] = "encrypt rs decode msg 3!!!";
+  msgs[4] = "encrypt rs decode msg 4!!!";
 
-  printf("=== Test: encrypt+HMAC+RS decode (50%% drop dgramMax=40 m=8) ===\n");
+  printf("=== Test: encrypt+HMAC+RS decode (50%% drop dgramMax=40 m=20) ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
   rsecCtx.dgramMax = 40; /* room for hmac */
@@ -1754,17 +2036,18 @@ testEncryptRsDecode(void)
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); chanBlbTrnFdDatagramDropPct = 0; return; }
 
-  for (i = 0; i < 3; ++i) {
-    m = mkBlob(&env.sa, 2, (unsigned short)(i + 1), 8, 0,
+  /* k=2 m=20 km=22, 50% drop, 5 msgs: P(any fail)<0.003%, P(no decode)<0.1% */
+  for (i = 0; i < 5; ++i) {
+    m = mkBlob(&env.sa, 2, (unsigned short)(i + 1), 20, 0,
                msgs[i], strlen(msgs[i]));
     if (!sendBlob(env.outChan, m)) { check("send", 0); goto encRsDone; }
   }
   ok = 0;
   memset(seen, 0, sizeof (seen));
-  for (i = 0; i < 3; ++i) {
+  for (i = 0; i < 5; ++i) {
     m = recvBlob(env.inChan, 5000000000L);
     if (!m) continue;
-    for (j = 0; j < 3; ++j) {
+    for (j = 0; j < 5; ++j) {
       if (!seen[j] && verifyBlob(m, 2, msgs[j], strlen(msgs[j]))) {
         seen[j] = 1;
         ++ok;
@@ -1773,12 +2056,306 @@ testEncryptRsDecode(void)
     }
     free(m);
   }
-  check("all 3 encrypted+HMAC messages delivered", ok == 3);
+  check("all 5 encrypted+HMAC messages delivered", ok == 5);
   printf("    (igrDcd=%u)\n", rsecCtx.igrDcd);
   check("RS decode was used (igrDcd > 0)", rsecCtx.igrDcd > 0);
 
 encRsDone:
   chanBlbTrnFdDatagramDropPct = 0;
+  teardown(&env);
+}
+
+/* ===== PACKING TESTS ===== */
+
+static void
+testPackSmall(void)
+{
+  struct testEnv env;
+  struct chanBlbChnRsecCtx rsecCtx;
+  chanBlb_t *m;
+  unsigned int i;
+  unsigned int ok;
+  int seen[5];
+  const char *msgs[5];
+
+  msgs[0] = "pack small one";
+  msgs[1] = "pack small two";
+  msgs[2] = "pack small 3!!";
+  msgs[3] = "pack small 4!!";
+  msgs[4] = "pack small 5!!";
+
+  printf("=== Test: packing multiple small blobs to same address ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 2;
+  rsecCtx.dgramMax = 508;
+  rsecCtx.tableSize = 64;
+
+  if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
+
+  for (i = 0; i < 5; ++i) {
+    m = mkBlob(&env.sa, 2, (unsigned short)(i + 1), 1, 0,
+               msgs[i], strlen(msgs[i]));
+    if (!sendBlob(env.outChan, m)) { check("send", 0); teardown(&env); return; }
+  }
+  ok = 0;
+  memset(seen, 0, sizeof (seen));
+  for (i = 0; i < 5; ++i) {
+    m = recvBlob(env.inChan, 3000000000L);
+    if (!m) continue;
+    {
+      unsigned int j;
+
+      for (j = 0; j < 5; ++j) {
+        if (!seen[j] && verifyBlob(m, 2, msgs[j], strlen(msgs[j]))) {
+          seen[j] = 1;
+          ++ok;
+          break;
+        }
+      }
+    }
+    free(m);
+  }
+  check("all 5 small packed messages delivered", ok == 5);
+  teardown(&env);
+}
+
+static void
+testPackMixedSize(void)
+{
+  struct testEnv env;
+  struct chanBlbChnRsecCtx rsecCtx;
+  chanBlb_t *m;
+  unsigned int ok;
+  int seen[3];
+  unsigned int i;
+  const char *small1 = "tiny";
+  const char *small2 = "also tiny";
+  unsigned char big[400];
+  const char *msgs[2];
+
+  msgs[0] = small1;
+  msgs[1] = small2;
+
+  printf("=== Test: packing mixed small and large blobs ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 2;
+  rsecCtx.dgramMax = 508;
+  rsecCtx.tableSize = 64;
+
+  for (i = 0; i < sizeof (big) / sizeof (big[0]); ++i)
+    big[i] = (unsigned char)(i & 0xff);
+
+  if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
+
+  /* send two small and one large */
+  m = mkBlob(&env.sa, 2, 1, 1, 0, small1, strlen(small1));
+  if (!sendBlob(env.outChan, m)) { check("send", 0); teardown(&env); return; }
+  m = mkBlob(&env.sa, 2, 2, 1, 0, small2, strlen(small2));
+  if (!sendBlob(env.outChan, m)) { check("send", 0); teardown(&env); return; }
+  m = mkBlob(&env.sa, 2, 3, 1, 0, big, sizeof (big) / sizeof (big[0]));
+  if (!sendBlob(env.outChan, m)) { check("send", 0); teardown(&env); return; }
+
+  ok = 0;
+  memset(seen, 0, sizeof (seen));
+  for (i = 0; i < 3; ++i) {
+    m = recvBlob(env.inChan, 3000000000L);
+    if (!m) continue;
+    if (!seen[0] && verifyBlob(m, 2, small1, strlen(small1))) {
+      seen[0] = 1; ++ok;
+    } else if (!seen[1] && verifyBlob(m, 2, small2, strlen(small2))) {
+      seen[1] = 1; ++ok;
+    } else if (!seen[2] && verifyBlob(m, 2, big, sizeof (big) / sizeof (big[0]))) {
+      seen[2] = 1; ++ok;
+    }
+    free(m);
+  }
+  check("all 3 mixed-size messages delivered", ok == 3);
+  teardown(&env);
+}
+
+static void
+testPackDrop(void)
+{
+  struct testEnv env;
+  struct chanBlbChnRsecCtx rsecCtx;
+  chanBlb_t *m;
+  unsigned int i;
+  unsigned int ok;
+  int seen[5];
+  const char *msgs[5];
+
+  msgs[0] = "pack drop one";
+  msgs[1] = "pack drop two";
+  msgs[2] = "pack drop 3!!";
+  msgs[3] = "pack drop 4!!";
+  msgs[4] = "pack drop 5!!";
+
+  printf("=== Test: packing with 20%% drops m=5 ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 2;
+  rsecCtx.dgramMax = 508;
+  rsecCtx.tableSize = 64;
+
+  chanBlbTrnFdDatagramDropPct = 20;
+
+  if (!setup(&env, &rsecCtx)) { check("setup", 0); chanBlbTrnFdDatagramDropPct = 0; return; }
+
+  /* k=1 m=5 km=6, 20% drop: P(fail per msg)=0.2^6=0.0006%, P(any of 5)<0.003% */
+  for (i = 0; i < 5; ++i) {
+    m = mkBlob(&env.sa, 2, (unsigned short)(i + 1), 5, 0,
+               msgs[i], strlen(msgs[i]));
+    if (!sendBlob(env.outChan, m)) { check("send", 0); goto packDropDone; }
+  }
+  ok = 0;
+  memset(seen, 0, sizeof (seen));
+  for (i = 0; i < 5; ++i) {
+    m = recvBlob(env.inChan, 5000000000L);
+    if (!m) continue;
+    {
+      unsigned int j;
+
+      for (j = 0; j < 5; ++j) {
+        if (!seen[j] && verifyBlob(m, 2, msgs[j], strlen(msgs[j]))) {
+          seen[j] = 1;
+          ++ok;
+          break;
+        }
+      }
+    }
+    free(m);
+  }
+  check("all 5 packed messages delivered despite drops", ok == 5);
+
+packDropDone:
+  chanBlbTrnFdDatagramDropPct = 0;
+  teardown(&env);
+}
+
+static void
+testPackHdr(void)
+{
+  struct testEnv env;
+  struct chanBlbChnRsecCtx rsecCtx;
+  struct hmacHdrCtx hmacCtx;
+  chanBlb_t *m;
+  unsigned int i;
+  unsigned int ok;
+  int seen[3];
+  const char *key = "packhdrkey!!";
+  const char *msgs[3];
+
+  msgs[0] = "pack hdr msg zero";
+  msgs[1] = "pack hdr msg one!";
+  msgs[2] = "pack hdr msg two!";
+
+  printf("=== Test: packing with hdr-dependent HMAC callbacks ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 4;
+  rsecCtx.dgramMax = 508;
+  rsecCtx.tableSize = 64;
+  hmacCtx.key = (const unsigned char *)key;
+  hmacCtx.keyLen = strlen(key);
+  hmacCtx.tagSize = 4;
+  rsecCtx.hmacSize = RMD128_SZ;
+  rsecCtx.hmacCtx = &hmacCtx;
+  rsecCtx.hmacSign = hmacHdrSignCb;
+  rsecCtx.hmacVrfy = hmacHdrVrfyCb;
+
+  if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
+
+  for (i = 0; i < 3; ++i) {
+    m = mkBlob(&env.sa, 4, (unsigned short)(i + 1), 1, 0,
+               msgs[i], strlen(msgs[i]));
+    if (!sendBlob(env.outChan, m)) { check("send", 0); teardown(&env); return; }
+  }
+  ok = 0;
+  memset(seen, 0, sizeof (seen));
+  for (i = 0; i < 3; ++i) {
+    unsigned int j;
+
+    m = recvBlob(env.inChan, 3000000000L);
+    if (!m) continue;
+    for (j = 0; j < 3; ++j) {
+      if (!seen[j] && verifyBlob(m, 4, msgs[j], strlen(msgs[j]))) {
+        seen[j] = 1;
+        ++ok;
+        break;
+      }
+    }
+    free(m);
+  }
+  check("all 3 packed hdr-keyed messages correct", ok == 3);
+  teardown(&env);
+}
+
+static void
+testPackCounters(void)
+{
+  struct testEnv env;
+  struct chanBlbChnRsecCtx rsecCtx;
+  chanBlb_t *m;
+  unsigned int i;
+  unsigned int ok;
+  const char *msgs[3];
+
+  msgs[0] = "pack cnt one";
+  msgs[1] = "pack cnt two";
+  msgs[2] = "pack cnt 3!!";
+
+  printf("=== Test: packing fragment counter correctness ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 2;
+  rsecCtx.dgramMax = 508;
+  rsecCtx.tableSize = 64;
+
+  if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
+
+  /* 3 messages, each k=1 m=1 => 2 fragments each => 6 total fragments */
+  for (i = 0; i < 3; ++i) {
+    m = mkBlob(&env.sa, 2, (unsigned short)(i + 1), 1, 0,
+               msgs[i], strlen(msgs[i]));
+    if (!sendBlob(env.outChan, m)) { check("send", 0); teardown(&env); return; }
+  }
+  ok = 0;
+  for (i = 0; i < 3; ++i) {
+    m = recvBlob(env.inChan, 3000000000L);
+    if (m) { ++ok; free(m); }
+  }
+  check("all 3 received", ok == 3);
+  usleep(100000);
+
+  check("egrMsg == 3", rsecCtx.egrMsg == 3);
+  check("egrFrg == 6", rsecCtx.egrFrg == 6);
+  check("igrMsg == 3", rsecCtx.igrMsg == 3);
+  teardown(&env);
+}
+
+static void
+testPackSameMessage(void)
+{
+  struct testEnv env;
+  struct chanBlbChnRsecCtx rsecCtx;
+  chanBlb_t *m;
+  const char *msg = "same msg shards not packed together";
+
+  printf("=== Test: same-message shards NOT packed together ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 2;
+  rsecCtx.dgramMax = 508;
+  rsecCtx.tableSize = 64;
+
+  if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
+
+  /* k=1 m=3 => 4 shards, all same message. Should NOT pack together */
+  m = mkBlob(&env.sa, 2, 1, 3, 0, msg, strlen(msg));
+  check("send", sendBlob(env.outChan, m));
+  m = recvBlob(env.inChan, 3000000000L);
+  check("received", m != 0);
+  if (m) { check("payload correct", verifyBlob(m, 2, msg, strlen(msg))); free(m); }
+  usleep(100000);
+  check("egrMsg == 1", rsecCtx.egrMsg == 1);
+  /* 4 fragments from one message: none should be packed together */
+  check("egrFrg == 4", rsecCtx.egrFrg == 4);
   teardown(&env);
 }
 
@@ -1845,6 +2422,12 @@ main(
   testEncryptHmac();
   testEncryptDrop();
 
+  /* hdr callback tests */
+  testHmacHdr();
+  testHmacHdrMultiTag();
+  testEncryptHdr();
+  testEncryptHmacHdrDrop();
+
   /* coverage gap tests */
   testRsDecodeAliasing();
   testMClampIntermediate();
@@ -1853,6 +2436,14 @@ main(
   testTagSizeZero();
   testLargeK();
   testEncryptRsDecode();
+
+  /* packing tests */
+  testPackSmall();
+  testPackMixedSize();
+  testPackDrop();
+  testPackHdr();
+  testPackCounters();
+  testPackSameMessage();
 
   printf("\n=======================================\n");
   printf("Results: %d passed, %d failed\n", Pass, Fail);

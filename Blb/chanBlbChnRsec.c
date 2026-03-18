@@ -32,9 +32,9 @@ chanBlbChnRsecShard(
 ){
   unsigned int overhead;
 
-  overhead = ctx->tagSize + ctx->hmacSize + 6;
+  overhead = ctx->tagSize + ctx->hmacSize + 8;
   if (ctx->dgramMax <= overhead
-   || ctx->dgramMax - overhead > 16384) /* max 2-byte VLQ padding */
+   || ctx->dgramMax - overhead > 16384) /* max 2-byte VLQ */
     return (0);
   return (ctx->dgramMax - overhead);
 }
@@ -46,9 +46,9 @@ chanBlbChnRsecMax(
 ){
   unsigned int overhead;
 
-  overhead = ctx->tagSize + ctx->hmacSize + 6;
+  overhead = ctx->tagSize + ctx->hmacSize + 8;
   if (ctx->dgramMax <= overhead
-   || ctx->dgramMax - overhead > 16384) /* max 2-byte VLQ padding */
+   || ctx->dgramMax - overhead > 16384) /* max 2-byte VLQ */
     return (0);
   return ((256 - (unsigned int)m) * (ctx->dgramMax - overhead));
 }
@@ -108,8 +108,118 @@ shardInsert(
   base[lo] = *item;
 }
 
+/*
+ * Pack and send one datagram starting from the head of the shard schedule.
+ * Packs additional due shards from different messages to the same address.
+ * Returns 0 on output failure.
+ */
+static int
+egrSendPack(
+  struct chanBlbEgrCtx *v
+ ,struct chanBlbChnRsecCtx *ctx
+ ,struct egrEntry *table
+ ,unsigned int tableSize
+ ,unsigned char *packBuf
+ ,unsigned char *packSeen
+ ,unsigned int dgramMax
+ ,struct shardItem *shards
+ ,unsigned long *shardCount
+){
+  unsigned long si2;
+  unsigned int ei;
+  unsigned int si;
+  unsigned int wp;
+  unsigned int packPos;
+  unsigned int fragLen;
+  unsigned int ti;
+  struct timespec now;
 
-/* Wire fragment: [addrlen(1)][addr(addrlen)][tag(tagSize)][k-1(1)][m(1)][shard_index(1)][padding_vlq(1-2)][shard_data(shardSize)][hmac(hmacSize)][smallhash(1)] */
+  ei = shards[0].entry;
+  si = shards[0].shard;
+
+  /* start pack: copy addr prefix */
+  wp = 1 + table[ei].work[0];
+  memcpy(packBuf, table[ei].work, wp);
+  packPos = wp;
+  memset(packSeen, 0, tableSize);
+
+  /* add first fragment */
+  fragLen = table[ei].stride - wp;
+  memcpy(packBuf + packPos,
+    table[ei].work + (unsigned long)si * table[ei].stride + wp,
+    fragLen);
+  packPos += fragLen;
+  packSeen[ei] = 1;
+
+  /* pop head */
+  --(*shardCount);
+  if (*shardCount > 0)
+    memmove(shards, shards + 1, *shardCount * sizeof (struct shardItem));
+  ++ctx->egrFrg;
+  ++table[ei].sent;
+
+  /* scan remaining due shards for packing */
+  clock_gettime(CLOCK_MONOTONIC, &now);
+  si2 = 0;
+  while (si2 < *shardCount
+   && (shards[si2].ts.tv_sec < now.tv_sec
+    || (shards[si2].ts.tv_sec == now.tv_sec
+     && shards[si2].ts.tv_nsec <= now.tv_nsec))) {
+    unsigned int ei2;
+    unsigned int wp2;
+    unsigned int fragLen2;
+
+    ei2 = shards[si2].entry;
+    wp2 = 1 + table[ei2].work[0];
+    fragLen2 = table[ei2].stride - wp2;
+
+    /* same address, not same message, fits */
+    if (wp2 == wp
+     && memcmp(table[ei2].work, packBuf, wp) == 0
+     && !packSeen[ei2]
+     && packPos + fragLen2 + 1 <= wp + dgramMax) {
+      memcpy(packBuf + packPos,
+        table[ei2].work + (unsigned long)shards[si2].shard * table[ei2].stride + wp2,
+        fragLen2);
+      packPos += fragLen2;
+      packSeen[ei2] = 1;
+      ++ctx->egrFrg;
+      ++table[ei2].sent;
+      /* pop this item */
+      --(*shardCount);
+      if (si2 < *shardCount)
+        memmove(shards + si2, shards + si2 + 1,
+          (*shardCount - si2) * sizeof (struct shardItem));
+      /* don't increment si2: next item slid into this position */
+    } else {
+      ++si2;
+    }
+  }
+
+  /* append smallhash (per-datagram) */
+  packBuf[packPos] = smallHash(packBuf + wp, packPos - wp);
+  ++packPos;
+
+  if (!v->out(v->outCtx, packBuf, packPos))
+    return (0);
+
+  /* check all packed entries for completion */
+  for (ti = 0; ti < tableSize; ++ti) {
+    if (packSeen[ti] && table[ti].work
+     && table[ti].sent >= table[ti].km) {
+      ++ctx->egrMsg;
+      v->free(table[ti].work);
+      table[ti].work = 0;
+    }
+  }
+  return (1);
+}
+
+/*
+ * Wire datagram (packed): [frag1][frag2]...[fragN][smallhash(1)]
+ * Each fragment: [addrlen(1)][addr][tag(tagSize)][k-1(1)][m(1)][si(1)][pad_vlq(1-2)][shard_len_vlq(1-2)][shard_data(shard_len)][hmac(hmacSize)]
+ * Work buffer per shard slot (no smallhash): [addrlen][addr][tag][k-1][m][si][pad_vlq][shard_len_vlq][shard_data(msgShardSize)][hmac]
+ */
 void *
 chanBlbChnRsecEgr(
   struct chanBlbEgrCtx *v
@@ -117,13 +227,16 @@ chanBlbChnRsecEgr(
   struct chanBlbChnRsecCtx *ctx;
   struct egrEntry *table;
   struct shardItem *shards;
-  chanBlb_t *m;
+  unsigned char *packBuf;
+  unsigned char *packSeen;
+  chanBlb_t *pending;
   chanArr_t p[1];
   unsigned int tagSize;
   unsigned int hmacSize;
   unsigned int tableSize;
+  unsigned int dgramMax;
   unsigned int overhead;
-  unsigned int shardSize;
+  unsigned int maxShardSize;
   unsigned long shardCount;
   unsigned long shardAlloc;
   unsigned int ti;
@@ -132,12 +245,13 @@ chanBlbChnRsecEgr(
   tagSize = ctx->tagSize;
   hmacSize = ctx->hmacSize;
   tableSize = ctx->tableSize;
-  overhead = tagSize + hmacSize + 6;
-  if (ctx->dgramMax <= overhead || ctx->dgramMax - overhead > 16384 || !tableSize) {
+  dgramMax = ctx->dgramMax;
+  overhead = tagSize + hmacSize + 8;
+  if (dgramMax <= overhead || dgramMax - overhead > 16384 || !tableSize) {
     v->fin(v);
     return (0);
   }
-  shardSize = ctx->dgramMax - overhead;
+  maxShardSize = dgramMax - overhead;
 
   table = (struct egrEntry *)v->realloc(0,
     (unsigned long)tableSize * sizeof (struct egrEntry));
@@ -148,33 +262,56 @@ chanBlbChnRsecEgr(
   for (ti = 0; ti < tableSize; ++ti)
     table[ti].work = 0;
 
+  /* pack buffer: addr prefix (1+255 max) + wire payload (dgramMax) */
+  packBuf = (unsigned char *)v->realloc(0, 1 + 255 + dgramMax);
+  if (!packBuf) {
+    v->free(table);
+    v->fin(v);
+    return (0);
+  }
+  /* same-message avoidance: one byte per table entry */
+  packSeen = (unsigned char *)v->realloc(0, tableSize);
+  if (!packSeen) {
+    v->free(packBuf);
+    v->free(table);
+    v->fin(v);
+    return (0);
+  }
+
   shards = 0;
   shardCount = 0;
   shardAlloc = 0;
+  pending = 0;
 
   pthread_cleanup_push((void(*)(void*))v->fin, v);
   p[0].c = v->chan;
-  p[0].v = (void **)&m;
+  p[0].v = (void **)&pending;
   p[0].o = chanOpGet;
 
   for (;;) {
     long ns;
+    struct timespec now;
 
     /* compute timeout from head of shard schedule */
     if (!shardCount) {
       ns = 0; /* block forever */
     } else {
-      struct timespec now;
-
       clock_gettime(CLOCK_MONOTONIC, &now);
       if (shards[0].ts.tv_sec < now.tv_sec
        || (shards[0].ts.tv_sec == now.tv_sec
         && shards[0].ts.tv_nsec <= now.tv_nsec)) {
-        ns = -1; /* shards due now, poll for blob */
+        ns = -1; /* shards due now, poll */
       } else {
-        ns = (shards[0].ts.tv_sec - now.tv_sec) * 1000000000L
-           + (shards[0].ts.tv_nsec - now.tv_nsec);
-        if (ns <= 0) ns = 1;
+        time_t dsec;
+
+        dsec = shards[0].ts.tv_sec - now.tv_sec;
+        if (dsec > 1)
+          ns = 1000000000L; /* cap at 1s for ILP32 portability */
+        else {
+          ns = dsec * 1000000000L
+             + (shards[0].ts.tv_nsec - now.tv_nsec);
+          if (ns <= 0) ns = 1;
+        }
       }
     }
 
@@ -182,28 +319,29 @@ chanBlbChnRsecEgr(
       break;
 
     if (p[0].s == chanOsGet) {
-      unsigned int addrlen;
-      unsigned int prefixSize;
-      unsigned int payloadLen;
-      unsigned int k;
-      unsigned int km;
-      unsigned int padding;
-      unsigned int vlqLen;
-      unsigned int headerGap;
-      unsigned int stride;
-      unsigned int i;
-      unsigned int slot;
-      unsigned char mVal;
-      unsigned char delayMs;
-      unsigned char vlqBuf[2];
-      unsigned char *work;
-      const unsigned char **dataPtrs;
-      unsigned char **parityPtrs;
-      struct timespec now;
-      struct shardItem item;
-      struct shardItem *tmp;
+      /* pending now holds the blob; pause gets, monitor shutdown */
+      p[0].v = 0;
+      p[0].o = chanOpSht;
+    } else if (p[0].s != chanOsTmo) {
+      break; /* shutdown */
+    }
 
-      /* find empty slot */
+    /* send all due shards */
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    while (shardCount > 0
+     && (shards[0].ts.tv_sec < now.tv_sec
+      || (shards[0].ts.tv_sec == now.tv_sec
+       && shards[0].ts.tv_nsec <= now.tv_nsec))) {
+      if (!egrSendPack(v, ctx, table, tableSize, packBuf, packSeen,
+                       dgramMax, shards, &shardCount))
+        goto exit;
+      clock_gettime(CLOCK_MONOTONIC, &now);
+    }
+
+    /* process pending blob if slot available */
+    if (pending) {
+      unsigned int slot;
+
       slot = tableSize;
       for (ti = 0; ti < tableSize; ++ti) {
         if (!table[ti].work) {
@@ -212,249 +350,215 @@ chanBlbChnRsecEgr(
         }
       }
 
-      /* table full: pace out shards until a message completes */
-      while (slot == tableSize) {
-        unsigned int ei;
-        unsigned int si;
-        struct timespec now;
+      if (slot < tableSize) {
+        unsigned int addrlen;
+        unsigned int prefixSize;
+        unsigned int payloadLen;
+        unsigned int k;
+        unsigned int km;
+        unsigned int msgShardSize;
+        unsigned int padding;
+        unsigned int padVlqLen;
+        unsigned int shardVlqLen;
+        unsigned int headerGap;
+        unsigned int stride;
+        unsigned int i;
+        unsigned char mVal;
+        unsigned char delayMs;
+        unsigned char padVlq[2];
+        unsigned char shardVlq[2];
+        unsigned char *work;
+        const unsigned char **dataPtrs;
+        unsigned char **parityPtrs;
+        struct shardItem item;
+        struct shardItem *tmp;
 
-        /* wait for next scheduled shard */
-        clock_gettime(CLOCK_MONOTONIC, &now);
-        if (shards[0].ts.tv_sec > now.tv_sec
-         || (shards[0].ts.tv_sec == now.tv_sec
-          && shards[0].ts.tv_nsec > now.tv_nsec)) {
-          struct timespec rem;
-
-          rem.tv_sec = shards[0].ts.tv_sec - now.tv_sec;
-          rem.tv_nsec = shards[0].ts.tv_nsec - now.tv_nsec;
-          if (rem.tv_nsec < 0) {
-            rem.tv_sec--;
-            rem.tv_nsec += 1000000000L;
-          }
-          nanosleep(&rem, 0);
-        }
-
-        ei = shards[0].entry;
-        si = shards[0].shard;
-
-        /* pop head */
-        --shardCount;
-        if (shardCount > 0)
-          memmove(shards, shards + 1,
-            shardCount * sizeof (struct shardItem));
-
-        if (!v->out(v->outCtx,
-          table[ei].work + (unsigned long)si * table[ei].stride,
-          table[ei].stride))
-          goto exit;
-        ++ctx->egrFrg;
-        ++table[ei].sent;
-
-        if (table[ei].sent >= table[ei].km) {
-          ++ctx->egrMsg;
-          v->free(table[ei].work);
-          table[ei].work = 0;
-          slot = ei;
-        }
-      }
-
-      /* parse blob prefix: [addrlen(1)][addr(addrlen)][tag(tagSize)][m(1)][delay_ms(1)][payload] */
-      addrlen = m->b[0];
-      prefixSize = 1 + addrlen + tagSize;
-      if (m->l < prefixSize + 2) {
-        v->free(m);
-        break;
-      }
-      mVal = m->b[prefixSize];
-      delayMs = m->b[prefixSize + 1];
-      payloadLen = m->l - (prefixSize + 2);
-
-      /* compute k */
-      k = payloadLen > 0 ? (payloadLen + shardSize - 1) / shardSize : 1;
-      km = k + (unsigned int)mVal;
-      if (km > 256) {
-        mVal = (unsigned char)(256 - k);
-        km = 256;
-      }
-
-      /* padding and VLQ encode */
-      padding = k * shardSize - payloadLen;
-      if (padding < 128) {
-        vlqBuf[0] = (unsigned char)padding;
-        vlqLen = 1;
-      } else {
-        vlqBuf[0] = (unsigned char)(0x80 | ((padding - 1) >> 7));
-        vlqBuf[1] = (unsigned char)((padding - 1) & 0x7f);
-        vlqLen = 2;
-      }
-
-      /* gap layout: [addrlen][addr][tag][k-1][m][shard_index][padding_vlq][shard_data][hmac][smallhash] */
-      headerGap = prefixSize + 3 + vlqLen;
-      stride = headerGap + shardSize + hmacSize + 1;
-
-      /* allocate: slots + data pointer array + parity pointer array */
-      work = (unsigned char *)v->realloc(0,
-        (unsigned long)km * stride
-        + (unsigned long)k * sizeof (const unsigned char *)
-        + (unsigned long)(unsigned int)mVal * sizeof (unsigned char *));
-      if (!work) {
-        v->free(m);
-        break;
-      }
-      dataPtrs = (const unsigned char **)(work + (unsigned long)km * stride);
-      parityPtrs = (unsigned char **)((unsigned char *)dataPtrs
-        + (unsigned long)k * sizeof (const unsigned char *));
-
-      /* build header template in first slot */
-      memcpy(work, m->b, prefixSize); /* [addrlen][addr][tag] common prefix */
-      work[prefixSize] = (unsigned char)(k - 1);       /* k-1 on wire */
-      work[prefixSize + 1] = mVal;                     /* m */
-      work[prefixSize + 2] = 0;                        /* shard_index placeholder */
-      memcpy(work + prefixSize + 3, vlqBuf, vlqLen);   /* padding VLQ */
-
-      /* replicate header into all slots, set shard_index, copy payload */
-      for (i = 0; i < km; ++i) {
-        unsigned char *s;
-
-        s = work + (unsigned long)i * stride;
-        if (i > 0)
-          memcpy(s, work, headerGap);
-        s[prefixSize + 2] = (unsigned char)i;
-
-        if (i < k) {
-          unsigned int off;
-          unsigned int len;
-
-          off = i * shardSize;
-          len = payloadLen - off;
-          if (len > shardSize)
-            len = shardSize;
-          if (len > 0)
-            memcpy(s + headerGap, m->b + prefixSize + 2 + off, len);
-          if (len < shardSize)
-            memset(s + headerGap + len, 0, shardSize - len);
-          dataPtrs[i] = s + headerGap;
-        } else {
-          parityPtrs[i - k] = s + headerGap;
-        }
-      }
-
-      /* encode parity */
-      if (mVal > 0)
-        rsecEncode(dataPtrs, parityPtrs, shardSize, k, (unsigned int)mVal);
-
-      /* encrypt each shard (before HMAC: encrypt-then-MAC) */
-      /* last data shard (k-1) excludes padding to avoid encrypting known zeros */
-      if (ctx->encrypt) {
-        for (i = 0; i < km; ++i)
-          ctx->encrypt(ctx->cryptCtx, work + (unsigned long)i * stride,
-            work + (unsigned long)i * stride + headerGap,
-            i == k - 1 && padding > 0 ? shardSize - padding : shardSize);
-      }
-
-      /* sign and hash each slot */
-      for (i = 0; i < km; ++i) {
-        unsigned char *s;
-        unsigned int wp;
-
-        s = work + (unsigned long)i * stride;
-        wp = 1 + addrlen;
-        /* HMAC covers wire payload: tag through shard_data */
-        if (hmacSize > 0)
-          ctx->hmacSign(ctx->hmacCtx, s,
-            s + headerGap + shardSize,
-            s + wp, headerGap + shardSize - wp);
-        /* small hash covers wire payload: tag through hmac */
-        s[stride - 1] = smallHash(s + wp, stride - wp - 1);
-      }
-
-      v->free(m);
-
-      /* store in table */
-      table[slot].work = work;
-      table[slot].stride = stride;
-      table[slot].km = km;
-      table[slot].sent = 0;
-
-      /* grow shard schedule if needed */
-      if (shardCount + km > shardAlloc) {
-        shardAlloc = shardCount + km;
-        tmp = (struct shardItem *)v->realloc(shards,
-          shardAlloc * sizeof (struct shardItem));
-        if (!tmp) {
-          v->free(table[slot].work);
-          table[slot].work = 0;
+        /* parse blob prefix: [addrlen(1)][addr(addrlen)][tag(tagSize)][m(1)][delay_ms(1)][payload] */
+        addrlen = pending->b[0];
+        prefixSize = 1 + addrlen + tagSize;
+        if (pending->l < prefixSize + 2) {
+          v->free(pending);
+          pending = 0;
           break;
         }
-        shards = tmp;
-      }
+        mVal = pending->b[prefixSize];
+        delayMs = pending->b[prefixSize + 1];
+        payloadLen = pending->l - (prefixSize + 2);
 
-      /* insert km shard items into schedule */
-      clock_gettime(CLOCK_MONOTONIC, &now);
-      item.entry = slot;
-      item.ts = now;
-      for (i = 0; i < km; ++i) {
-        item.shard = i;
-        shardInsert(shards, shardCount, &item);
-        ++shardCount;
-        item.ts.tv_nsec += (long)delayMs * 1000000L;
-        if (item.ts.tv_nsec >= 1000000000L) {
-          item.ts.tv_sec++;
-          item.ts.tv_nsec -= 1000000000L;
+        /* compute k using maxShardSize */
+        k = payloadLen > 0 ? (payloadLen + maxShardSize - 1) / maxShardSize : 1;
+        km = k + (unsigned int)mVal;
+        if (km > 256) {
+          mVal = (unsigned char)(256 - k);
+          km = 256;
         }
-      }
-    } else if (p[0].s != chanOsTmo) {
-      break; /* shutdown */
-    }
 
-    /* send all due shards */
-    {
-      struct timespec now;
+        /* per-message shard size: tighter than maxShardSize */
+        msgShardSize = payloadLen > 0 ? (payloadLen + k - 1) / k : 0;
 
-      clock_gettime(CLOCK_MONOTONIC, &now);
-      while (shardCount > 0
-       && (shards[0].ts.tv_sec < now.tv_sec
-        || (shards[0].ts.tv_sec == now.tv_sec
-         && shards[0].ts.tv_nsec <= now.tv_nsec))) {
-        unsigned int ei;
-        unsigned int si;
-
-        ei = shards[0].entry;
-        si = shards[0].shard;
-
-        /* pop head */
-        --shardCount;
-        if (shardCount > 0)
-          memmove(shards, shards + 1, shardCount * sizeof (struct shardItem));
-
-        if (!v->out(v->outCtx,
-          table[ei].work + (unsigned long)si * table[ei].stride,
-          table[ei].stride))
-          goto exit;
-        ++ctx->egrFrg;
-        ++table[ei].sent;
-
-        if (table[ei].sent >= table[ei].km) {
-          ++ctx->egrMsg;
-          v->free(table[ei].work);
-          table[ei].work = 0;
+        /* padding */
+        padding = k * msgShardSize - payloadLen;
+        if (padding < 128) {
+          padVlq[0] = (unsigned char)padding;
+          padVlqLen = 1;
+        } else {
+          padVlq[0] = (unsigned char)(0x80 | ((padding - 1) >> 7));
+          padVlq[1] = (unsigned char)((padding - 1) & 0x7f);
+          padVlqLen = 2;
         }
+
+        /* shard_len VLQ encode */
+        if (msgShardSize < 128) {
+          shardVlq[0] = (unsigned char)msgShardSize;
+          shardVlqLen = 1;
+        } else {
+          shardVlq[0] = (unsigned char)(0x80 | ((msgShardSize - 1) >> 7));
+          shardVlq[1] = (unsigned char)((msgShardSize - 1) & 0x7f);
+          shardVlqLen = 2;
+        }
+
+        /* work slot layout: [addrlen][addr][tag][k-1][m][si][pad_vlq][shard_len_vlq][shard_data(msgShardSize)][hmac] */
+        headerGap = prefixSize + 3 + padVlqLen + shardVlqLen;
+        stride = headerGap + msgShardSize + hmacSize;
+
+        /* allocate: slots + data pointer array + parity pointer array */
+        work = (unsigned char *)v->realloc(0,
+          (unsigned long)km * stride
+          + (unsigned long)k * sizeof (const unsigned char *)
+          + (unsigned long)(unsigned int)mVal * sizeof (unsigned char *));
+        if (!work) {
+          v->free(pending);
+          pending = 0;
+          break;
+        }
+        dataPtrs = (const unsigned char **)(work + (unsigned long)km * stride);
+        parityPtrs = (unsigned char **)((unsigned char *)dataPtrs
+          + (unsigned long)k * sizeof (const unsigned char *));
+
+        /* build header template in first slot */
+        memcpy(work, pending->b, prefixSize); /* [addrlen][addr][tag] common prefix */
+        work[prefixSize] = (unsigned char)(k - 1);       /* k-1 on wire */
+        work[prefixSize + 1] = mVal;                     /* m */
+        work[prefixSize + 2] = 0;                        /* shard_index placeholder */
+        memcpy(work + prefixSize + 3, padVlq, padVlqLen);
+        memcpy(work + prefixSize + 3 + padVlqLen, shardVlq, shardVlqLen);
+
+        /* replicate header into all slots, set shard_index, copy payload */
+        for (i = 0; i < km; ++i) {
+          unsigned char *s;
+
+          s = work + (unsigned long)i * stride;
+          if (i > 0)
+            memcpy(s, work, headerGap);
+          s[prefixSize + 2] = (unsigned char)i;
+
+          if (i < k) {
+            unsigned int off;
+            unsigned int len;
+
+            off = i * msgShardSize;
+            len = payloadLen - off;
+            if (len > msgShardSize)
+              len = msgShardSize;
+            if (len > 0)
+              memcpy(s + headerGap, pending->b + prefixSize + 2 + off, len);
+            if (len < msgShardSize)
+              memset(s + headerGap + len, 0, msgShardSize - len);
+            dataPtrs[i] = s + headerGap;
+          } else {
+            parityPtrs[i - k] = s + headerGap;
+          }
+        }
+
+        /* encode parity */
+        if (mVal > 0 && msgShardSize > 0)
+          rsecEncode(dataPtrs, parityPtrs, msgShardSize, k, (unsigned int)mVal);
+
+        /* encrypt each shard (before HMAC: encrypt-then-MAC) */
+        /* last data shard (k-1) excludes padding to avoid encrypting known zeros */
+        if (ctx->encrypt) {
+          for (i = 0; i < km; ++i)
+            ctx->encrypt(ctx->cryptCtx, work + (unsigned long)i * stride,
+              work + (unsigned long)i * stride + headerGap,
+              i == k - 1 && padding > 0 ? msgShardSize - padding : msgShardSize);
+        }
+
+        /* sign each slot */
+        for (i = 0; i < km; ++i) {
+          unsigned char *s;
+          unsigned int wp;
+
+          s = work + (unsigned long)i * stride;
+          wp = 1 + addrlen;
+          /* HMAC covers wire payload: tag through shard_data */
+          if (hmacSize > 0)
+            ctx->hmacSign(ctx->hmacCtx, s,
+              s + headerGap + msgShardSize,
+              s + wp, headerGap + msgShardSize - wp);
+        }
+
+        v->free(pending);
+        pending = 0;
+
+        /* store in table */
+        table[slot].work = work;
+        table[slot].stride = stride;
+        table[slot].km = km;
+        table[slot].sent = 0;
+
+        /* grow shard schedule if needed */
+        if (shardCount + km > shardAlloc) {
+          shardAlloc = shardCount + km;
+          tmp = (struct shardItem *)v->realloc(shards,
+            shardAlloc * sizeof (struct shardItem));
+          if (!tmp) {
+            v->free(table[slot].work);
+            table[slot].work = 0;
+            break;
+          }
+          shards = tmp;
+        }
+
+        /* insert km shard items into schedule */
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        item.entry = slot;
+        item.ts = now;
+        for (i = 0; i < km; ++i) {
+          item.shard = i;
+          shardInsert(shards, shardCount, &item);
+          ++shardCount;
+          item.ts.tv_nsec += (long)delayMs * 1000000L;
+          if (item.ts.tv_nsec >= 1000000000L) {
+            item.ts.tv_sec++;
+            item.ts.tv_nsec -= 1000000000L;
+          }
+        }
+
+        /* resume gets */
+        p[0].v = (void **)&pending;
+        p[0].o = chanOpGet;
       }
     }
   }
 
 exit:
+  v->free(pending);
   for (ti = 0; ti < tableSize; ++ti) {
     if (table[ti].work)
       v->free(table[ti].work);
   }
   v->free(shards);
+  v->free(packSeen);
+  v->free(packBuf);
   v->free(table);
   pthread_cleanup_pop(1); /* v->fin(v) */
   return (0);
 }
 
 struct igrEntry {
+  chanBlb_t *blob;
+  unsigned char *parity;   /* m * shardSize bytes */
+  unsigned char *tag;      /* tagSize bytes, points into allocation tail */
   unsigned int k;
   unsigned int m;
   unsigned int shardSize;
@@ -462,13 +566,13 @@ struct igrEntry {
   unsigned int received;
   unsigned int age;
   unsigned int prefixSize; /* 1 + addrlen + tagSize + 1 (includes m byte) */
-  chanBlb_t *blob;
-  unsigned char *parity;   /* m * shardSize bytes */
-  unsigned char *tag;      /* tagSize bytes, points into allocation tail */
   unsigned char present[256];
 };
 
-/* Wire fragment: [addrlen(1)][addr(addrlen)][tag(tagSize)][k-1(1)][m(1)][shard_index(1)][padding_vlq(1-2)][shard_data(shardSize)][hmac(hmacSize)][smallhash(1)] */
+/*
+ * Wire datagram (packed): [addrlen(1)][addr][frag1][frag2]...[fragN][smallhash(1)]
+ * Each fragment: [tag(tagSize)][k-1(1)][m(1)][si(1)][pad_vlq(1-2)][shard_len_vlq(1-2)][shard_data(shard_len)][hmac(hmacSize)]
+ */
 void *
 chanBlbChnRsecIgr(
   struct chanBlbIgrCtx *v
@@ -476,11 +580,13 @@ chanBlbChnRsecIgr(
   struct chanBlbChnRsecCtx *ctx;
   struct igrEntry **table;
   unsigned char *buf;
+  unsigned char *hdr;
   chanArr_t p[1];
   unsigned int tagSize;
   unsigned int tableSize;
   unsigned int hmacSize;
   unsigned int bufSize;
+  unsigned int tableUsed;
   unsigned int age;
   unsigned int ti;
 
@@ -489,19 +595,27 @@ chanBlbChnRsecIgr(
   tableSize = ctx->tableSize;
   hmacSize = ctx->hmacSize;
 
-  /* allocate collection table */
+  /* allocate collection table (sorted by tag, compact) */
   table = (struct igrEntry **)v->realloc(0,
     (unsigned long)tableSize * sizeof (struct igrEntry *));
   if (!table) {
     v->fin(v);
     return (0);
   }
-  memset(table, 0, (unsigned long)tableSize * sizeof (struct igrEntry *));
 
-  /* allocate receive buffer: max datagram size */
-  bufSize = 1 + 128 + ctx->dgramMax;
+  /* allocate receive buffer: full address range (addrlen up to 255) */
+  bufSize = 1 + 255 + ctx->dgramMax;
   buf = (unsigned char *)v->realloc(0, bufSize);
   if (!buf) {
+    v->free(table);
+    v->fin(v);
+    return (0);
+  }
+
+  /* allocate hdr reconstruction buffer for HMAC/crypto callbacks */
+  hdr = (unsigned char *)v->realloc(0, (unsigned long)(1 + 255) + tagSize);
+  if (!hdr) {
+    v->free(buf);
     v->free(table);
     v->fin(v);
     return (0);
@@ -511,339 +625,424 @@ chanBlbChnRsecIgr(
   p[0].c = v->chan;
   p[0].v = 0;
   p[0].o = chanOpPut;
+  tableUsed = 0;
   age = 0;
 
   for (;;) {
     unsigned int n;
     unsigned int addrlen;
     unsigned int wp;
-    unsigned int prefixSize;
-    unsigned int k;
-    unsigned int mVal;
-    unsigned int shardIdx;
-    unsigned int padding;
-    unsigned int vlqLen;
-    unsigned int headerLen;
-    unsigned int fragDataLen;
-    struct igrEntry *ent;
-    int slot;
-    int decoded;
+    unsigned int pos;
 
     /* read one datagram */
     n = v->blb ? chanBlbIgrBlb(v->free, &v->blb, buf, bufSize)
                : v->inp(v->inpCtx, buf, bufSize);
     if (!n)
       break;
-    ++ctx->igrFrg;
     addrlen = buf[0];
-    /* need at least: addrlen + tagSize + k + m + shard_index + vlq + hmacSize + smallhash */
-    if (n < 1 + addrlen + tagSize + 1 + 1 + 1 + 1 + hmacSize + 1)
+    wp = 1 + addrlen;
+
+    /* need at least addr prefix + one minimal fragment + smallhash */
+    if (n < wp + tagSize + 3 + 1 + 1 + hmacSize + 1)
       continue;
 
-    /* validate small hash: covers wire payload (after addr prefix) except last byte */
-    wp = 1 + addrlen;
+    /* validate datagram-level smallhash at end */
     if (smallHash(buf + wp, n - wp - 1) != buf[n - 1]) {
       ++ctx->igrHash;
       continue;
     }
-    n -= 1; /* strip small hash */
+    n -= 1; /* strip smallhash */
 
-    /* validate HMAC if enabled */
-    if (hmacSize > 0) {
-      if (!ctx->hmacVrfy(ctx->hmacCtx, buf,
-                         buf + n - hmacSize,
-                         buf + wp, n - wp - hmacSize)) {
-        ++ctx->igrHmac;
-        continue;
+    /* parse fragments within the datagram */
+    pos = wp;
+    while (pos + tagSize + 3 + 1 + 1 + hmacSize <= n) {
+      unsigned int k;
+      unsigned int mVal;
+      unsigned int shardIdx;
+      unsigned int padding;
+      unsigned int padVlqLen;
+      unsigned int fragShardSize;
+      unsigned int shardVlqLen;
+      unsigned int headerLen;
+      unsigned int fragEnd;
+      struct igrEntry *ent;
+      int slot;
+      int decoded;
+      int found;
+
+      ++ctx->igrFrg;
+
+      /* parse fragment header */
+      k = (unsigned int)buf[pos + tagSize] + 1;
+      mVal = buf[pos + tagSize + 1];
+      shardIdx = buf[pos + tagSize + 2];
+
+      if (k + mVal > 256 || shardIdx >= k + mVal) {
+        break; /* malformed: stop parsing this datagram */
       }
-      n -= hmacSize; /* strip HMAC */
-    }
 
-    /* parse fragment header */
-    prefixSize = 1 + addrlen + tagSize;
-    k = (unsigned int)buf[prefixSize] + 1;
-    mVal = buf[prefixSize + 1];
-    shardIdx = buf[prefixSize + 2];
+      /* decode padding VLQ */
+      if (buf[pos + tagSize + 3] & 0x80) {
+        if (pos + tagSize + 5 > n)
+          break;
+        padding = (unsigned int)(buf[pos + tagSize + 3] & 0x7f);
+        padding = ((padding << 7) | (unsigned int)buf[pos + tagSize + 4]) + 1;
+        padVlqLen = 2;
+      } else {
+        padding = buf[pos + tagSize + 3];
+        padVlqLen = 1;
+      }
 
-    if (k + mVal > 256 || shardIdx >= k + mVal)
-      continue;
+      /* decode shard_len VLQ */
+      {
+        unsigned int vlqOff;
 
-    /* decode padding VLQ */
-    if (buf[prefixSize + 3] & 0x80) {
-      if (n < prefixSize + 5)
-        continue;
-      padding = (unsigned int)(buf[prefixSize + 3] & 0x7f);
-      padding = ((padding << 7) | (unsigned int)buf[prefixSize + 4]) + 1;
-      vlqLen = 2;
-    } else {
-      padding = buf[prefixSize + 3];
-      vlqLen = 1;
-    }
-
-    headerLen = prefixSize + 3 + vlqLen;
-    if (n <= headerLen)
-      continue;
-    fragDataLen = n - headerLen;
-
-    /* validate padding against total data capacity */
-    if (padding > k * fragDataLen)
-      continue;
-
-    /* decrypt shard data (after HMAC verify: MAC-then-decrypt) */
-    /* last data shard (k-1) excludes padding to match egress */
-    if (ctx->decrypt)
-      ctx->decrypt(ctx->cryptCtx, buf, buf + headerLen,
-        shardIdx == k - 1 && padding > 0 ? fragDataLen - padding : fragDataLen);
-
-    ++age;
-
-    /* lookup tag in table */
-    slot = -1;
-    for (ti = 0; ti < tableSize; ++ti) {
-      if (table[ti]
-       && memcmp(table[ti]->tag, buf + 1 + addrlen, tagSize) == 0) {
-        if (table[ti]->k != k || table[ti]->m != mVal
-         || table[ti]->shardSize != fragDataLen) {
-          /* mismatch: evict */
-          if (table[ti]->blob) {
-            ++ctx->igrLost;
-            v->free(table[ti]->blob);
-          }
-          v->free(table[ti]);
-          table[ti] = 0;
+        vlqOff = pos + tagSize + 3 + padVlqLen;
+        if (vlqOff >= n)
+          break;
+        if (buf[vlqOff] & 0x80) {
+          if (vlqOff + 2 > n)
+            break;
+          fragShardSize = (unsigned int)(buf[vlqOff] & 0x7f);
+          fragShardSize = ((fragShardSize << 7) | (unsigned int)buf[vlqOff + 1]) + 1;
+          shardVlqLen = 2;
         } else {
-          slot = (int)ti;
+          fragShardSize = buf[vlqOff];
+          shardVlqLen = 1;
         }
-        break;
       }
-    }
 
-    /* if not found, find empty slot or evict LRU */
-    if (slot < 0) {
-      int emptySlot;
-      unsigned int minAge;
-      int lruSlot;
+      headerLen = tagSize + 3 + padVlqLen + shardVlqLen;
+      fragEnd = pos + headerLen + fragShardSize + hmacSize;
+      if (fragEnd > n)
+        break; /* fragment extends past datagram */
 
-      emptySlot = -1;
-      minAge = age;
-      lruSlot = -1;
-      for (ti = 0; ti < tableSize; ++ti) {
-        if (!table[ti]) {
-          emptySlot = (int)ti;
+      /* validate padding against total data capacity */
+      if (padding > k * fragShardSize) {
+        pos = fragEnd;
+        continue;
+      }
+
+      /* reconstruct hdr: [addrlen][addr][tag] */
+      memcpy(hdr, buf, wp); /* addr prefix from datagram */
+      memcpy(hdr + wp, buf + pos, tagSize); /* tag from this fragment */
+
+      /* validate HMAC if enabled */
+      if (hmacSize > 0) {
+        if (!ctx->hmacVrfy(ctx->hmacCtx, hdr,
+                           buf + pos + headerLen + fragShardSize,
+                           buf + pos, headerLen + fragShardSize)) {
+          ++ctx->igrHmac;
+          pos = fragEnd;
+          continue;
+        }
+      }
+
+      /* decrypt shard data (after HMAC verify: MAC-then-decrypt) */
+      /* last data shard (k-1) excludes padding to match egress */
+      if (ctx->decrypt)
+        ctx->decrypt(ctx->cryptCtx, hdr, buf + pos + headerLen,
+          shardIdx == k - 1 && padding > 0 ? fragShardSize - padding : fragShardSize);
+
+      ++age;
+      /* halve all ages to prevent wraparound on 32-bit */
+      if (age >= (unsigned int)-1 / 2) {
+        for (ti = 0; ti < tableUsed; ++ti)
+          table[ti]->age >>= 1;
+        age >>= 1;
+      }
+
+      /* binary search for tag in sorted table */
+      {
+        unsigned int lo;
+        unsigned int hi;
+        unsigned int mid;
+        int c;
+
+        lo = 0;
+        hi = tableUsed;
+        found = 0;
+        while (lo < hi) {
+          mid = lo + (hi - lo) / 2;
+          c = memcmp(buf + pos, table[mid]->tag, tagSize);
+          if (c < 0)
+            hi = mid;
+          else if (c > 0)
+            lo = mid + 1;
+          else {
+            found = 1;
+            lo = mid;
+            break;
+          }
+        }
+        slot = (int)lo;
+      }
+
+      /* handle found entry with parameter mismatch */
+      if (found) {
+        if (table[slot]->k != k || table[slot]->m != mVal
+         || table[slot]->shardSize != fragShardSize) {
+          /* mismatch: evict */
+          if (table[slot]->blob) {
+            ++ctx->igrLost;
+            v->free(table[slot]->blob);
+          }
+          v->free(table[slot]);
+          --tableUsed;
+          if ((unsigned int)slot < tableUsed)
+            memmove(table + slot, table + slot + 1,
+              (unsigned long)(tableUsed - (unsigned int)slot) * sizeof (*table));
+          found = 0;
+          /* slot still holds the correct insert position */
+        }
+      }
+
+      /* if not found, create entry and insert at sorted position */
+      if (!found) {
+        unsigned int insertPos;
+
+        insertPos = (unsigned int)slot;
+
+        /* evict LRU if table full */
+        if (tableUsed >= tableSize) {
+          unsigned int lruIdx;
+          unsigned int minAge;
+
+          lruIdx = 0;
+          minAge = table[0]->age;
+          for (ti = 1; ti < tableUsed; ++ti) {
+            if (table[ti]->age < minAge) {
+              minAge = table[ti]->age;
+              lruIdx = ti;
+            }
+          }
+          if (table[lruIdx]->blob) {
+            ++ctx->igrLost;
+            v->free(table[lruIdx]->blob);
+          }
+          v->free(table[lruIdx]);
+          --tableUsed;
+          if (lruIdx < tableUsed)
+            memmove(table + lruIdx, table + lruIdx + 1,
+              (unsigned long)(tableUsed - lruIdx) * sizeof (*table));
+          if (lruIdx < insertPos)
+            --insertPos;
+        }
+
+        /* create new entry: struct + parity storage + tag copy */
+        ent = (struct igrEntry *)v->realloc(0,
+          sizeof (struct igrEntry)
+          + (unsigned long)mVal * fragShardSize + tagSize);
+        if (!ent)
+          break;
+        ent->blob = 0;
+        ent->parity = (unsigned char *)ent + sizeof (struct igrEntry);
+        ent->tag = ent->parity + (unsigned long)mVal * fragShardSize;
+        ent->k = k;
+        ent->m = mVal;
+        ent->shardSize = fragShardSize;
+        ent->padding = padding;
+        ent->received = 0;
+        ent->age = age;
+        ent->prefixSize = 1 + addrlen + tagSize + 1;
+        memcpy(ent->tag, buf + pos, tagSize);
+        memset(ent->present, 0, sizeof (ent->present));
+
+        /* allocate output blob */
+        ent->blob = (chanBlb_t *)v->realloc(0,
+          chanBlb_tSize(ent->prefixSize + k * fragShardSize));
+        if (!ent->blob) {
+          v->free(ent);
           break;
         }
-        if (table[ti]->age < minAge) {
-          minAge = table[ti]->age;
-          lruSlot = (int)ti;
-        }
+        /* write blob prefix: [addrlen][addr][tag][m] */
+        memcpy(ent->blob->b, buf, 1 + addrlen);
+        memcpy(ent->blob->b + 1 + addrlen, buf + pos, tagSize);
+        ent->blob->b[1 + addrlen + tagSize] = 0;
+
+        /* insert at sorted position */
+        if (insertPos < tableUsed)
+          memmove(table + insertPos + 1, table + insertPos,
+            (unsigned long)(tableUsed - insertPos) * sizeof (*table));
+        table[insertPos] = ent;
+        ++tableUsed;
+        slot = (int)insertPos;
       }
-      if (emptySlot >= 0) {
-        slot = emptySlot;
-      } else if (lruSlot >= 0) {
-        if (table[lruSlot]->blob) {
-          ++ctx->igrLost;
-          v->free(table[lruSlot]->blob);
-        }
-        v->free(table[lruSlot]);
-        table[lruSlot] = 0;
-        slot = lruSlot;
-      } else {
+
+      ent = table[slot];
+
+      /* already delivered: ignore late fragments */
+      if (!ent->blob) {
+        ++ctx->igrLate;
+        pos = fragEnd;
         continue;
       }
 
-      /* create new entry: struct + parity storage + tag copy */
-      ent = (struct igrEntry *)v->realloc(0,
-        sizeof (struct igrEntry)
-        + (unsigned long)mVal * fragDataLen + tagSize);
-      if (!ent)
-        break;
-      ent->k = k;
-      ent->m = mVal;
-      ent->shardSize = fragDataLen;
-      ent->padding = padding;
-      ent->received = 0;
-      ent->age = age;
-      ent->prefixSize = 1 + addrlen + tagSize + 1;
-      ent->parity = (unsigned char *)ent + sizeof (struct igrEntry);
-      ent->tag = ent->parity + (unsigned long)mVal * fragDataLen;
-      memcpy(ent->tag, buf + 1 + addrlen, tagSize);
-      memset(ent->present, 0, sizeof (ent->present));
-
-      /* allocate output blob */
-      ent->blob = (chanBlb_t *)v->realloc(0,
-        chanBlb_tSize(ent->prefixSize + k * fragDataLen));
-      if (!ent->blob) {
-        v->free(ent);
-        break;
-      }
-      /* write blob prefix: [addrlen][addr][tag][m] */
-      memcpy(ent->blob->b, buf, 1 + addrlen);
-      memcpy(ent->blob->b + 1 + addrlen, buf + 1 + addrlen, tagSize);
-      ent->blob->b[1 + addrlen + tagSize] = 0;
-
-      table[slot] = ent;
-    }
-
-    ent = table[slot];
-
-    /* already delivered: ignore late fragments */
-    if (!ent->blob) {
-      ++ctx->igrLate;
-      continue;
-    }
-
-    /* ignore duplicate shard */
-    if (ent->present[shardIdx]) {
-      ++ctx->igrDup;
-      continue;
-    }
-
-    /* store shard */
-    if (shardIdx < k) {
-      memcpy(ent->blob->b + ent->prefixSize
-        + (unsigned long)shardIdx * ent->shardSize,
-        buf + headerLen, fragDataLen);
-    } else {
-      memcpy(ent->parity
-        + (unsigned long)(shardIdx - k) * ent->shardSize,
-        buf + headerLen, fragDataLen);
-    }
-    ent->present[shardIdx] = 1;
-    ent->received++;
-    ent->age = age;
-
-    /* not enough shards yet */
-    if (ent->received < k)
-      continue;
-
-    decoded = 0;
-
-    /* reassemble: check if all data shards present */
-    {
-      unsigned int dataPresent;
-
-      dataPresent = 0;
-      for (ti = 0; ti < k; ++ti) {
-        if (ent->present[ti])
-          ++dataPresent;
+      /* ignore duplicate shard */
+      if (ent->present[shardIdx]) {
+        ++ctx->igrDup;
+        pos = fragEnd;
+        continue;
       }
 
-      if (dataPresent == k) {
-        /* all data shards present, payload already in place */
-        ent->blob->l = ent->prefixSize + k * ent->shardSize - ent->padding;
+      /* store shard */
+      if (shardIdx < k) {
+        memcpy(ent->blob->b + ent->prefixSize
+          + (unsigned long)shardIdx * ent->shardSize,
+          buf + pos + headerLen, fragShardSize);
       } else {
-        /* need RSEC decode */
-        unsigned long wsSize;
-        unsigned char *workspace;
-        const unsigned char **recvPtrs;
-        unsigned char **outPtrs;
-        unsigned char *indices;
-        unsigned char *workArea;
-        unsigned char *shardCopies;
-        unsigned int ri;
-        unsigned int ci;
-
-        wsSize = (unsigned long)k * sizeof (const unsigned char *)
-               + (unsigned long)k * sizeof (unsigned char *)
-               + k + RS_WORK_SIZE(k)
-               + (unsigned long)dataPresent * ent->shardSize;
-        workspace = (unsigned char *)v->realloc(0, wsSize);
-        if (!workspace) {
-          v->free(ent->blob);
-          v->free(ent);
-          table[slot] = 0;
-          continue;
-        }
-        recvPtrs = (const unsigned char **)workspace;
-        outPtrs = (unsigned char **)((unsigned char *)recvPtrs
-          + (unsigned long)k * sizeof (const unsigned char *));
-        indices = (unsigned char *)outPtrs
-          + (unsigned long)k * sizeof (unsigned char *);
-        workArea = indices + k;
-        shardCopies = workArea + RS_WORK_SIZE(k);
-
-        /* collect any k received shards */
-        /* copy present data shards to avoid aliasing with outPtrs */
-        ri = 0;
-        ci = 0;
-        for (ti = 0; ti < k && ri < k; ++ti) {
-          if (ent->present[ti]) {
-            memcpy(shardCopies + (unsigned long)ci * ent->shardSize,
-              ent->blob->b + ent->prefixSize
-                + (unsigned long)ti * ent->shardSize,
-              ent->shardSize);
-            recvPtrs[ri] = shardCopies
-              + (unsigned long)ci * ent->shardSize;
-            indices[ri] = (unsigned char)ti;
-            ++ri;
-            ++ci;
-          }
-        }
-        for (ti = k; ti < k + ent->m && ri < k; ++ti) {
-          if (ent->present[ti]) {
-            recvPtrs[ri] = ent->parity
-              + (unsigned long)(ti - k) * ent->shardSize;
-            indices[ri] = (unsigned char)ti;
-            ++ri;
-          }
-        }
-
-        /* output pointers: decoded data lands directly in blob */
-        for (ti = 0; ti < k; ++ti)
-          outPtrs[ti] = ent->blob->b + ent->prefixSize
-            + (unsigned long)ti * ent->shardSize;
-
-        if (rsecDecode(recvPtrs, indices, outPtrs,
-                       ent->shardSize, k, ent->m, workArea)) {
-          v->free(workspace);
-          v->free(ent->blob);
-          v->free(ent);
-          table[slot] = 0;
-          continue;
-        }
-        v->free(workspace);
-        ent->blob->l = ent->prefixSize + k * ent->shardSize - ent->padding;
-        decoded = 1;
+        memcpy(ent->parity
+          + (unsigned long)(shardIdx - k) * ent->shardSize,
+          buf + pos + headerLen, fragShardSize);
       }
-    }
+      ent->present[shardIdx] = 1;
+      ent->received++;
+      ent->age = age;
 
-    /* fraction of sender's m consumed (0-255) */
-    {
-      unsigned int dp;
+      pos = fragEnd;
 
-      dp = 0;
-      for (ti = 0; ti < k; ++ti)
-        dp += ent->present[ti] ? 1 : 0;
-      ent->blob->b[ent->prefixSize - 1] =
-        ent->m > 0
-          ? (unsigned char)((ent->k - dp) * 255 / ent->m)
-          : 0;
-    }
+      /* not enough shards yet */
+      if (ent->received < k)
+        continue;
 
-    /* put blob on channel */
-    p[0].v = (void **)&ent->blob;
-    if (chanOne(0, sizeof (p) / sizeof (p[0]), p) != 1
-     || p[0].s != chanOsPut) {
-      v->free(ent->blob);
-      v->free(ent);
-      table[slot] = 0;
-      break;
+      decoded = 0;
+
+      /* reassemble: check if all data shards present */
+      {
+        unsigned int dataPresent;
+
+        dataPresent = 0;
+        for (ti = 0; ti < k; ++ti) {
+          if (ent->present[ti])
+            ++dataPresent;
+        }
+
+        if (dataPresent == k) {
+          /* all data shards present, payload already in place */
+          ent->blob->l = ent->prefixSize + k * ent->shardSize - ent->padding;
+        } else {
+          /* need RSEC decode */
+          unsigned long wsSize;
+          unsigned char *workspace;
+          const unsigned char **recvPtrs;
+          unsigned char **outPtrs;
+          unsigned char *indices;
+          unsigned char *workArea;
+          unsigned char *shardCopies;
+          unsigned int ri;
+          unsigned int ci;
+
+          wsSize = (unsigned long)k * sizeof (const unsigned char *)
+                 + (unsigned long)k * sizeof (unsigned char *)
+                 + k + RS_WORK_SIZE(k)
+                 + (unsigned long)dataPresent * ent->shardSize;
+          workspace = (unsigned char *)v->realloc(0, wsSize);
+          if (!workspace) {
+            v->free(ent->blob);
+            v->free(ent);
+            --tableUsed;
+            if ((unsigned int)slot < tableUsed)
+              memmove(table + slot, table + slot + 1,
+                (unsigned long)(tableUsed - (unsigned int)slot) * sizeof (*table));
+            continue;
+          }
+          recvPtrs = (const unsigned char **)workspace;
+          outPtrs = (unsigned char **)((unsigned char *)recvPtrs
+            + (unsigned long)k * sizeof (const unsigned char *));
+          indices = (unsigned char *)outPtrs
+            + (unsigned long)k * sizeof (unsigned char *);
+          workArea = indices + k;
+          shardCopies = workArea + RS_WORK_SIZE(k);
+
+          /* collect any k received shards */
+          /* copy present data shards to avoid aliasing with outPtrs */
+          ri = 0;
+          ci = 0;
+          for (ti = 0; ti < k && ri < k; ++ti) {
+            if (ent->present[ti]) {
+              memcpy(shardCopies + (unsigned long)ci * ent->shardSize,
+                ent->blob->b + ent->prefixSize
+                  + (unsigned long)ti * ent->shardSize,
+                ent->shardSize);
+              recvPtrs[ri] = shardCopies
+                + (unsigned long)ci * ent->shardSize;
+              indices[ri] = (unsigned char)ti;
+              ++ri;
+              ++ci;
+            }
+          }
+          for (ti = k; ti < k + ent->m && ri < k; ++ti) {
+            if (ent->present[ti]) {
+              recvPtrs[ri] = ent->parity
+                + (unsigned long)(ti - k) * ent->shardSize;
+              indices[ri] = (unsigned char)ti;
+              ++ri;
+            }
+          }
+
+          /* output pointers: decoded data lands directly in blob */
+          for (ti = 0; ti < k; ++ti)
+            outPtrs[ti] = ent->blob->b + ent->prefixSize
+              + (unsigned long)ti * ent->shardSize;
+
+          if (rsecDecode(recvPtrs, indices, outPtrs,
+                         ent->shardSize, k, ent->m, workArea)) {
+            v->free(workspace);
+            v->free(ent->blob);
+            v->free(ent);
+            --tableUsed;
+            if ((unsigned int)slot < tableUsed)
+              memmove(table + slot, table + slot + 1,
+                (unsigned long)(tableUsed - (unsigned int)slot) * sizeof (*table));
+            continue;
+          }
+          v->free(workspace);
+          ent->blob->l = ent->prefixSize + k * ent->shardSize - ent->padding;
+          decoded = 1;
+        }
+      }
+
+      /* fraction of sender's m consumed (0-255) */
+      {
+        unsigned int dp;
+
+        dp = 0;
+        for (ti = 0; ti < k; ++ti)
+          dp += ent->present[ti] ? 1 : 0;
+        ent->blob->b[ent->prefixSize - 1] =
+          ent->m > 0
+            ? (unsigned char)((ent->k - dp) * 255 / ent->m)
+            : 0;
+      }
+
+      /* put blob on channel */
+      p[0].v = (void **)&ent->blob;
+      if (chanOne(0, sizeof (p) / sizeof (p[0]), p) != 1
+       || p[0].s != chanOsPut) {
+        v->free(ent->blob);
+        v->free(ent);
+        --tableUsed;
+        if ((unsigned int)slot < tableUsed)
+          memmove(table + slot, table + slot + 1,
+            (unsigned long)(tableUsed - (unsigned int)slot) * sizeof (*table));
+        goto done;
+      }
+      /* blob ownership transferred; keep entry for de-dup of late fragments */
+      ++ctx->igrMsg;
+      if (decoded)
+        ++ctx->igrDcd;
+      ent->blob = 0;
     }
-    /* blob ownership transferred; keep entry for de-dup of late fragments */
-    ++ctx->igrMsg;
-    if (decoded)
-      ++ctx->igrDcd;
-    ent->blob = 0;
   }
 
+done:
   /* cleanup: free remaining entries and their blobs */
-  for (ti = 0; ti < tableSize; ++ti) {
-    if (table[ti]) {
-      if (table[ti]->blob)
-        v->free(table[ti]->blob);
-      v->free(table[ti]);
-    }
+  for (ti = 0; ti < tableUsed; ++ti) {
+    if (table[ti]->blob)
+      v->free(table[ti]->blob);
+    v->free(table[ti]);
   }
+  v->free(hdr);
   v->free(buf);
   v->free(table);
   pthread_cleanup_pop(1); /* v->fin(v) */

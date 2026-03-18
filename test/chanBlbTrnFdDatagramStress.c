@@ -24,6 +24,10 @@
  * Drop percentage is set via chanBlbTrnFdDatagramDropPct (0-100).
  * Each outgoing message is first checked for drop, then if not dropped,
  * enqueued with a random delay in [0, DelayMs] milliseconds.
+ *
+ * Phase 6: Gilbert-Elliott burst loss (BurstLen > 0) and token bucket
+ * bandwidth limiting (BwLimit > 0). Per-destination GE state machines.
+ *
  * This file replaces chanBlbTrnFdDatagram.o at link time.
  */
 
@@ -43,11 +47,26 @@ unsigned int chanBlbTrnFdDatagramDelayMs = 0;
 /* global drop percentage: 0 = no drop, 10 = 10% drop, etc. */
 unsigned int chanBlbTrnFdDatagramDropPct = 0;
 
+/* Phase 6: Gilbert-Elliott burst loss */
+unsigned int chanBlbTrnFdDatagramBurstLen = 0;  /* mean burst length (0 = independent random) */
+unsigned int chanBlbTrnFdDatagramBurstDrop = 80; /* drop% during burst (0-100) */
+
+/* Phase 6: token bucket bandwidth limiting */
+unsigned int chanBlbTrnFdDatagramBwLimit = 0;   /* max packets/sec (0 = unlimited) */
+
 struct qMsg {
   struct qMsg *next;
   struct timespec deadline;
   unsigned int len;
   unsigned char data[1]; /* struct hack: actual payload follows */
+};
+
+/* Phase 6: per-destination Gilbert-Elliott state */
+#define GE_SLOTS 64
+
+struct geSlot {
+  unsigned int key; /* hash of destination addr, 0 = empty */
+  unsigned char inBad;
 };
 
 struct ctx {
@@ -59,6 +78,10 @@ struct ctx {
   pthread_mutex_t m;
   pthread_cond_t r;
   struct qMsg *qHead;
+  struct geSlot ge[GE_SLOTS];
+  struct timespec bwLast;
+  unsigned int bwTokens;
+  unsigned char bwInit;
 };
 #define V ((struct ctx *)v)
 
@@ -137,6 +160,9 @@ chanBlbTrnFdDatagramCtx(
     V->o6 = -1;
     V->s = 0;
     V->qHead = 0;
+    memset(V->ge, 0, sizeof (V->ge));
+    V->bwTokens = 0;
+    V->bwInit = 0;
   }
   return (v);
 }
@@ -235,16 +261,139 @@ chanBlbTrnFdDatagramOutputCtx(
   return (v);
 }
 
+/*
+ * Gilbert-Elliott burst drop: two-state Markov chain per destination.
+ * Good state drops at DropPct%, Bad state drops at BurstDrop%.
+ * State transition probabilities set so that the fraction of time
+ * in Bad state equals DropPct/100.
+ */
+static int
+burstDrop(
+  struct ctx *c
+ ,const unsigned char *b
+){
+  unsigned int al;
+  unsigned int key;
+  unsigned int idx;
+  unsigned int i;
+  struct geSlot *g;
+  unsigned int dropPct;
+
+  al = b[0];
+  key = 5381;
+  for (i = 0; i < al; ++i)
+    key = ((key << 5) + key) ^ b[1 + i];
+  if (key == 0) key = 1;
+
+  /* find or create slot (linear probe) */
+  idx = key % GE_SLOTS;
+  g = 0;
+  for (i = 0; i < GE_SLOTS; ++i) {
+    unsigned int s;
+
+    s = (idx + i) % GE_SLOTS;
+    if (c->ge[s].key == key) {
+      g = &c->ge[s];
+      break;
+    }
+    if (c->ge[s].key == 0) {
+      c->ge[s].key = key;
+      c->ge[s].inBad = 0;
+      g = &c->ge[s];
+      break;
+    }
+  }
+  if (!g) {
+    g = &c->ge[idx];
+    g->key = key;
+    g->inBad = 0;
+  }
+
+  /* current state determines drop probability */
+  dropPct = g->inBad
+    ? chanBlbTrnFdDatagramBurstDrop
+    : chanBlbTrnFdDatagramDropPct;
+
+  /* state transition for next packet */
+  if (g->inBad) {
+    /* Bad -> Good: probability 1/BurstLen */
+    if (arc4random_uniform(chanBlbTrnFdDatagramBurstLen) == 0)
+      g->inBad = 0;
+  } else if (chanBlbTrnFdDatagramDropPct > 0
+          && chanBlbTrnFdDatagramDropPct < 100) {
+    /* Good -> Bad: probability 1/G
+     * G = BurstLen * (100 - DropPct) / DropPct */
+    unsigned int G;
+
+    G = chanBlbTrnFdDatagramBurstLen
+      * (100 - chanBlbTrnFdDatagramDropPct)
+      / chanBlbTrnFdDatagramDropPct;
+    if (G > 0 && arc4random_uniform(G) == 0)
+      g->inBad = 1;
+  }
+
+  if (dropPct > 0 && arc4random_uniform(100) < dropPct)
+    return (1);
+  return (0);
+}
+
+/*
+ * Token bucket bandwidth limiter: cap outgoing packets per second.
+ * Tokens accumulate at BwLimit/sec, burst capacity = BwLimit.
+ */
+static int
+bwDrop(
+  struct ctx *c
+){
+  struct timespec now;
+  long ms;
+
+  if (chanBlbTrnFdDatagramBwLimit == 0)
+    return (0);
+  clock_gettime(CLOCK_REALTIME, &now);
+  if (!c->bwInit) {
+    c->bwLast = now;
+    c->bwTokens = chanBlbTrnFdDatagramBwLimit;
+    c->bwInit = 1;
+  }
+  ms = (long)(now.tv_sec - c->bwLast.tv_sec) * 1000
+    + (now.tv_nsec - c->bwLast.tv_nsec) / 1000000;
+  if (ms > 0) {
+    unsigned int refill;
+
+    refill = (unsigned int)((unsigned long)chanBlbTrnFdDatagramBwLimit
+      * (unsigned long)ms / 1000);
+    if (refill > 0) {
+      c->bwTokens += refill;
+      if (c->bwTokens > chanBlbTrnFdDatagramBwLimit)
+        c->bwTokens = chanBlbTrnFdDatagramBwLimit;
+      c->bwLast = now;
+    }
+  }
+  if (c->bwTokens > 0) {
+    --c->bwTokens;
+    return (0);
+  }
+  return (1);
+}
+
 unsigned int
 chanBlbTrnFdDatagramOutput(
   void *v
  ,const unsigned char *b
  ,unsigned int l
 ){
-  /* randomly drop datagrams */
-  if (chanBlbTrnFdDatagramDropPct > 0
-   && arc4random_uniform(100) < chanBlbTrnFdDatagramDropPct)
-    return (l); /* pretend success but don't send */
+  /* burst drop or independent random drop */
+  if (chanBlbTrnFdDatagramBurstLen > 0) {
+    if (burstDrop(V, b))
+      return (l);
+  } else if (chanBlbTrnFdDatagramDropPct > 0
+          && arc4random_uniform(100) < chanBlbTrnFdDatagramDropPct) {
+    return (l);
+  }
+  /* bandwidth limit */
+  if (bwDrop(V))
+    return (l);
 
   if (chanBlbTrnFdDatagramDelayMs == 0) {
     if (sendByFamily(V, b, l) < 0)

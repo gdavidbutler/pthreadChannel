@@ -34,8 +34,13 @@ struct chanBlbChnRsecCtx {
   void (*decrypt)(void *cryptCtx, const unsigned char *hdr, unsigned char *data, unsigned int len);
   /*
    * Max datagram payload size (transport MTU minus headers).
-   * Shard size (dgramMax - tagSize - hmacSize - 6) must not
+   * Max shard size (dgramMax - tagSize - hmacSize - 8) must not
    * exceed 16384; chanBlbChnRsecShard() returns 0 if violated.
+   *
+   * Wire format packs multiple fragments per datagram:
+   *   [frag1][frag2]...[fragN][smallhash(1)]
+   * Each fragment:
+   *   [tag][k-1][m][si][pad_vlq(1-2)][shard_len_vlq(1-2)][shard_data][hmac]
    *
    * WARNING: Datagrams exceeding the path MTU are IP-fragmented;
    * loss of any IP fragment drops the entire datagram, defeating
