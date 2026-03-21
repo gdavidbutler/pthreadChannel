@@ -149,11 +149,14 @@ delayT(
 
 void *
 chanBlbTrnFdDatagramCtx(
-  void
+  void *(*ma)(void *, unsigned long)
+ ,void (*mf)(void *)
 ){
   void *v;
 
-  if ((v = malloc(sizeof (struct ctx)))) {
+  (void)mf;
+  mf(ma(0, 1)); /* force exception here and now */
+  if ((v = ma(0, sizeof (struct ctx)))) {
     V->i4 = -1;
     V->o4 = -1;
     V->i6 = -1;
@@ -170,11 +173,13 @@ chanBlbTrnFdDatagramCtx(
 void *
 chanBlbTrnFdDatagramInputCtx(
   void *v
- ,int f4
- ,int f6
+ ,const int *f4
+ ,const int *f6
+ ,unsigned int f4n
+ ,unsigned int f6n
 ){
-  V->i4 = f4;
-  V->i6 = f6;
+  V->i4 = f4n ? f4[0] : -1;
+  V->i6 = f6n ? f6[0] : -1;
   return (v);
 }
 
@@ -235,11 +240,13 @@ chanBlbTrnFdDatagramInputClose(
 void *
 chanBlbTrnFdDatagramOutputCtx(
   void *v
- ,int f4
- ,int f6
+ ,const int *f4
+ ,const int *f6
+ ,unsigned int f4n
+ ,unsigned int f6n
 ){
-  V->o4 = f4;
-  V->o6 = f6;
+  V->o4 = f4n ? f4[0] : -1;
+  V->o6 = f6n ? f6[0] : -1;
   if (chanBlbTrnFdDatagramDelayMs > 0) {
     pthread_t th;
 

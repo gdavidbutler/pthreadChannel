@@ -18,7 +18,6 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <sys/socket.h>
@@ -26,24 +25,47 @@
 #include "chanBlbTrnFdDatagram.h"
 
 struct ctx {
-  int i4;
-  int o4;
-  int i6;
-  int o6;
+  void *(*ma)(void *, unsigned long);
+  void (*mf)(void *);
+  int *i4;
+  int *i6;
+  int *o4;
+  int *o6;
+  struct pollfd *pfd;
+  unsigned int i4n;
+  unsigned int i6n;
+  unsigned int o4n;
+  unsigned int o6n;
+  unsigned int pfdn;
 };
 #define V ((struct ctx *)v)
 
+static int
+fdInArray(
+  int fd
+ ,const int *a
+ ,unsigned int n
+){
+  unsigned int i;
+
+  for (i = 0; i < n; ++i)
+    if (a[i] == fd)
+      return (1);
+  return (0);
+}
+
 void *
 chanBlbTrnFdDatagramCtx(
-  void
+  void *(*ma)(void *, unsigned long)
+ ,void (*mf)(void *)
 ){
   void *v;
 
-  if ((v = malloc(sizeof (struct ctx)))) {
-    V->i4 = -1;
-    V->o4 = -1;
-    V->i6 = -1;
-    V->o6 = -1;
+  mf(ma(0, 1)); /* force exception here and now */
+  if ((v = ma(0, sizeof (struct ctx)))) {
+    memset(v, 0, sizeof (struct ctx));
+    V->ma = ma;
+    V->mf = mf;
   }
   return (v);
 }
@@ -51,11 +73,40 @@ chanBlbTrnFdDatagramCtx(
 void *
 chanBlbTrnFdDatagramInputCtx(
   void *v
- ,int f4
- ,int f6
+ ,const int *f4
+ ,const int *f6
+ ,unsigned int f4n
+ ,unsigned int f6n
 ){
-  V->i4 = f4;
-  V->i6 = f6;
+  unsigned int i;
+
+  if (f4n) {
+    V->i4 = (int *)V->ma(0, (unsigned long)f4n * sizeof (*V->i4));
+    if (!V->i4) return (0);
+    memcpy(V->i4, f4, f4n * sizeof (*V->i4));
+    V->i4n = f4n;
+  }
+  if (f6n) {
+    V->i6 = (int *)V->ma(0, (unsigned long)f6n * sizeof (*V->i6));
+    if (!V->i6) return (0);
+    memcpy(V->i6, f6, f6n * sizeof (*V->i6));
+    V->i6n = f6n;
+  }
+  V->pfdn = f4n + f6n;
+  if (!V->pfdn) return (0);
+  V->pfd = (struct pollfd *)V->ma(0,
+    (unsigned long)V->pfdn * sizeof (*V->pfd));
+  if (!V->pfd) return (0);
+  for (i = 0; i < f4n; ++i) {
+    V->pfd[i].fd = f4[i];
+    V->pfd[i].events = POLLIN;
+    V->pfd[i].revents = 0;
+  }
+  for (i = 0; i < f6n; ++i) {
+    V->pfd[f4n + i].fd = f6[i];
+    V->pfd[f4n + i].events = POLLIN;
+    V->pfd[f4n + i].revents = 0;
+  }
   return (v);
 }
 
@@ -66,62 +117,75 @@ chanBlbTrnFdDatagramInput(
  ,unsigned int l
 ){
   socklen_t sl;
-  int i;
+  unsigned int i;
+  int r;
 
-  if (l <= 1 + sizeof (struct sockaddr_storage))
+  if (!V->pfdn || l <= 1 + sizeof (struct sockaddr_storage))
     return (0);
   sl = sizeof (struct sockaddr_storage);
-  if (V->i6 < 0)
-    i = recvfrom(V->i4, b + 1 + sizeof (struct sockaddr_storage), l - 1 - sizeof (struct sockaddr_storage), 0, (struct sockaddr *)&b[1], &sl);
-  else if (V->i4 < 0)
-    i = recvfrom(V->i6, b + 1 + sizeof (struct sockaddr_storage), l - 1 - sizeof (struct sockaddr_storage), 0, (struct sockaddr *)&b[1], &sl);
-  else {
-    struct pollfd p[2];
-
-    if ((p[0].fd = V->i4) < 0)
-      p[0].events = 0;
-    else
-      p[0].events = POLLIN;
-    p[0].revents = 0;
-    if ((p[1].fd = V->i6) < 0)
-      p[1].events = 0;
-    else
-      p[1].events = POLLIN;
-    p[1].revents = 0;
-    if (poll(p, sizeof (p) / sizeof (p[0]), -1) < 0)
+  if (V->pfdn == 1) {
+    r = recvfrom(V->pfd[0].fd,
+      b + 1 + sizeof (struct sockaddr_storage),
+      l - 1 - sizeof (struct sockaddr_storage),
+      0, (struct sockaddr *)&b[1], &sl);
+  } else {
+    for (i = 0; i < V->pfdn; ++i)
+      V->pfd[i].revents = 0;
+    if (poll(V->pfd, V->pfdn, -1) < 0)
       return (0);
-    if (p[0].revents == POLLIN)
-      i = recvfrom(p[0].fd, b + 1 + sizeof (struct sockaddr_storage), l - 1 - sizeof (struct sockaddr_storage), 0, (struct sockaddr *)&b[1], &sl);
-    else if (p[1].revents == POLLIN)
-      i = recvfrom(p[1].fd, b + 1 + sizeof (struct sockaddr_storage), l - 1 - sizeof (struct sockaddr_storage), 0, (struct sockaddr *)&b[1], &sl);
-    else
-      i = 0;
+    r = 0;
+    for (i = 0; i < V->pfdn; ++i) {
+      if (V->pfd[i].revents & POLLIN) {
+        sl = sizeof (struct sockaddr_storage);
+        r = recvfrom(V->pfd[i].fd,
+          b + 1 + sizeof (struct sockaddr_storage),
+          l - 1 - sizeof (struct sockaddr_storage),
+          0, (struct sockaddr *)&b[1], &sl);
+        break;
+      }
+    }
   }
-  if (i <= 0)
+  if (r <= 0)
     return (0);
   if ((b[0] = sl) < sizeof (struct sockaddr_storage))
-    memmove(b + 1 + sl, b + 1 + sizeof (struct sockaddr_storage), i);
-  return (1 + sl + i);
+    memmove(b + 1 + sl, b + 1 + sizeof (struct sockaddr_storage), r);
+  return (1 + sl + r);
 }
 
 void
 chanBlbTrnFdDatagramInputClose(
   void *v
 ){
-  if (V->i4 >= 0 && V->i4 != V->o4)
-    close(V->i4);
-  if (V->i6 >= 0 && V->i6 != V->o6)
-    close(V->i6);
+  unsigned int i;
+
+  for (i = 0; i < V->i4n; ++i)
+    if (!fdInArray(V->i4[i], V->o4, V->o4n))
+      close(V->i4[i]);
+  for (i = 0; i < V->i6n; ++i)
+    if (!fdInArray(V->i6[i], V->o6, V->o6n))
+      close(V->i6[i]);
 }
 
 void *
 chanBlbTrnFdDatagramOutputCtx(
   void *v
- ,int f4
- ,int f6
+ ,const int *f4
+ ,const int *f6
+ ,unsigned int f4n
+ ,unsigned int f6n
 ){
-  V->o4 = f4;
-  V->o6 = f6;
+  if (f4n) {
+    V->o4 = (int *)V->ma(0, (unsigned long)f4n * sizeof (*V->o4));
+    if (!V->o4) return (0);
+    memcpy(V->o4, f4, f4n * sizeof (*V->o4));
+    V->o4n = f4n;
+  }
+  if (f6n) {
+    V->o6 = (int *)V->ma(0, (unsigned long)f6n * sizeof (*V->o6));
+    if (!V->o6) return (0);
+    memcpy(V->o6, f6, f6n * sizeof (*V->o6));
+    V->o6n = f6n;
+  }
   return (v);
 }
 
@@ -131,42 +195,63 @@ chanBlbTrnFdDatagramOutput(
  ,const unsigned char *b
  ,unsigned int l
 ){
+  unsigned int i;
+  int ok;
+
   if (l < 1 || b[0] > sizeof (struct sockaddr_storage) || l <= 1 + b[0])
     return (0);
+  ok = 0;
   switch (((struct sockaddr *)&b[1])->sa_family) {
   case AF_INET:
-    if (V->o4 < 0 || sendto(V->o4, b + 1 + b[0], l - 1 - b[0], 0, (struct sockaddr *)&b[1], b[0]) < 0)
-      return (0);
+    for (i = 0; i < V->o4n; ++i)
+      if (sendto(V->o4[i], b + 1 + b[0], l - 1 - b[0], 0,
+            (struct sockaddr *)&b[1], b[0]) >= 0)
+        ok = 1;
     break;
   case AF_INET6:
-    if (V->o6 < 0 || sendto(V->o6, b + 1 + b[0], l - 1 - b[0], 0, (struct sockaddr *)&b[1], b[0]) < 0)
-      return (0);
+    for (i = 0; i < V->o6n; ++i)
+      if (sendto(V->o6[i], b + 1 + b[0], l - 1 - b[0], 0,
+            (struct sockaddr *)&b[1], b[0]) >= 0)
+        ok = 1;
     break;
   default:
-    return (0);
+    break;
   }
-  return (l);
+  return (ok ? l : 0);
 }
 
 void
 chanBlbTrnFdDatagramOutputClose(
   void *v
 ){
-  if (V->o4 >= 0 && V->o4 != V->i4)
-    close(V->o4);
-  if (V->o6 >= 0 && V->o6 != V->i6)
-    close(V->o6);
+  unsigned int i;
+
+  for (i = 0; i < V->o4n; ++i)
+    if (!fdInArray(V->o4[i], V->i4, V->i4n))
+      close(V->o4[i]);
+  for (i = 0; i < V->o6n; ++i)
+    if (!fdInArray(V->o6[i], V->i6, V->i6n))
+      close(V->o6[i]);
 }
 
 void
 chanBlbTrnFdDatagramFinalClose(
   void *v
 ){
-  if (V->i4 >= 0 && V->i4 == V->o4)
-    close(V->i4);
-  if (V->i6 >= 0 && V->i6 == V->o6)
-    close(V->i6);
-  free(v);
+  unsigned int i;
+
+  for (i = 0; i < V->i4n; ++i)
+    if (fdInArray(V->i4[i], V->o4, V->o4n))
+      close(V->i4[i]);
+  for (i = 0; i < V->i6n; ++i)
+    if (fdInArray(V->i6[i], V->o6, V->o6n))
+      close(V->i6[i]);
+  V->mf(V->i4);
+  V->mf(V->i6);
+  V->mf(V->o4);
+  V->mf(V->o6);
+  V->mf(V->pfd);
+  V->mf(v);
 }
 
 #undef V

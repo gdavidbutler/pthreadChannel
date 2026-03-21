@@ -23,7 +23,8 @@
 
 void *
 chanBlbTrnFdCtx(
-  void
+  void *(*realloc)(void *, unsigned long)
+ ,void (*free)(void *)
 );
 
 void *

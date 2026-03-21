@@ -23,14 +23,22 @@
 
 void *
 chanBlbTrnFdDatagramCtx(
-  void
+  void *(*realloc)(void *, unsigned long)
+ ,void (*free)(void *)
 );
 
+/*
+ * Input: poll on all fds, recvfrom whichever is ready.
+ * fd4/fd6: arrays of IPv4/IPv6 socket fds (copied internally).
+ * fd4N/fd6N: counts (0 and 0 if none).
+ */
 void *
 chanBlbTrnFdDatagramInputCtx(
   void *ctx
- ,int fd4
- ,int fd6
+ ,const int *fd4
+ ,const int *fd6
+ ,unsigned int fd4N
+ ,unsigned int fd6N
 );
 
 /* prepends source address to blob: [1 unsigned byte addrlen][addr] */
@@ -46,11 +54,18 @@ chanBlbTrnFdDatagramInputClose(
   void *inputCtx
 );
 
+/*
+ * Output: send to all fds of matching address family.
+ * fd4/fd6: arrays of IPv4/IPv6 socket fds (copied internally).
+ * fd4N/fd6N: counts (0 and 0 if none).
+ */
 void *
 chanBlbTrnFdDatagramOutputCtx(
   void *ctx
- ,int fd4
- ,int fd6
+ ,const int *fd4
+ ,const int *fd6
+ ,unsigned int fd4N
+ ,unsigned int fd6N
 );
 
 /* strips destination address from blob: [1 unsigned byte addrlen][addr] */

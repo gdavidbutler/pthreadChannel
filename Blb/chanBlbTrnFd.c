@@ -23,6 +23,7 @@
 #include "chanBlbTrnFd.h"
 
 struct ctx {
+  void (*mf)(void *);
   int i;
   int o;
 };
@@ -30,11 +31,14 @@ struct ctx {
 
 void *
 chanBlbTrnFdCtx(
-  void
+  void *(*ma)(void *, unsigned long)
+ ,void (*mf)(void *)
 ){
   void *v;
 
-  if ((v = malloc(sizeof (struct ctx)))) {
+  mf(ma(0, 1)); /* force exception here and now */
+  if ((v = ma(0, sizeof (struct ctx)))) {
+    V->mf = mf;
     V->i = -1;
     V->o = -1;
   }
@@ -107,7 +111,7 @@ chanBlbTrnFdFinalClose(
 ){
   if (V->i == V->o)
     close(V->i);
-  free(v);
+  V->mf(v);
 }
 
 #undef V

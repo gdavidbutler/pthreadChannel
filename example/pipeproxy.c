@@ -74,7 +74,7 @@ main(
     chanClose(c[0]);
     return (1);
   }
-  if (!(ctx = chanBlbTrnFdCtx())) {
+  if (!(ctx = chanBlbTrnFdCtx(realloc, free))) {
     perror("chanBlbTrnFdCtx");
     close(p[1]);
     close(p[0]);

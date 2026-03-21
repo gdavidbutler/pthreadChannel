@@ -297,7 +297,7 @@ main(
   chanInit(realloc, free);
 
   /* create datagram context */
-  if (!(ctx = chanBlbTrnFdDatagramCtx())) {
+  if (!(ctx = chanBlbTrnFdDatagramCtx(realloc, free))) {
     perror("chanBlbTrnFdDatagramCtx");
     return (1);
   }
@@ -330,8 +330,8 @@ main(
     }
     /* start chanBlb with RSEC framing for both directions */
     if (!chanBlb(realloc, free
-        ,OutChan, chanBlbTrnFdDatagramOutputCtx(ctx, fd4, fd6), chanBlbTrnFdDatagramOutput, chanBlbTrnFdDatagramOutputClose, &rsecCtx, chanBlbChnRsecEgr
-        ,InChan, chanBlbTrnFdDatagramInputCtx(ctx, fd4, fd6), chanBlbTrnFdDatagramInput, chanBlbTrnFdDatagramInputClose, &rsecCtx, chanBlbChnRsecIgr, 0
+        ,OutChan, chanBlbTrnFdDatagramOutputCtx(ctx, &fd4, fd6 >= 0 ? &fd6 : 0, fd4 >= 0 ? 1 : 0, fd6 >= 0 ? 1 : 0), chanBlbTrnFdDatagramOutput, chanBlbTrnFdDatagramOutputClose, &rsecCtx, chanBlbChnRsecEgr
+        ,InChan, chanBlbTrnFdDatagramInputCtx(ctx, &fd4, fd6 >= 0 ? &fd6 : 0, fd4 >= 0 ? 1 : 0, fd6 >= 0 ? 1 : 0), chanBlbTrnFdDatagramInput, chanBlbTrnFdDatagramInputClose, &rsecCtx, chanBlbChnRsecIgr, 0
         ,ctx, chanBlbTrnFdDatagramFinalClose
         ,0)) {
       perror("chanBlb");
@@ -341,8 +341,8 @@ main(
 #else
   /* start chanBlb for both directions */
   if (!chanBlb(realloc, free
-      ,OutChan, chanBlbTrnFdDatagramOutputCtx(ctx, fd4, fd6), chanBlbTrnFdDatagramOutput, chanBlbTrnFdDatagramOutputClose, 0, 0
-      ,InChan, chanBlbTrnFdDatagramInputCtx(ctx, fd4, fd6), chanBlbTrnFdDatagramInput, chanBlbTrnFdDatagramInputClose, 0, 0, 0
+      ,OutChan, chanBlbTrnFdDatagramOutputCtx(ctx, &fd4, fd6 >= 0 ? &fd6 : 0, fd4 >= 0 ? 1 : 0, fd6 >= 0 ? 1 : 0), chanBlbTrnFdDatagramOutput, chanBlbTrnFdDatagramOutputClose, 0, 0
+      ,InChan, chanBlbTrnFdDatagramInputCtx(ctx, &fd4, fd6 >= 0 ? &fd6 : 0, fd4 >= 0 ? 1 : 0, fd6 >= 0 ? 1 : 0), chanBlbTrnFdDatagramInput, chanBlbTrnFdDatagramInputClose, 0, 0, 0
       ,ctx, chanBlbTrnFdDatagramFinalClose
       ,0)) {
     perror("chanBlb");

@@ -294,7 +294,7 @@ setup(
   sl = sizeof (env->sa);
   getsockname(env->fd, (struct sockaddr *)&env->sa, &sl);
 
-  dgramCtx = chanBlbTrnFdDatagramCtx();
+  dgramCtx = chanBlbTrnFdDatagramCtx(realloc, free);
   if (!dgramCtx) {
     close(env->fd);
     return (0);
@@ -304,13 +304,13 @@ setup(
   env->inChan = chanCreate(free, 0);
   if (!env->outChan || !env->inChan) {
     close(env->fd);
-    free(dgramCtx);
+    chanBlbTrnFdDatagramFinalClose(dgramCtx);
     return (0);
   }
 
   if (!chanBlb(realloc, free
-      ,env->outChan, chanBlbTrnFdDatagramOutputCtx(dgramCtx, env->fd, -1), chanBlbTrnFdDatagramOutput, chanBlbTrnFdDatagramOutputClose, rsecCtx, chanBlbChnRsecEgr
-      ,env->inChan, chanBlbTrnFdDatagramInputCtx(dgramCtx, env->fd, -1), chanBlbTrnFdDatagramInput, chanBlbTrnFdDatagramInputClose, rsecCtx, chanBlbChnRsecIgr, 0
+      ,env->outChan, chanBlbTrnFdDatagramOutputCtx(dgramCtx, &env->fd, 0, 1, 0), chanBlbTrnFdDatagramOutput, chanBlbTrnFdDatagramOutputClose, rsecCtx, chanBlbChnRsecEgr
+      ,env->inChan, chanBlbTrnFdDatagramInputCtx(dgramCtx, &env->fd, 0, 1, 0), chanBlbTrnFdDatagramInput, chanBlbTrnFdDatagramInputClose, rsecCtx, chanBlbChnRsecIgr, 0
       ,dgramCtx, chanBlbTrnFdDatagramFinalClose
       ,0)) {
     close(env->fd);

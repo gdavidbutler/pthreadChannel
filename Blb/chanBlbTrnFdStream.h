@@ -23,7 +23,9 @@
 
 void *
 chanBlbTrnFdStreamCtx(
-  int streamFd
+  void *(*realloc)(void *, unsigned long)
+ ,void (*free)(void *)
+ ,int streamFd
 );
 
 void *

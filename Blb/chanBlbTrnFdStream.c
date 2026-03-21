@@ -24,8 +24,11 @@
 
 void *
 chanBlbTrnFdStreamCtx(
-  int f
+  void *(*ma)(void *, unsigned long)
+ ,void (*mf)(void *)
+ ,int f
 ){
+  mf(ma(0, 1)); /* force exception here and now */
   return ((void *)(long)f);
 }
 

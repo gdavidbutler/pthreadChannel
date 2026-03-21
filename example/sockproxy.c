@@ -44,7 +44,7 @@ streamT(
   chanArr_t p[2];  /* ingress and egress channels */
 
   s[0] = (int)(long)v;
-  if (!(ctx[0] = chanBlbTrnFdStreamCtx(s[0]))) {
+  if (!(ctx[0] = chanBlbTrnFdStreamCtx(realloc, free, s[0]))) {
     perror("chanBlbTrnFdStreamCtx");
     close(s[0]);
     return (0);
@@ -54,7 +54,7 @@ streamT(
     perror("socket");
     goto exit0;
   }
-  if (!(ctx[1] = chanBlbTrnFdStreamCtx(s[1]))) {
+  if (!(ctx[1] = chanBlbTrnFdStreamCtx(realloc, free, s[1]))) {
     perror("chanBlbTrnFdStreamCtx");
     close(s[1]);
     goto exit0;
@@ -111,7 +111,7 @@ datagramT(
   chanArr_t p[2];  /* ingress and egress channels */
 
   s[0] = (int)(long)v;
-  if (!(ctx[0] = chanBlbTrnFdCtx())) {
+  if (!(ctx[0] = chanBlbTrnFdCtx(realloc, free))) {
     perror("chanBlbTrnFdCtx");
     close(s[0]);
     return (0);
@@ -122,7 +122,7 @@ datagramT(
     close(s[0]);
     goto exit0;
   }
-  if (!(ctx[1] = chanBlbTrnFdCtx())) {
+  if (!(ctx[1] = chanBlbTrnFdCtx(realloc, free))) {
     perror("chanBlbTrnFdCtx");
     close(s[1]);
     close(s[0]);
