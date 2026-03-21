@@ -348,7 +348,7 @@ Blob flow (repeats):
   * Write multiplexed Reed-Solomon erasure coded datagram fragments
     * Egress blob: [addrlen(1)][addr(addrlen)][tag(tagSize)][m(1)][delay_ms(1)][payload(N)]
   * Read demultiplexed Reed-Solomon erasure coded datagram fragments
-    * Ingress blob: [addrlen(1)][addr(addrlen)][tag(tagSize)][mFract(1)][payload(N)]
+    * Ingress blob: [addrlen(1)][addr(addrlen)][tag(tagSize)][rm(1)][um(1)][payload(N)]
 
 ### Examples
 

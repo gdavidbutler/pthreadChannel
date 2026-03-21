@@ -565,7 +565,7 @@ struct igrEntry {
   unsigned int padding;
   unsigned int received;
   unsigned int age;
-  unsigned int prefixSize; /* 1 + addrlen + tagSize + 1 (includes m byte) */
+  unsigned int prefixSize; /* 1 + addrlen + tagSize + 2 (includes rm + um) */
   unsigned char present[256];
 };
 
@@ -782,10 +782,20 @@ chanBlbChnRsecIgr(
       if (found) {
         if (table[slot]->k != k || table[slot]->m != mVal
          || table[slot]->shardSize != fragShardSize) {
-          /* mismatch: evict */
+          /* mismatch: evict — deliver loss notification */
           if (table[slot]->blob) {
+            chanBlb_t *lb;
+
             ++ctx->igrLost;
-            v->free(table[slot]->blob);
+            lb = table[slot]->blob;
+            lb->l = table[slot]->prefixSize;
+            lb->b[table[slot]->prefixSize - 2] = 0;
+            lb->b[table[slot]->prefixSize - 1] =
+              (unsigned char)table[slot]->received;
+            p[0].v = (void **)&lb;
+            if (chanOne(0, sizeof (p) / sizeof (p[0]), p) != 1
+             || p[0].s != chanOsPut)
+              v->free(lb);
           }
           v->free(table[slot]);
           --tableUsed;
@@ -816,9 +826,20 @@ chanBlbChnRsecIgr(
               lruIdx = ti;
             }
           }
+          /* LRU evict — deliver loss notification */
           if (table[lruIdx]->blob) {
+            chanBlb_t *lb;
+
             ++ctx->igrLost;
-            v->free(table[lruIdx]->blob);
+            lb = table[lruIdx]->blob;
+            lb->l = table[lruIdx]->prefixSize;
+            lb->b[table[lruIdx]->prefixSize - 2] = 0;
+            lb->b[table[lruIdx]->prefixSize - 1] =
+              (unsigned char)table[lruIdx]->received;
+            p[0].v = (void **)&lb;
+            if (chanOne(0, sizeof (p) / sizeof (p[0]), p) != 1
+             || p[0].s != chanOsPut)
+              v->free(lb);
           }
           v->free(table[lruIdx]);
           --tableUsed;
@@ -844,7 +865,7 @@ chanBlbChnRsecIgr(
         ent->padding = padding;
         ent->received = 0;
         ent->age = age;
-        ent->prefixSize = 1 + addrlen + tagSize + 1;
+        ent->prefixSize = 1 + addrlen + tagSize + 2;
         memcpy(ent->tag, buf + pos, tagSize);
         memset(ent->present, 0, sizeof (ent->present));
 
@@ -855,10 +876,11 @@ chanBlbChnRsecIgr(
           v->free(ent);
           break;
         }
-        /* write blob prefix: [addrlen][addr][tag][m] */
+        /* write blob prefix: [addrlen][addr][tag][rm][um] */
         memcpy(ent->blob->b, buf, 1 + addrlen);
         memcpy(ent->blob->b + 1 + addrlen, buf + pos, tagSize);
         ent->blob->b[1 + addrlen + tagSize] = 0;
+        ent->blob->b[1 + addrlen + tagSize + 1] = 0;
 
         /* insert at sorted position */
         if (insertPos < tableUsed)
@@ -1002,17 +1024,15 @@ chanBlbChnRsecIgr(
         }
       }
 
-      /* fraction of sender's m consumed (0-255) */
+      /* rm = sender's m, um = parity shards used (missing data shards) */
       {
         unsigned int dp;
 
         dp = 0;
         for (ti = 0; ti < k; ++ti)
           dp += ent->present[ti] ? 1 : 0;
-        ent->blob->b[ent->prefixSize - 1] =
-          ent->m > 0
-            ? (unsigned char)((ent->k - dp) * 255 / ent->m)
-            : 0;
+        ent->blob->b[ent->prefixSize - 2] = (unsigned char)ent->m;
+        ent->blob->b[ent->prefixSize - 1] = (unsigned char)(ent->k - dp);
       }
 
       /* put blob on channel */

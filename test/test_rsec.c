@@ -248,7 +248,7 @@ verifyBlob(
   unsigned int skip;
 
   al = m->b[0];
-  skip = 1 + al + tagSize + 1;
+  skip = 1 + al + tagSize + 2;
   if (m->l < skip)
     return (0);
   if (m->l - skip != expectedLen)

@@ -84,8 +84,8 @@ chanBlbChnRsecEgr(
   struct chanBlbEgrCtx *v
 );
 
-/* Ingress blob: [addrlen(1)][addr(addrlen)][tag(tagSize)][mfract(1)][payload(N)] */
-/* mfract: fraction of sender's parity consumed (0=none, 255=all; AIMD signal) */
+/* Ingress blob: [addrlen(1)][addr(addrlen)][tag(tagSize)][rm(1)][um(1)][payload(N)] */
+/* rm: received m. um: used m. Lost: rm=0 um=received, zero-length payload. */
 void *
 chanBlbChnRsecIgr(
   struct chanBlbIgrCtx *v
