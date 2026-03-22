@@ -25,7 +25,7 @@
 
 struct chanBlbChnRsecCtx {
   void *hmacCtx;
-  /* hdr points to blob header ([addrlen][addr][tag]) for key selection */
+  /* hdr points to fragment header ([addrlen][addr][tag][k-1][m][si]) for key selection */
   void (*hmacSign)(void *hmacCtx, const unsigned char *hdr, unsigned char *dst, const unsigned char *src, unsigned int len);
   int (*hmacVrfy)(void *hmacCtx, const unsigned char *hdr, const unsigned char *mac, const unsigned char *src, unsigned int len);
   void *cryptCtx;

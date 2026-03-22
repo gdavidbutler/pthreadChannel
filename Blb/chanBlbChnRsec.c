@@ -613,7 +613,7 @@ chanBlbChnRsecIgr(
   }
 
   /* allocate hdr reconstruction buffer for HMAC/crypto callbacks */
-  hdr = (unsigned char *)v->realloc(0, (unsigned long)(1 + 255) + tagSize);
+  hdr = (unsigned char *)v->realloc(0, (unsigned long)(1 + 255) + tagSize + 3);
   if (!hdr) {
     v->free(buf);
     v->free(table);
@@ -723,9 +723,9 @@ chanBlbChnRsecIgr(
         continue;
       }
 
-      /* reconstruct hdr: [addrlen][addr][tag] */
+      /* reconstruct hdr: [addrlen][addr][tag][k-1][m][si] */
       memcpy(hdr, buf, wp); /* addr prefix from datagram */
-      memcpy(hdr + wp, buf + pos, tagSize); /* tag from this fragment */
+      memcpy(hdr + wp, buf + pos, tagSize + 3); /* tag + k-1 + m + si */
 
       /* validate HMAC if enabled */
       if (hmacSize > 0) {
