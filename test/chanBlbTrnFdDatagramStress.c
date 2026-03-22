@@ -316,10 +316,19 @@ burstDrop(
     g->inBad = 0;
   }
 
-  /* current state determines drop probability */
-  dropPct = g->inBad
-    ? chanBlbTrnFdDatagramBurstDrop
-    : chanBlbTrnFdDatagramDropPct;
+  /* current state determines drop probability.
+   * Good-state rate calibrated so overall = DropPct:
+   * p_good = DropPct * (100 - BurstDrop) / (100 - DropPct) */
+  if (g->inBad) {
+    dropPct = chanBlbTrnFdDatagramBurstDrop;
+  } else if (chanBlbTrnFdDatagramDropPct > 0
+          && chanBlbTrnFdDatagramDropPct < 100) {
+    dropPct = chanBlbTrnFdDatagramDropPct
+      * (100 - chanBlbTrnFdDatagramBurstDrop)
+      / (100 - chanBlbTrnFdDatagramDropPct);
+  } else {
+    dropPct = chanBlbTrnFdDatagramDropPct;
+  }
 
   /* state transition for next packet */
   if (g->inBad) {
