@@ -61,7 +61,7 @@ struct chanBlbChnRsecCtx {
   unsigned int igrLate;   /* ingress: late fragments */
   unsigned int igrMsg;    /* ingress: messages delivered */
   unsigned int igrDcd;    /* ingress: messages via RS decode */
-  unsigned int igrLost;   /* ingress: incomplete messages evicted */
+  unsigned int igrEvict;  /* ingress: incomplete messages evicted */
 };
 
 /* Return shard size in bytes (0 if dgramMax too small or too large) */

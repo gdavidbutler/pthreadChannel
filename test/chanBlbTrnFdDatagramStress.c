@@ -25,8 +25,9 @@
  * Each outgoing message is first checked for drop, then if not dropped,
  * enqueued with a random delay in [0, DelayMs] milliseconds.
  *
- * Phase 6: Gilbert-Elliott burst loss (BurstLen > 0) and token bucket
- * bandwidth limiting (BwLimit > 0). Per-destination GE state machines.
+ * Phase 6: time-based Gilbert-Elliott burst loss (BurstLen > 0) and token
+ * bucket bandwidth limiting (BwLimit > 0). Per-destination GE state machines
+ * with time-based burst windows (not per-packet transitions).
  *
  * This file replaces chanBlbTrnFdDatagram.o at link time.
  */
@@ -48,7 +49,7 @@ unsigned int chanBlbTrnFdDatagramDelayMs = 0;
 unsigned int chanBlbTrnFdDatagramDropPct = 0;
 
 /* Phase 6: Gilbert-Elliott burst loss */
-unsigned int chanBlbTrnFdDatagramBurstLen = 0;  /* mean burst length (0 = independent random) */
+unsigned int chanBlbTrnFdDatagramBurstLen = 0;  /* mean burst duration in ms (0 = independent random) */
 unsigned int chanBlbTrnFdDatagramBurstDrop = 80; /* drop% during burst (0-100) */
 
 /* Phase 6: token bucket bandwidth limiting */
@@ -65,7 +66,9 @@ struct qMsg {
 #define GE_SLOTS 64
 
 struct geSlot {
-  unsigned int key; /* hash of destination addr, 0 = empty */
+  struct timespec lastCheck; /* last good-state onset evaluation */
+  struct timespec burstEnd;  /* when current burst expires */
+  unsigned int key;          /* hash of destination addr, 0 = empty */
   unsigned char inBad;
 };
 
@@ -269,10 +272,14 @@ chanBlbTrnFdDatagramOutputCtx(
 }
 
 /*
- * Gilbert-Elliott burst drop: two-state Markov chain per destination.
- * Good state drops at DropPct%, Bad state drops at BurstDrop%.
- * State transition probabilities set so that the fraction of time
- * in Bad state equals DropPct/100.
+ * Time-based Gilbert-Elliott burst drop per destination.
+ * Good state: no drop (all loss comes from burst events).
+ * Bad state: drop at BurstDrop%.
+ * Burst onset: time-based probability, independent of packet rate.
+ * Burst duration: uniform [1, 2*BurstLen] ms (mean ~ BurstLen).
+ * Calibrated so overall drop rate ~ DropPct:
+ *   fraction_in_bad = DropPct / BurstDrop
+ *   mean_good_ms = BurstLen * (BurstDrop - DropPct) / DropPct
  */
 static int
 burstDrop(
@@ -284,13 +291,15 @@ burstDrop(
   unsigned int idx;
   unsigned int i;
   struct geSlot *g;
-  unsigned int dropPct;
+  struct timespec now;
 
   al = b[0];
   key = 5381;
   for (i = 0; i < al; ++i)
     key = ((key << 5) + key) ^ b[1 + i];
   if (key == 0) key = 1;
+
+  clock_gettime(CLOCK_MONOTONIC, &now);
 
   /* find or create slot (linear probe) */
   idx = key % GE_SLOTS;
@@ -306,6 +315,7 @@ burstDrop(
     if (c->ge[s].key == 0) {
       c->ge[s].key = key;
       c->ge[s].inBad = 0;
+      c->ge[s].lastCheck = now;
       g = &c->ge[s];
       break;
     }
@@ -314,41 +324,65 @@ burstDrop(
     g = &c->ge[idx];
     g->key = key;
     g->inBad = 0;
+    g->lastCheck = now;
   }
 
-  /* current state determines drop probability.
-   * Good-state rate calibrated so overall = DropPct:
-   * p_good = DropPct * (100 - BurstDrop) / (100 - DropPct) */
-  if (g->inBad) {
-    dropPct = chanBlbTrnFdDatagramBurstDrop;
-  } else if (chanBlbTrnFdDatagramDropPct > 0
-          && chanBlbTrnFdDatagramDropPct < 100) {
-    dropPct = chanBlbTrnFdDatagramDropPct
-      * (100 - chanBlbTrnFdDatagramBurstDrop)
-      / (100 - chanBlbTrnFdDatagramDropPct);
-  } else {
-    dropPct = chanBlbTrnFdDatagramDropPct;
+  /* check if current burst expired */
+  if (g->inBad
+   && (now.tv_sec > g->burstEnd.tv_sec
+    || (now.tv_sec == g->burstEnd.tv_sec
+     && now.tv_nsec >= g->burstEnd.tv_nsec))) {
+    g->inBad = 0;
+    g->lastCheck = now;
   }
 
-  /* state transition for next packet */
-  if (g->inBad) {
-    /* Bad -> Good: probability 1/BurstLen */
-    if (arc4random_uniform(chanBlbTrnFdDatagramBurstLen) == 0)
-      g->inBad = 0;
-  } else if (chanBlbTrnFdDatagramDropPct > 0
-          && chanBlbTrnFdDatagramDropPct < 100) {
-    /* Good -> Bad: probability 1/G
-     * G = BurstLen * (100 - DropPct) / DropPct */
-    unsigned int G;
+  /* good state: check for time-based burst onset */
+  if (!g->inBad
+   && chanBlbTrnFdDatagramDropPct > 0
+   && chanBlbTrnFdDatagramDropPct < chanBlbTrnFdDatagramBurstDrop) {
+    long dsec;
+    long dns;
+    unsigned long elapsed_ms;
+    unsigned long mean_good_ms;
 
-    G = chanBlbTrnFdDatagramBurstLen
-      * (100 - chanBlbTrnFdDatagramDropPct)
+    dsec = (long)(now.tv_sec - g->lastCheck.tv_sec);
+    dns = now.tv_nsec - g->lastCheck.tv_nsec;
+    if (dns < 0) {
+      dsec--;
+      dns += 1000000000L;
+    }
+    elapsed_ms = dsec > 0
+      ? (unsigned long)dsec * 1000 + (unsigned long)dns / 1000000
+      : (unsigned long)dns / 1000000;
+    g->lastCheck = now;
+
+    mean_good_ms = (unsigned long)chanBlbTrnFdDatagramBurstLen
+      * (chanBlbTrnFdDatagramBurstDrop - chanBlbTrnFdDatagramDropPct)
       / chanBlbTrnFdDatagramDropPct;
-    if (G > 0 && arc4random_uniform(G) == 0)
+    if (mean_good_ms > 0 && elapsed_ms > 0
+     && arc4random_uniform(
+          mean_good_ms > 0xfffffffeUL
+            ? 0xfffffffeU : (unsigned int)mean_good_ms)
+        < (elapsed_ms > 0xfffffffeUL
+            ? 0xfffffffeU : (unsigned int)elapsed_ms)) {
+      unsigned int burst_ms;
+
       g->inBad = 1;
+      burst_ms = 1 + arc4random_uniform(
+        2 * chanBlbTrnFdDatagramBurstLen);
+      g->burstEnd.tv_sec = now.tv_sec + burst_ms / 1000;
+      g->burstEnd.tv_nsec = now.tv_nsec
+        + (long)(burst_ms % 1000) * 1000000L;
+      if (g->burstEnd.tv_nsec >= 1000000000L) {
+        g->burstEnd.tv_sec++;
+        g->burstEnd.tv_nsec -= 1000000000L;
+      }
+    }
   }
 
-  if (dropPct > 0 && arc4random_uniform(100) < dropPct)
+  if (g->inBad
+   && chanBlbTrnFdDatagramBurstDrop > 0
+   && arc4random_uniform(100) < chanBlbTrnFdDatagramBurstDrop)
     return (1);
   return (0);
 }

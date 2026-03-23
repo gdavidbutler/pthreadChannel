@@ -341,10 +341,10 @@ Blob flow (repeats):
   * Egress fragments each blob into k data + m parity shards (k+m <= 256). Any k of k+m shards reconstruct the original. Per-message shard sizing minimizes padding waste.
   * Egress packs multiple fragments from different in-flight messages into a single datagram when they share the same destination address, reducing packet count and padding overhead for small messages. Fragments from the same message are never packed together (correlated loss would defeat erasure coding).
   * Egress maintains a table of `tableSize` in-flight messages with paced shard scheduling (per-blob `delay_ms`). Multiple blobs' shards are interleaved in send-time order. When the table is full, shards are paced until there is room for the message, causing backpressure.
-  * Ingress maintains a table of `tableSize` in-flight reassembly entries. Parses multiple packed fragments per datagram. Uses RS decode when data shards are missing, and suppresses duplicate/late fragment delivery. When the table is full, the oldest entry is evicted (LRU) and counted in `igrLost`.
+  * Ingress maintains a table of `tableSize` in-flight reassembly entries. Parses multiple packed fragments per datagram. Uses RS decode when data shards are missing, and suppresses duplicate/late fragment delivery. When the table is full, the oldest entry is evicted (LRU) and counted in `igrEvict`.
   * Defense in depth: 1-byte small hash per datagram (always) + optional per-fragment HMAC callbacks for authentication.
   * Optional per-shard encrypt/decrypt callbacks for confidentiality.
-  * Statistics counters in the context struct for production monitoring (egrMsg, egrFrg, igrFrg, igrHash, igrHmac, igrDup, igrLate, igrMsg, igrDcd, igrLost).
+  * Statistics counters in the context struct for production monitoring (egrMsg, egrFrg, igrFrg, igrHash, igrHmac, igrDup, igrLate, igrMsg, igrDcd, igrEvict).
   * Write multiplexed Reed-Solomon erasure coded datagram fragments
     * Egress blob: [addrlen(1)][addr(addrlen)][tag(tagSize)][m(1)][delay_ms(1)][payload(N)]
   * Read demultiplexed Reed-Solomon erasure coded datagram fragments

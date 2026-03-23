@@ -1155,7 +1155,7 @@ testCountersBasic(void)
   check("igrDcd == 0", rsecCtx.igrDcd == 0);
   check("igrDup == 0", rsecCtx.igrDup == 0);
   check("igrLate > 0", rsecCtx.igrLate > 0);
-  check("igrLost == 0", rsecCtx.igrLost == 0);
+  check("igrEvict == 0", rsecCtx.igrEvict == 0);
   teardown(&env);
 }
 
@@ -1187,7 +1187,7 @@ testCountersMultiShard(void)
   check("egrFrg == 6", rsecCtx.egrFrg == 6);
   check("igrMsg == 1", rsecCtx.igrMsg == 1);
   check("igrDcd == 0", rsecCtx.igrDcd == 0);
-  check("igrLost == 0", rsecCtx.igrLost == 0);
+  check("igrEvict == 0", rsecCtx.igrEvict == 0);
   teardown(&env);
 }
 
@@ -1223,7 +1223,7 @@ testCountersDrop(void)
   /* if any data shard was dropped, RS decode was needed */
   printf("    (igrDcd=%u igrFrg=%u igrDup=%u)\n",
     rsecCtx.igrDcd, rsecCtx.igrFrg, rsecCtx.igrDup);
-  check("igrLost == 0", rsecCtx.igrLost == 0);
+  check("igrEvict == 0", rsecCtx.igrEvict == 0);
 
   chanBlbTrnFdDatagramDropPct = 0;
   teardown(&env);
@@ -1262,7 +1262,7 @@ testCountersDedup(void)
   check("igrMsg == 1", rsecCtx.igrMsg == 1);
   check("igrDup == 0", rsecCtx.igrDup == 0);
   check("igrLate == 2", rsecCtx.igrLate == 2);
-  check("igrLost == 0", rsecCtx.igrLost == 0);
+  check("igrEvict == 0", rsecCtx.igrEvict == 0);
   teardown(&env);
 }
 

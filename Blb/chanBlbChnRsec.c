@@ -786,7 +786,7 @@ chanBlbChnRsecIgr(
           if (table[slot]->blob) {
             chanBlb_t *lb;
 
-            ++ctx->igrLost;
+            ++ctx->igrEvict;
             lb = table[slot]->blob;
             lb->l = table[slot]->prefixSize;
             lb->b[table[slot]->prefixSize - 2] = 0;
@@ -830,7 +830,7 @@ chanBlbChnRsecIgr(
           if (table[lruIdx]->blob) {
             chanBlb_t *lb;
 
-            ++ctx->igrLost;
+            ++ctx->igrEvict;
             lb = table[lruIdx]->blob;
             lb->l = table[lruIdx]->prefixSize;
             lb->b[table[lruIdx]->prefixSize - 2] = 0;
