@@ -49,7 +49,18 @@ struct chanBlbChnRsecCtx {
    * (e.g. IPv4 Internet: 576 - 60 - 8 = 508).
    */
   unsigned int dgramMax;
-  unsigned int tagSize;   /* correlation tag size in bytes */
+  /*
+   * Correlation tag size in bytes.  The tag identifies which message
+   * a fragment belongs to.  Tags MUST be unique across all messages
+   * that may be in flight concurrently at the ingress.  If the
+   * ingress receives a fragment whose tag matches an existing entry
+   * but whose RS parameters (k, m, shard size) differ, the existing
+   * entry is evicted as a parameter mismatch and its collected
+   * shards are lost.  Callers that resend or re-encode a message
+   * with different RS parameters MUST use a distinct tag (e.g. by
+   * including a sequence byte) to avoid evicting the original.
+   */
+  unsigned int tagSize;
   unsigned int tableSize; /* max in-flight sequences (ingress and egress) */
   unsigned int hmacSize;  /* HMAC size in bytes (0 = no HMAC) */
   unsigned int egrMsg;    /* egress: messages sent */
