@@ -34,6 +34,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 #include <unistd.h>
 #include <time.h>
 #include <pthread.h>
@@ -53,7 +54,7 @@ unsigned int chanBlbTrnFdDatagramBurstLen = 0;  /* mean burst duration in ms (0 
 unsigned int chanBlbTrnFdDatagramBurstDrop = 80; /* drop% during burst (0-100) */
 
 /* Phase 6: token bucket bandwidth limiting */
-unsigned int chanBlbTrnFdDatagramBwLimit = 0;   /* max packets/sec (0 = unlimited) */
+unsigned int chanBlbTrnFdDatagramBwLimit = 0;   /* bits/sec (0 = unlimited) */
 
 struct qMsg {
   struct qMsg *next;
@@ -77,7 +78,7 @@ struct ctx {
   int o4;
   int i6;
   int o6;
-  int s; /* bit 2: output active, bit 4: thread running */
+  int s; /* bit 1: delay initialized, bit 2: output active, bit 4: thread running */
   pthread_mutex_t m;
   pthread_cond_t r;
   struct qMsg *qHead;
@@ -88,7 +89,9 @@ struct ctx {
 };
 #define V ((struct ctx *)v)
 
-/* dispatch sendto to the correct fd based on sa_family */
+/* dispatch sendto to the correct fd based on sa_family.
+ * transient errors (carrier loss, etc.) return 0 (treat as lost).
+ * only EBADF/ENOTSOCK return -1 (fatal). */
 static int
 sendByFamily(
   struct ctx *c
@@ -96,6 +99,7 @@ sendByFamily(
  ,unsigned int l
 ){
   unsigned int al;
+  int r;
 
   if (l < 1)
     return (-1);
@@ -106,11 +110,17 @@ sendByFamily(
   case AF_INET:
     if (c->o4 < 0)
       return (-1);
-    return (sendto(c->o4, b + 1 + al, l - 1 - al, 0, (struct sockaddr *)(b + 1), al));
+    r = sendto(c->o4, b + 1 + al, l - 1 - al, 0, (struct sockaddr *)(b + 1), al);
+    if (r < 0 && errno != EBADF && errno != ENOTSOCK)
+      return (0);
+    return (r);
   case AF_INET6:
     if (c->o6 < 0)
       return (-1);
-    return (sendto(c->o6, b + 1 + al, l - 1 - al, 0, (struct sockaddr *)(b + 1), al));
+    r = sendto(c->o6, b + 1 + al, l - 1 - al, 0, (struct sockaddr *)(b + 1), al);
+    if (r < 0 && errno != EBADF && errno != ENOTSOCK)
+      return (0);
+    return (r);
   default:
     return (-1);
   }
@@ -198,6 +208,7 @@ chanBlbTrnFdDatagramInput(
 
   if (l <= 1 + sizeof (struct sockaddr_storage))
     return (0);
+retry:
   sl = sizeof (struct sockaddr_storage);
   if (V->i6 < 0)
     i = recvfrom(V->i4, b + 1 + sizeof (struct sockaddr_storage), l - 1 - sizeof (struct sockaddr_storage), 0, (struct sockaddr *)&b[1], &sl);
@@ -214,8 +225,10 @@ chanBlbTrnFdDatagramInput(
     else
       p[1].events = POLLIN;
     p[1].revents = 0;
-    if (poll(p, sizeof (p) / sizeof (p[0]), -1) < 0)
-      return (0);
+    if (poll(p, sizeof (p) / sizeof (p[0]), -1) < 0) {
+      if (errno == EBADF) return (0);
+      goto retry;
+    }
     if (p[0].revents == POLLIN)
       i = recvfrom(p[0].fd, b + 1 + sizeof (struct sockaddr_storage), l - 1 - sizeof (struct sockaddr_storage), 0, (struct sockaddr *)&b[1], &sl);
     else if (p[1].revents == POLLIN)
@@ -223,8 +236,11 @@ chanBlbTrnFdDatagramInput(
     else
       i = 0;
   }
-  if (i <= 0)
+  if (i <= 0) {
+    if (i < 0 && errno != EBADF && errno != ENOTSOCK)
+      goto retry;
     return (0);
+  }
   if ((b[0] = sl) < sizeof (struct sockaddr_storage))
     memmove(b + 1 + sl, b + 1 + sizeof (struct sockaddr_storage), i);
   return (1 + sl + i);
@@ -259,7 +275,7 @@ chanBlbTrnFdDatagramOutputCtx(
       pthread_mutex_destroy(&V->m);
       return (0);
     }
-    V->s = 2 | 4;
+    V->s = 1 | 2 | 4;
     if (pthread_create(&th, 0, delayT, v)) {
       V->s = 0;
       pthread_cond_destroy(&V->r);
@@ -359,6 +375,14 @@ burstDrop(
     mean_good_ms = (unsigned long)chanBlbTrnFdDatagramBurstLen
       * (chanBlbTrnFdDatagramBurstDrop - chanBlbTrnFdDatagramDropPct)
       / chanBlbTrnFdDatagramDropPct;
+    /* Cap elapsed at mean_good to prevent guaranteed burst onset
+     * after idle gaps. The linear P = elapsed/mean_good approximates
+     * the exponential CDF only for elapsed << mean_good. Without
+     * the cap, any gap > mean_good guarantees a burst — penalizing
+     * bursty traffic patterns (protocol flurries between quiet
+     * inter-epoch gaps) far beyond the configured DropPct. */
+    if (elapsed_ms > mean_good_ms)
+      elapsed_ms = mean_good_ms;
     if (mean_good_ms > 0 && elapsed_ms > 0
      && arc4random_uniform(
           mean_good_ms > 0xfffffffeUL
@@ -388,18 +412,22 @@ burstDrop(
 }
 
 /*
- * Token bucket bandwidth limiter: cap outgoing packets per second.
- * Tokens accumulate at BwLimit/sec, burst capacity = BwLimit.
+ * Token bucket bandwidth limiter: bits/sec.
+ * Tokens are bits. Each datagram costs len*8 bits.
+ * Burst capacity = BwLimit (one second of bits).
  */
 static int
 bwDrop(
   struct ctx *c
+ ,unsigned int len
 ){
   struct timespec now;
   long ms;
+  unsigned int cost;
 
   if (chanBlbTrnFdDatagramBwLimit == 0)
     return (0);
+  cost = len * 8;
   clock_gettime(CLOCK_REALTIME, &now);
   if (!c->bwInit) {
     c->bwLast = now;
@@ -420,8 +448,8 @@ bwDrop(
       c->bwLast = now;
     }
   }
-  if (c->bwTokens > 0) {
-    --c->bwTokens;
+  if (c->bwTokens >= cost) {
+    c->bwTokens -= cost;
     return (0);
   }
   return (1);
@@ -442,13 +470,13 @@ chanBlbTrnFdDatagramOutput(
     return (l);
   }
   /* bandwidth limit */
-  if (bwDrop(V))
+  if (bwDrop(V, l))
     return (l);
 
   if (chanBlbTrnFdDatagramDelayMs == 0) {
     if (sendByFamily(V, b, l) < 0)
       return (0);
-    return (l);
+    return (l); /* sendByFamily returns 0 for transient errors */
   }
   {
     struct qMsg *q;
@@ -487,7 +515,7 @@ void
 chanBlbTrnFdDatagramOutputClose(
   void *v
 ){
-  if (chanBlbTrnFdDatagramDelayMs > 0) {
+  if (V->s & 1) {
     pthread_mutex_lock(&V->m);
     V->s &= ~2;
     pthread_cond_signal(&V->r);
@@ -504,9 +532,9 @@ void
 chanBlbTrnFdDatagramFinalClose(
   void *v
 ){
-  if (chanBlbTrnFdDatagramDelayMs > 0) {
+  if (V->s & 1) {
     pthread_mutex_lock(&V->m);
-    while (V->s) {
+    while (V->s & ~1) {
       pthread_mutex_unlock(&V->m);
       sched_yield();
       pthread_mutex_lock(&V->m);

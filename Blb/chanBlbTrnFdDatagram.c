@@ -19,6 +19,7 @@
  */
 
 #include <string.h>
+#include <errno.h>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <poll.h>
@@ -122,6 +123,7 @@ chanBlbTrnFdDatagramInput(
 
   if (!V->pfdn || l <= 1 + sizeof (struct sockaddr_storage))
     return (0);
+retry:
   sl = sizeof (struct sockaddr_storage);
   if (V->pfdn == 1) {
     r = recvfrom(V->pfd[0].fd,
@@ -131,8 +133,10 @@ chanBlbTrnFdDatagramInput(
   } else {
     for (i = 0; i < V->pfdn; ++i)
       V->pfd[i].revents = 0;
-    if (poll(V->pfd, V->pfdn, -1) < 0)
-      return (0);
+    if (poll(V->pfd, V->pfdn, -1) < 0) {
+      if (errno == EBADF) return (0);
+      goto retry;
+    }
     r = 0;
     for (i = 0; i < V->pfdn; ++i) {
       if (V->pfd[i].revents & POLLIN) {
@@ -145,8 +149,11 @@ chanBlbTrnFdDatagramInput(
       }
     }
   }
-  if (r <= 0)
+  if (r <= 0) {
+    if (r < 0 && errno != EBADF && errno != ENOTSOCK)
+      goto retry;
     return (0);
+  }
   if ((b[0] = sl) < sizeof (struct sockaddr_storage))
     memmove(b + 1 + sl, b + 1 + sizeof (struct sockaddr_storage), r);
   return (1 + sl + r);
@@ -198,21 +205,31 @@ chanBlbTrnFdDatagramOutput(
   unsigned int i;
   int ok;
 
-  if (l < 1 || b[0] > sizeof (struct sockaddr_storage) || l <= 1 + b[0])
+  if (l < 1 || b[0] > sizeof (struct sockaddr_storage) || l <= 1U + b[0])
     return (0);
   ok = 0;
   switch (((struct sockaddr *)&b[1])->sa_family) {
   case AF_INET:
-    for (i = 0; i < V->o4n; ++i)
+    for (i = 0; i < V->o4n; ++i) {
       if (sendto(V->o4[i], b + 1 + b[0], l - 1 - b[0], 0,
             (struct sockaddr *)&b[1], b[0]) >= 0)
         ok = 1;
+      else if (errno == EBADF || errno == ENOTSOCK)
+        return (0);
+      else
+        ok = 1; /* transient error, treat as sent (lost) */
+    }
     break;
   case AF_INET6:
-    for (i = 0; i < V->o6n; ++i)
+    for (i = 0; i < V->o6n; ++i) {
       if (sendto(V->o6[i], b + 1 + b[0], l - 1 - b[0], 0,
             (struct sockaddr *)&b[1], b[0]) >= 0)
         ok = 1;
+      else if (errno == EBADF || errno == ENOTSOCK)
+        return (0);
+      else
+        ok = 1; /* transient error, treat as sent (lost) */
+    }
     break;
   default:
     break;

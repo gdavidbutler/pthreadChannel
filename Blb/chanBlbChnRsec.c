@@ -524,14 +524,14 @@ chanBlbChnRsecEgr(
         item.entry = slot;
         item.ts = now;
         for (i = 0; i < km; ++i) {
-          item.shard = i;
-          shardInsert(shards, shardCount, &item);
-          ++shardCount;
           item.ts.tv_nsec += (long)delayMs * 1000000L;
           if (item.ts.tv_nsec >= 1000000000L) {
             item.ts.tv_sec++;
             item.ts.tv_nsec -= 1000000000L;
           }
+          item.shard = i;
+          shardInsert(shards, shardCount, &item);
+          ++shardCount;
         }
 
         /* resume gets */

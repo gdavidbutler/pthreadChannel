@@ -2131,10 +2131,6 @@ testPackMixedSize(void)
   const char *small1 = "tiny";
   const char *small2 = "also tiny";
   unsigned char big[400];
-  const char *msgs[2];
-
-  msgs[0] = small1;
-  msgs[1] = small2;
 
   printf("=== Test: packing mixed small and large blobs ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
