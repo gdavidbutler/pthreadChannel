@@ -21,6 +21,33 @@
 extern unsigned int chanBlbTrnFdDatagramDelayMs;
 extern unsigned int chanBlbTrnFdDatagramDropPct;
 
+/* packet-send observation (defined in chanBlbTrnFdDatagramStress.c) */
+#define CHAN_BLB_TRN_FD_DATAGRAM_OBS_MAX 1024
+struct chanBlbTrnFdDatagramObsEntry {
+  struct timespec ts;
+  unsigned int len;
+};
+extern unsigned int chanBlbTrnFdDatagramObsEnable;
+extern unsigned int chanBlbTrnFdDatagramObsCnt;
+extern struct chanBlbTrnFdDatagramObsEntry
+  chanBlbTrnFdDatagramObs[CHAN_BLB_TRN_FD_DATAGRAM_OBS_MAX];
+
+/* milliseconds between two observed packet timestamps (b - a) */
+static long
+obsDeltaMs(
+  unsigned int a
+ ,unsigned int b
+){
+  long s;
+  long n;
+
+  s = (long)(chanBlbTrnFdDatagramObs[b].ts.tv_sec
+           - chanBlbTrnFdDatagramObs[a].ts.tv_sec);
+  n = chanBlbTrnFdDatagramObs[b].ts.tv_nsec
+    - chanBlbTrnFdDatagramObs[a].ts.tv_nsec;
+  return (s * 1000 + n / 1000000);
+}
+
 static int Pass;
 static int Fail;
 
@@ -2326,6 +2353,333 @@ testPackCounters(void)
   teardown(&env);
 }
 
+/* ===== PACING TESTS =====
+ * Verify that egress packet emission honors the inter-shard delay:
+ *   - Same-message shards never pack together (one packet each).
+ *   - After emitting a packet, the next emit waits at least the
+ *     largest delayMs among shards actually packed into that packet.
+ * The observation hook in chanBlbTrnFdDatagramStress.c records
+ * caller-side send timestamps into chanBlbTrnFdDatagramObs[]. */
+
+static void
+testPaceSingleMessage(void)
+{
+  struct testEnv env;
+  struct chanBlbChnRsecCtx rsecCtx;
+  chanBlb_t *m;
+  const char *msg = "paced single";
+  unsigned char delayMs;
+  unsigned int i;
+  unsigned int ok;
+  long tol;
+
+  /* k=1 m=4 => 5 shards, all from one message.  Same-message shards
+   * never pack together, so each shard travels in its own datagram
+   * and consecutive packets must be >= delayMs apart. */
+  delayMs = 30;
+  tol = 3; /* ms tolerance for clock/scheduling jitter */
+
+  printf("=== Test: pace single message k=1 m=4 delayMs=30 ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 2;
+  rsecCtx.dgramMax = 520;
+  rsecCtx.tableSize = 64;
+
+  chanBlbTrnFdDatagramObsCnt = 0;
+  chanBlbTrnFdDatagramObsEnable = 1;
+
+  if (!setup(&env, &rsecCtx)) {
+    check("setup", 0);
+    chanBlbTrnFdDatagramObsEnable = 0;
+    return;
+  }
+
+  m = mkBlob(&env.sa, 2, 1, 4, delayMs, msg, strlen(msg));
+  check("send", sendBlob(env.outChan, m));
+  m = recvBlob(env.inChan, 3000000000L);
+  check("received", m != 0);
+  if (m) { check("payload correct", verifyBlob(m, 2, msg, strlen(msg))); free(m); }
+
+  /* wait for all 5 shards to be emitted (total window ~ 5*delayMs) */
+  usleep(300000);
+  chanBlbTrnFdDatagramObsEnable = 0;
+
+  check("egrFrg == 5", rsecCtx.egrFrg == 5);
+  check("5 datagrams emitted", chanBlbTrnFdDatagramObsCnt == 5);
+  ok = 1;
+  for (i = 1; i < chanBlbTrnFdDatagramObsCnt; ++i) {
+    long g;
+
+    g = obsDeltaMs(i - 1, i);
+    if (g < (long)delayMs - tol) {
+      printf("    gap[%u]=%ldms < %dms\n", i, g, delayMs);
+      ok = 0;
+    }
+  }
+  check("all inter-packet gaps >= delayMs", ok);
+
+  teardown(&env);
+}
+
+static void
+testPacePackingDensity(void)
+{
+  struct testEnv env;
+  struct chanBlbChnRsecCtx rsecCtx;
+  chanBlb_t *m;
+  unsigned int i;
+  unsigned int ok;
+  int seen[5];
+  const char *msgs[5];
+
+  msgs[0] = "pack dense a";
+  msgs[1] = "pack dense b";
+  msgs[2] = "pack dense c";
+  msgs[3] = "pack dense d";
+  msgs[4] = "pack dense e";
+
+  /* 5 messages to the same address, k=1 m=0 each.  Shards schedule
+   * within a narrow window — packets emitted after the first should
+   * coalesce several shards each. ObsCnt < egrFrg proves packing. */
+  printf("=== Test: packing reduces datagram count ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 2;
+  rsecCtx.dgramMax = 520;
+  rsecCtx.tableSize = 64;
+
+  chanBlbTrnFdDatagramObsCnt = 0;
+  chanBlbTrnFdDatagramObsEnable = 1;
+
+  if (!setup(&env, &rsecCtx)) {
+    check("setup", 0);
+    chanBlbTrnFdDatagramObsEnable = 0;
+    return;
+  }
+
+  for (i = 0; i < 5; ++i) {
+    m = mkBlob(&env.sa, 2, (unsigned short)(i + 1), 0, 10,
+               msgs[i], strlen(msgs[i]));
+    if (!sendBlob(env.outChan, m)) {
+      check("send", 0);
+      chanBlbTrnFdDatagramObsEnable = 0;
+      teardown(&env);
+      return;
+    }
+  }
+
+  ok = 0;
+  memset(seen, 0, sizeof (seen));
+  for (i = 0; i < 5; ++i) {
+    unsigned int j;
+
+    m = recvBlob(env.inChan, 3000000000L);
+    if (!m) continue;
+    for (j = 0; j < 5; ++j) {
+      if (!seen[j] && verifyBlob(m, 2, msgs[j], strlen(msgs[j]))) {
+        seen[j] = 1;
+        ++ok;
+        break;
+      }
+    }
+    free(m);
+  }
+  check("all 5 messages delivered", ok == 5);
+  usleep(150000);
+  chanBlbTrnFdDatagramObsEnable = 0;
+
+  check("egrFrg == 5", rsecCtx.egrFrg == 5);
+  check("packed: ObsCnt < egrFrg", chanBlbTrnFdDatagramObsCnt < rsecCtx.egrFrg);
+  teardown(&env);
+}
+
+static void
+testPaceMaxDelayMixed(void)
+{
+  struct testEnv env;
+  struct chanBlbChnRsecCtx rsecCtx;
+  chanBlb_t *m;
+  const char *msgA = "slow";
+  const char *msgB = "fast";
+  unsigned char delayA;
+  unsigned char delayB;
+  int seenA;
+  int seenB;
+  unsigned int i;
+  unsigned int hasSlowGap;
+  unsigned int sawFastGap;
+
+  /* Construct a scenario that exercises "max delayMs in packed packet":
+   *   msg A: k=1 m=1 (2 shards) delayMs=80  — scheduled at +80, +160
+   *   msg B: k=1 m=3 (4 shards) delayMs=20  — scheduled at +20,+40,+60,+80
+   * Both to the same address, queued back-to-back.  Expected emissions
+   * (approximate, dropping insertion jitter):
+   *   P1 @20: B0                       → lastMaxD=20
+   *   P2 @40: B1                       → lastMaxD=20
+   *   P3 @60: B2                       → lastMaxD=20
+   *   P4 @80: A0 + B3 (packed, both due) → lastMaxD=80
+   *   P5 @160 (= P4 + 80): A1          → lastMaxD=80
+   * The critical check is gap(P5,P4) >= 80ms: a bug that used min
+   * rather than max would schedule P5 only 20ms after P4. */
+  delayA = 80;
+  delayB = 20;
+
+  printf("=== Test: pace respects max delayMs in packed packet ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 2;
+  rsecCtx.dgramMax = 520;
+  rsecCtx.tableSize = 64;
+
+  chanBlbTrnFdDatagramObsCnt = 0;
+  chanBlbTrnFdDatagramObsEnable = 1;
+
+  if (!setup(&env, &rsecCtx)) {
+    check("setup", 0);
+    chanBlbTrnFdDatagramObsEnable = 0;
+    return;
+  }
+
+  /* queue A first so its slot is claimed first; both blobs land in
+   * the schedule before the first emission at t=~20ms */
+  m = mkBlob(&env.sa, 2, 1, 1, delayA, msgA, strlen(msgA));
+  check("sendA", sendBlob(env.outChan, m));
+  m = mkBlob(&env.sa, 2, 2, 3, delayB, msgB, strlen(msgB));
+  check("sendB", sendBlob(env.outChan, m));
+
+  seenA = 0;
+  seenB = 0;
+  for (i = 0; i < 2; ++i) {
+    m = recvBlob(env.inChan, 3000000000L);
+    if (!m) continue;
+    if (verifyBlob(m, 2, msgA, strlen(msgA)))
+      seenA = 1;
+    else if (verifyBlob(m, 2, msgB, strlen(msgB)))
+      seenB = 1;
+    free(m);
+  }
+  check("msgA received", seenA);
+  check("msgB received", seenB);
+
+  usleep(400000); /* wait for all shards to be emitted (~160ms + margin) */
+  chanBlbTrnFdDatagramObsEnable = 0;
+
+  check("egrFrg == 6", rsecCtx.egrFrg == 6);
+  /* 6 shards packed into 4..6 datagrams depending on insertion
+   * jitter (how many B shards overlap the A shards at the same tick).
+   * Count isn't the invariant; the inter-packet delays are. */
+  check("ObsCnt in [4,6]",
+        chanBlbTrnFdDatagramObsCnt >= 4
+     && chanBlbTrnFdDatagramObsCnt <= 6);
+
+  hasSlowGap = 0;
+  sawFastGap = 0;
+  for (i = 1; i < chanBlbTrnFdDatagramObsCnt; ++i) {
+    long g;
+
+    g = obsDeltaMs(i - 1, i);
+    /* every gap must at minimum honor the fast delay */
+    if (g >= (long)delayB - 3)
+      ++sawFastGap;
+    /* at least one gap must honor the slow delay */
+    if (g >= (long)delayA - 3)
+      hasSlowGap = 1;
+  }
+  check("every gap >= delayB (fast minimum)",
+        sawFastGap == chanBlbTrnFdDatagramObsCnt - 1);
+  check("some gap >= delayA (slow drives one wait)", hasSlowGap);
+
+  teardown(&env);
+}
+
+static void
+testPaceNoBlasting(void)
+{
+  struct testEnv env;
+  struct chanBlbChnRsecCtx rsecCtx;
+  chanBlb_t *m;
+  unsigned int i;
+  unsigned int ok;
+  int seen[3];
+  const char *msgs[3];
+  unsigned char delayMs;
+
+  msgs[0] = "no blast alpha";
+  msgs[1] = "no blast bravo";
+  msgs[2] = "no blast charlie";
+
+  /* Three k=1 m=2 messages (3 shards each = 9 shards total) paced at
+   * delayMs=25.  Maximal packing finishes in 3 datagrams (shards from
+   * all 3 messages coalesced per tick); no packing emits 9.  The
+   * bound we verify regardless of packing: no inter-packet gap may
+   * be smaller than delayMs.  If the pacing logic were bypassed,
+   * the egress would blast shards back-to-back. */
+  delayMs = 25;
+
+  printf("=== Test: pace 3 messages never blast (delayMs=25) ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 2;
+  rsecCtx.dgramMax = 520;
+  rsecCtx.tableSize = 64;
+
+  chanBlbTrnFdDatagramObsCnt = 0;
+  chanBlbTrnFdDatagramObsEnable = 1;
+
+  if (!setup(&env, &rsecCtx)) {
+    check("setup", 0);
+    chanBlbTrnFdDatagramObsEnable = 0;
+    return;
+  }
+
+  for (i = 0; i < 3; ++i) {
+    m = mkBlob(&env.sa, 2, (unsigned short)(i + 1), 2, delayMs,
+               msgs[i], strlen(msgs[i]));
+    if (!sendBlob(env.outChan, m)) {
+      check("send", 0);
+      chanBlbTrnFdDatagramObsEnable = 0;
+      teardown(&env);
+      return;
+    }
+  }
+  ok = 0;
+  memset(seen, 0, sizeof (seen));
+  for (i = 0; i < 3; ++i) {
+    unsigned int j;
+
+    m = recvBlob(env.inChan, 5000000000L);
+    if (!m) continue;
+    for (j = 0; j < 3; ++j) {
+      if (!seen[j] && verifyBlob(m, 2, msgs[j], strlen(msgs[j]))) {
+        seen[j] = 1;
+        ++ok;
+        break;
+      }
+    }
+    free(m);
+  }
+  check("all 3 messages delivered", ok == 3);
+  usleep(400000);
+  chanBlbTrnFdDatagramObsEnable = 0;
+
+  check("egrFrg == 9", rsecCtx.egrFrg == 9);
+  /* at least as many packets as shards-per-message (same-msg shards
+   * never pack), at most one packet per shard */
+  check("ObsCnt in [3,9]",
+        chanBlbTrnFdDatagramObsCnt >= 3
+     && chanBlbTrnFdDatagramObsCnt <= 9);
+  ok = 1;
+  for (i = 1; i < chanBlbTrnFdDatagramObsCnt; ++i) {
+    long g;
+
+    g = obsDeltaMs(i - 1, i);
+    if (g < (long)delayMs - 3) {
+      printf("    gap[%u]=%ldms < %dms\n", i, g, delayMs);
+      ok = 0;
+    }
+  }
+  check("no gap faster than delayMs", ok);
+
+  teardown(&env);
+}
+
 static void
 testPackSameMessage(void)
 {
@@ -2440,6 +2794,12 @@ main(
   testPackHdr();
   testPackCounters();
   testPackSameMessage();
+
+  /* pacing tests */
+  testPaceSingleMessage();
+  testPacePackingDensity();
+  testPaceMaxDelayMixed();
+  testPaceNoBlasting();
 
   printf("\n=======================================\n");
   printf("Results: %d passed, %d failed\n", Pass, Fail);

@@ -56,6 +56,22 @@ unsigned int chanBlbTrnFdDatagramBurstDrop = 80; /* drop% during burst (0-100) *
 /* Phase 6: token bucket bandwidth limiting */
 unsigned int chanBlbTrnFdDatagramBwLimit = 0;   /* bits/sec (0 = unlimited) */
 
+/* Packet-send observation for pacing tests.
+ * When ObsEnable is non-zero, chanBlbTrnFdDatagramOutput records a
+ * monotonic timestamp and the wire datagram length (addr prefix
+ * excluded) into Obs[], capped at CHAN_BLB_TRN_FD_DATAGRAM_OBS_MAX.
+ * Unsynchronized: intended for single-producer tests that leave
+ * DelayMs=0 so all sends come from the egress thread. */
+#define CHAN_BLB_TRN_FD_DATAGRAM_OBS_MAX 1024
+struct chanBlbTrnFdDatagramObsEntry {
+  struct timespec ts;
+  unsigned int len;
+};
+unsigned int chanBlbTrnFdDatagramObsEnable = 0;
+unsigned int chanBlbTrnFdDatagramObsCnt = 0;
+struct chanBlbTrnFdDatagramObsEntry
+  chanBlbTrnFdDatagramObs[CHAN_BLB_TRN_FD_DATAGRAM_OBS_MAX];
+
 struct qMsg {
   struct qMsg *next;
   struct timespec deadline;
@@ -461,6 +477,21 @@ chanBlbTrnFdDatagramOutput(
  ,const unsigned char *b
  ,unsigned int l
 ){
+  /* pacing observation: record caller-side send attempt timestamp
+   * and wire payload length (addr prefix stripped).  Ahead of drop
+   * logic so that the test sees what the egress thread attempted
+   * to emit, not what survived the lossy transport. */
+  if (chanBlbTrnFdDatagramObsEnable
+   && chanBlbTrnFdDatagramObsCnt < CHAN_BLB_TRN_FD_DATAGRAM_OBS_MAX
+   && l >= 1
+   && l > 1 + (unsigned int)b[0]) {
+    struct chanBlbTrnFdDatagramObsEntry *e;
+
+    e = &chanBlbTrnFdDatagramObs[chanBlbTrnFdDatagramObsCnt];
+    clock_gettime(CLOCK_MONOTONIC, &e->ts);
+    e->len = l - 1 - (unsigned int)b[0];
+    ++chanBlbTrnFdDatagramObsCnt;
+  }
   /* burst drop or independent random drop */
   if (chanBlbTrnFdDatagramBurstLen > 0) {
     if (burstDrop(V, b))

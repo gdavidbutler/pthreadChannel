@@ -74,6 +74,7 @@ struct egrEntry {
   unsigned int stride;
   unsigned int km;
   unsigned int sent;    /* shards sent so far */
+  unsigned char delayMs;/* per-message inter-shard delay */
 };
 
 struct shardItem {
@@ -111,6 +112,7 @@ shardInsert(
 /*
  * Pack and send one datagram starting from the head of the shard schedule.
  * Packs additional due shards from different messages to the same address.
+ * *maxDelayMs (out): largest delay_ms among packed shards.
  * Returns 0 on output failure.
  */
 static int
@@ -124,6 +126,7 @@ egrSendPack(
  ,unsigned int dgramMax
  ,struct shardItem *shards
  ,unsigned long *shardCount
+ ,unsigned char *maxDelayMs
 ){
   unsigned long si2;
   unsigned int ei;
@@ -150,6 +153,7 @@ egrSendPack(
     fragLen);
   packPos += fragLen;
   packSeen[ei] = 1;
+  *maxDelayMs = table[ei].delayMs;
 
   /* pop head */
   --(*shardCount);
@@ -183,6 +187,8 @@ egrSendPack(
         fragLen2);
       packPos += fragLen2;
       packSeen[ei2] = 1;
+      if (table[ei2].delayMs > *maxDelayMs)
+        *maxDelayMs = table[ei2].delayMs;
       ++ctx->egrFrg;
       ++table[ei2].sent;
       /* pop this item */
@@ -240,6 +246,14 @@ chanBlbChnRsecEgr(
   unsigned long shardCount;
   unsigned long shardAlloc;
   unsigned int ti;
+  /* Inter-packet pacing state.  After emitting, the next emit
+   * must wait at least lastMaxD ms — the largest delay_ms among
+   * shards packed into that packet.  Per-message scheduling
+   * (shards[].ts) is unchanged so same-destination shards whose
+   * timestamps coincide still pack into one datagram. */
+  struct timespec lastEmit;
+  unsigned char lastMaxD;
+  unsigned char hasEmit;
 
   ctx = (struct chanBlbChnRsecCtx *)v->frmCtx;
   tagSize = ctx->tagSize;
@@ -282,6 +296,8 @@ chanBlbChnRsecEgr(
   shardCount = 0;
   shardAlloc = 0;
   pending = 0;
+  lastMaxD = 0;
+  hasEmit = 0;
 
   pthread_cleanup_push((void(*)(void*))v->fin, v);
   p[0].c = v->chan;
@@ -291,25 +307,44 @@ chanBlbChnRsecEgr(
   for (;;) {
     long ns;
     struct timespec now;
+    struct timespec target;
 
-    /* compute timeout from head of shard schedule */
+    /* Emission target: the later of the head shard's scheduled
+     * ts (per-message pacing) and lastEmit + lastMaxD (inter-
+     * packet wire pacing).  target is only valid when shardCount
+     * is non-zero; reused below after chanOne to gate emission. */
     if (!shardCount) {
       ns = 0; /* block forever */
     } else {
+      target = shards[0].ts;
+      if (hasEmit) {
+        struct timespec nextAllowed;
+
+        nextAllowed = lastEmit;
+        nextAllowed.tv_nsec += (long)lastMaxD * 1000000L;
+        if (nextAllowed.tv_nsec >= 1000000000L) {
+          nextAllowed.tv_sec++;
+          nextAllowed.tv_nsec -= 1000000000L;
+        }
+        if (nextAllowed.tv_sec > target.tv_sec
+         || (nextAllowed.tv_sec == target.tv_sec
+          && nextAllowed.tv_nsec > target.tv_nsec))
+          target = nextAllowed;
+      }
       clock_gettime(CLOCK_MONOTONIC, &now);
-      if (shards[0].ts.tv_sec < now.tv_sec
-       || (shards[0].ts.tv_sec == now.tv_sec
-        && shards[0].ts.tv_nsec <= now.tv_nsec)) {
-        ns = -1; /* shards due now, poll */
+      if (target.tv_sec < now.tv_sec
+       || (target.tv_sec == now.tv_sec
+        && target.tv_nsec <= now.tv_nsec)) {
+        ns = -1; /* due now, poll */
       } else {
         time_t dsec;
 
-        dsec = shards[0].ts.tv_sec - now.tv_sec;
+        dsec = target.tv_sec - now.tv_sec;
         if (dsec > 1)
           ns = 1000000000L; /* cap at 1s for ILP32 portability */
         else {
           ns = dsec * 1000000000L
-             + (shards[0].ts.tv_nsec - now.tv_nsec);
+             + (target.tv_nsec - now.tv_nsec);
           if (ns <= 0) ns = 1;
         }
       }
@@ -326,16 +361,23 @@ chanBlbChnRsecEgr(
       break; /* shutdown */
     }
 
-    /* send all due shards */
-    clock_gettime(CLOCK_MONOTONIC, &now);
-    while (shardCount > 0
-     && (shards[0].ts.tv_sec < now.tv_sec
-      || (shards[0].ts.tv_sec == now.tv_sec
-       && shards[0].ts.tv_nsec <= now.tv_nsec))) {
-      if (!egrSendPack(v, ctx, table, tableSize, packBuf, packSeen,
-                       dgramMax, shards, &shardCount))
-        goto exit;
+    /* Emit at most one packet per pass.  shardCount>0 here implies
+     * target was computed above; pending processing only runs
+     * afterward so shardCount cannot grow between then and now. */
+    if (shardCount) {
       clock_gettime(CLOCK_MONOTONIC, &now);
+      if (target.tv_sec < now.tv_sec
+       || (target.tv_sec == now.tv_sec
+        && target.tv_nsec <= now.tv_nsec)) {
+        unsigned char packMaxD;
+
+        if (!egrSendPack(v, ctx, table, tableSize, packBuf, packSeen,
+                         dgramMax, shards, &shardCount, &packMaxD))
+          goto exit;
+        clock_gettime(CLOCK_MONOTONIC, &lastEmit);
+        lastMaxD = packMaxD;
+        hasEmit = 1;
+      }
     }
 
     /* process pending blob if slot available */
@@ -505,6 +547,7 @@ chanBlbChnRsecEgr(
         table[slot].stride = stride;
         table[slot].km = km;
         table[slot].sent = 0;
+        table[slot].delayMs = delayMs;
 
         /* grow shard schedule if needed */
         if (shardCount + km > shardAlloc) {
