@@ -29,7 +29,7 @@ clean:
 sockproxy: example/sockproxy.c chan.h Blb/chanBlb.h Blb/chanBlbTrnFd.h Blb/chanBlbTrnFdStream.h chan.o chanBlb.o chanBlbTrnFd.o chanBlbTrnFdStream.o
 	$(CC) $(CFLAGS) -o sockproxy example/sockproxy.c chan.o chanBlb.o chanBlbTrnFd.o chanBlbTrnFdStream.o -lpthread
 
-pipeproxy: example/pipeproxy.c chan.h Blb/chanBlb.h Blb/chanBlbChnVlq.h Blb/chanBlbTrnFd.h chan.o chanStrFIFO.o chanBlb.o chanBlbTrnFd.o
+pipeproxy: example/pipeproxy.c chan.h Blb/chanBlb.h Blb/chanBlbChnVlq.h Blb/chanBlbTrnFd.h chan.o chanStrFIFO.o chanBlb.o chanBlbChnVlq.o chanBlbTrnFd.o
 	$(CC) $(CFLAGS) -o pipeproxy example/pipeproxy.c chan.o chanStrFIFO.o chanBlb.o chanBlbChnVlq.o chanBlbTrnFd.o -lpthread
 
 datagramchat: example/datagramchat.c chan.h Blb/chanBlb.h Blb/chanBlbTrnFdDatagram.h chan.o chanBlb.o chanBlbTrnFdDatagram.o
@@ -45,7 +45,7 @@ squint: example/squint.c chan.h chan.o
 	$(CC) $(CFLAGS) -o squint example/squint.c chan.o -lpthread
 
 floydWarshall: example/floydWarshall.c chan.h chan.o
-	$(CC) $(CFLAGS) -Iexample -D_GNU_SOURCE -DFWMAIN -DFWEQL -DFWBLK -o floydWarshall example/floydWarshall.c chan.o -lpthread
+	$(CC) $(CFLAGS) -Iexample -DFWMAIN -DFWEQL -DFWBLK -o floydWarshall example/floydWarshall.c chan.o -lpthread
 
 chanStrBlbSQLtest: example/chanStrBlbSQLtest.c example/chanStrBlbSQL.h chan.h Str/chanStrFIFO.h Blb/chanBlb.h chanStrBlbSQL.o chanStrFIFO.o chanBlb.o
 	$(CC) $(SQLITE_CFLAGS) -Iexample -o chanStrBlbSQLtest example/chanStrBlbSQLtest.c chanStrBlbSQL.o chanStrFIFO.o chanBlb.o chan.o $(SQLITE_LIB)
