@@ -222,8 +222,8 @@ egrSendPack(
 }
 
 /*
- * Wire datagram (packed): [frag1][frag2]...[fragN][smallhash(1)]
- * Each fragment: [addrlen(1)][addr][tag(tagSize)][k-1(1)][m(1)][si(1)][pad_vlq(1-2)][shard_len_vlq(1-2)][shard_data(shard_len)][hmac(hmacSize)]
+ * Wire datagram (packed): [addrlen(1)][addr][frag1][frag2]...[fragN][smallhash(1)]
+ * Each fragment: [tag(tagSize)][k-1(1)][m(1)][si(1)][pad_vlq(1-2)][shard_len_vlq(1-2)][shard_data(shard_len)][hmac(hmacSize)]
  * Work buffer per shard slot (no smallhash): [addrlen][addr][tag][k-1][m][si][pad_vlq][shard_len_vlq][shard_data(msgShardSize)][hmac]
  */
 void *
@@ -416,12 +416,23 @@ chanBlbChnRsecEgr(
         struct shardItem *tmp;
 
         /* parse blob prefix: [addrlen(1)][addr(addrlen)][tag(tagSize)][m(1)][delay_ms(1)][payload] */
+        if (pending->l < 1) {
+          /* malformed blob; drop and keep running */
+          v->free(pending);
+          pending = 0;
+          p[0].v = (void **)&pending;
+          p[0].o = chanOpGet;
+          continue;
+        }
         addrlen = pending->b[0];
         prefixSize = 1 + addrlen + tagSize;
         if (pending->l < prefixSize + 2) {
+          /* malformed blob; drop and keep running */
           v->free(pending);
           pending = 0;
-          break;
+          p[0].v = (void **)&pending;
+          p[0].o = chanOpGet;
+          continue;
         }
         mVal = pending->b[prefixSize];
         delayMs = pending->b[prefixSize + 1];
@@ -429,6 +440,14 @@ chanBlbChnRsecEgr(
 
         /* compute k using maxShardSize */
         k = payloadLen > 0 ? (payloadLen + maxShardSize - 1) / maxShardSize : 1;
+        if (k > 256) {
+          /* payload exceeds chanBlbChnRsecMax(ctx, 0); drop and keep running */
+          v->free(pending);
+          pending = 0;
+          p[0].v = (void **)&pending;
+          p[0].o = chanOpGet;
+          continue;
+        }
         km = k + (unsigned int)mVal;
         if (km > 256) {
           mVal = (unsigned char)(256 - k);
@@ -463,19 +482,30 @@ chanBlbChnRsecEgr(
         headerGap = prefixSize + 3 + padVlqLen + shardVlqLen;
         stride = headerGap + msgShardSize + hmacSize;
 
-        /* allocate: slots + data pointer array + parity pointer array */
-        work = (unsigned char *)v->realloc(0,
-          (unsigned long)km * stride
-          + (unsigned long)k * sizeof (const unsigned char *)
+        /* allocate pointer arrays separately from the byte work buffer so
+         * the pointer arrays are suitably aligned regardless of stride. */
+        dataPtrs = (const unsigned char **)v->realloc(0,
+          (unsigned long)k * sizeof (const unsigned char *)
           + (unsigned long)(unsigned int)mVal * sizeof (unsigned char *));
-        if (!work) {
+        if (!dataPtrs) {
+          /* drop blob and keep running */
           v->free(pending);
           pending = 0;
-          break;
+          p[0].v = (void **)&pending;
+          p[0].o = chanOpGet;
+          continue;
         }
-        dataPtrs = (const unsigned char **)(work + (unsigned long)km * stride);
-        parityPtrs = (unsigned char **)((unsigned char *)dataPtrs
-          + (unsigned long)k * sizeof (const unsigned char *));
+        parityPtrs = (unsigned char **)(dataPtrs + k);
+
+        work = (unsigned char *)v->realloc(0, (unsigned long)km * stride);
+        if (!work) {
+          v->free(dataPtrs);
+          v->free(pending);
+          pending = 0;
+          p[0].v = (void **)&pending;
+          p[0].o = chanOpGet;
+          continue;
+        }
 
         /* build header template in first slot */
         memcpy(work, pending->b, prefixSize); /* [addrlen][addr][tag] common prefix */
@@ -513,8 +543,19 @@ chanBlbChnRsecEgr(
         }
 
         /* encode parity */
-        if (mVal > 0 && msgShardSize > 0)
-          rsecEncode(dataPtrs, parityPtrs, msgShardSize, k, (unsigned int)mVal);
+        if (mVal > 0 && msgShardSize > 0
+         && rsecEncode(dataPtrs, parityPtrs, msgShardSize, k, (unsigned int)mVal)) {
+          /* unexpected encode failure: drop and keep running */
+          v->free(dataPtrs);
+          v->free(work);
+          v->free(pending);
+          pending = 0;
+          p[0].v = (void **)&pending;
+          p[0].o = chanOpGet;
+          continue;
+        }
+        /* pointer arrays no longer needed after encode */
+        v->free(dataPtrs);
 
         /* encrypt each shard (before HMAC: encrypt-then-MAC) */
         /* last data shard (k-1) excludes padding to avoid encrypting known zeros */
@@ -555,9 +596,12 @@ chanBlbChnRsecEgr(
           tmp = (struct shardItem *)v->realloc(shards,
             shardAlloc * sizeof (struct shardItem));
           if (!tmp) {
+            /* drop this message and keep running (pending already freed) */
             v->free(table[slot].work);
             table[slot].work = 0;
-            break;
+            p[0].v = (void **)&pending;
+            p[0].o = chanOpGet;
+            continue;
           }
           shards = tmp;
         }
@@ -729,7 +773,7 @@ chanBlbChnRsecIgr(
         if (pos + tagSize + 5 > n)
           break;
         padding = (unsigned int)(buf[pos + tagSize + 3] & 0x7f);
-        padding = ((padding << 7) | (unsigned int)buf[pos + tagSize + 4]) + 1;
+        padding = ((padding << 7) | (unsigned int)(buf[pos + tagSize + 4] & 0x7f)) + 1;
         padVlqLen = 2;
       } else {
         padding = buf[pos + tagSize + 3];
@@ -747,7 +791,7 @@ chanBlbChnRsecIgr(
           if (vlqOff + 2 > n)
             break;
           fragShardSize = (unsigned int)(buf[vlqOff] & 0x7f);
-          fragShardSize = ((fragShardSize << 7) | (unsigned int)buf[vlqOff + 1]) + 1;
+          fragShardSize = ((fragShardSize << 7) | (unsigned int)(buf[vlqOff + 1] & 0x7f)) + 1;
           shardVlqLen = 2;
         } else {
           fragShardSize = buf[vlqOff];

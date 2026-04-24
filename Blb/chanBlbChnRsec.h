@@ -23,6 +23,13 @@
 
 /* This multiplexer / demultiplexer depends on datagram semantics (write boundaries are preserved) */
 
+/*
+ * hmacCtx and cryptCtx are shared between the egress and ingress
+ * threads (both receive the same ctx via v->frmCtx).  The four
+ * callbacks (hmacSign/hmacVrfy/encrypt/decrypt) must be safe for
+ * concurrent invocation across these two threads: use stateless
+ * implementations, per-call keyed ops, or thread-local contexts.
+ */
 struct chanBlbChnRsecCtx {
   void *hmacCtx;
   /* hdr points to fragment header ([addrlen][addr][tag][k-1][m][si]) for key selection */

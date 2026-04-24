@@ -89,15 +89,15 @@ chanBlbTrnFdDatagramInputCtx(
   }
   if (f6n) {
     V->i6 = (int *)V->ma(0, (unsigned long)f6n * sizeof (*V->i6));
-    if (!V->i6) return (0);
+    if (!V->i6) goto error;
     memcpy(V->i6, f6, f6n * sizeof (*V->i6));
     V->i6n = f6n;
   }
   V->pfdn = f4n + f6n;
-  if (!V->pfdn) return (0);
+  if (!V->pfdn) goto error;
   V->pfd = (struct pollfd *)V->ma(0,
     (unsigned long)V->pfdn * sizeof (*V->pfd));
-  if (!V->pfd) return (0);
+  if (!V->pfd) goto error;
   for (i = 0; i < f4n; ++i) {
     V->pfd[i].fd = f4[i];
     V->pfd[i].events = POLLIN;
@@ -109,6 +109,11 @@ chanBlbTrnFdDatagramInputCtx(
     V->pfd[f4n + i].revents = 0;
   }
   return (v);
+error:
+  V->mf(V->i4); V->i4 = 0; V->i4n = 0;
+  V->mf(V->i6); V->i6 = 0; V->i6n = 0;
+  V->pfdn = 0;
+  return (0);
 }
 
 unsigned int
@@ -139,7 +144,10 @@ retry:
     }
     r = 0;
     for (i = 0; i < V->pfdn; ++i) {
-      if (V->pfd[i].revents & POLLIN) {
+      /* any revents bit: POLLERR/POLLHUP/POLLNVAL wake us too
+       * (e.g. ICMP after carrier drop); recvfrom consumes the
+       * error so subsequent poll blocks normally again */
+      if (V->pfd[i].revents) {
         sl = sizeof (struct sockaddr_storage);
         r = recvfrom(V->pfd[i].fd,
           b + 1 + sizeof (struct sockaddr_storage),
@@ -149,12 +157,17 @@ retry:
       }
     }
   }
-  if (r <= 0) {
-    if (r < 0 && errno != EBADF && errno != ENOTSOCK)
+  /* r == 0 is a valid zero-length UDP datagram, not EOF */
+  if (r < 0) {
+    if (errno != EBADF && errno != ENOTSOCK)
       goto retry;
     return (0);
   }
-  if ((b[0] = sl) < sizeof (struct sockaddr_storage))
+  /* kernels may return sl > passed buffer on truncation; drop such packets */
+  if (sl > sizeof (struct sockaddr_storage))
+    return (0);
+  b[0] = (unsigned char)sl;
+  if (sl < sizeof (struct sockaddr_storage))
     memmove(b + 1 + sl, b + 1 + sizeof (struct sockaddr_storage), r);
   return (1 + sl + r);
 }
@@ -166,10 +179,12 @@ chanBlbTrnFdDatagramInputClose(
   unsigned int i;
 
   for (i = 0; i < V->i4n; ++i)
-    if (!fdInArray(V->i4[i], V->o4, V->o4n))
+    if (!fdInArray(V->i4[i], V->i4, i)
+     && !fdInArray(V->i4[i], V->o4, V->o4n))
       close(V->i4[i]);
   for (i = 0; i < V->i6n; ++i)
-    if (!fdInArray(V->i6[i], V->o6, V->o6n))
+    if (!fdInArray(V->i6[i], V->i6, i)
+     && !fdInArray(V->i6[i], V->o6, V->o6n))
       close(V->i6[i]);
 }
 
@@ -183,17 +198,21 @@ chanBlbTrnFdDatagramOutputCtx(
 ){
   if (f4n) {
     V->o4 = (int *)V->ma(0, (unsigned long)f4n * sizeof (*V->o4));
-    if (!V->o4) return (0);
+    if (!V->o4) goto error;;
     memcpy(V->o4, f4, f4n * sizeof (*V->o4));
     V->o4n = f4n;
   }
   if (f6n) {
     V->o6 = (int *)V->ma(0, (unsigned long)f6n * sizeof (*V->o6));
-    if (!V->o6) return (0);
+    if (!V->o6) goto error;;
     memcpy(V->o6, f6, f6n * sizeof (*V->o6));
     V->o6n = f6n;
   }
   return (v);
+error:
+  V->mf(V->o4); V->o4 = 0; V->o4n = 0;
+  V->mf(V->o6); V->o6 = 0; V->o6n = 0;
+  return (0);
 }
 
 unsigned int
@@ -203,38 +222,35 @@ chanBlbTrnFdDatagramOutput(
  ,unsigned int l
 ){
   unsigned int i;
-  int ok;
 
-  if (l < 1 || b[0] > sizeof (struct sockaddr_storage) || l <= 1U + b[0])
+  if (l < 1
+   || b[0] < sizeof (sa_family_t)
+   || b[0] > sizeof (struct sockaddr_storage)
+   || l <= 1U + b[0])
     return (0);
-  ok = 0;
+  /* no-fd-for-family and unknown family are drop-and-continue:
+   * a stray blob must not tear down the egress */
   switch (((struct sockaddr *)&b[1])->sa_family) {
   case AF_INET:
     for (i = 0; i < V->o4n; ++i) {
       if (sendto(V->o4[i], b + 1 + b[0], l - 1 - b[0], 0,
-            (struct sockaddr *)&b[1], b[0]) >= 0)
-        ok = 1;
-      else if (errno == EBADF || errno == ENOTSOCK)
+            (struct sockaddr *)&b[1], b[0]) < 0
+       && (errno == EBADF || errno == ENOTSOCK))
         return (0);
-      else
-        ok = 1; /* transient error, treat as sent (lost) */
     }
     break;
   case AF_INET6:
     for (i = 0; i < V->o6n; ++i) {
       if (sendto(V->o6[i], b + 1 + b[0], l - 1 - b[0], 0,
-            (struct sockaddr *)&b[1], b[0]) >= 0)
-        ok = 1;
-      else if (errno == EBADF || errno == ENOTSOCK)
+            (struct sockaddr *)&b[1], b[0]) < 0
+       && (errno == EBADF || errno == ENOTSOCK))
         return (0);
-      else
-        ok = 1; /* transient error, treat as sent (lost) */
     }
     break;
   default:
     break;
   }
-  return (ok ? l : 0);
+  return (l);
 }
 
 void
@@ -244,10 +260,12 @@ chanBlbTrnFdDatagramOutputClose(
   unsigned int i;
 
   for (i = 0; i < V->o4n; ++i)
-    if (!fdInArray(V->o4[i], V->i4, V->i4n))
+    if (!fdInArray(V->o4[i], V->o4, i)
+     && !fdInArray(V->o4[i], V->i4, V->i4n))
       close(V->o4[i]);
   for (i = 0; i < V->o6n; ++i)
-    if (!fdInArray(V->o6[i], V->i6, V->i6n))
+    if (!fdInArray(V->o6[i], V->o6, i)
+     && !fdInArray(V->o6[i], V->i6, V->i6n))
       close(V->o6[i]);
 }
 
@@ -258,10 +276,12 @@ chanBlbTrnFdDatagramFinalClose(
   unsigned int i;
 
   for (i = 0; i < V->i4n; ++i)
-    if (fdInArray(V->i4[i], V->o4, V->o4n))
+    if (!fdInArray(V->i4[i], V->i4, i)
+     && fdInArray(V->i4[i], V->o4, V->o4n))
       close(V->i4[i]);
   for (i = 0; i < V->i6n; ++i)
-    if (fdInArray(V->i6[i], V->o6, V->o6n))
+    if (!fdInArray(V->i6[i], V->i6, i)
+     && fdInArray(V->i6[i], V->o6, V->o6n))
       close(V->i6[i]);
   V->mf(V->i4);
   V->mf(V->i6);

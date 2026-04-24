@@ -262,7 +262,7 @@ mkBlob(
 
 /*
  * Verify an RSEC ingress blob:
- * [addrlen(1)][addr(addrlen)][tag(tagSize)][m(1)][payload]
+ * [addrlen(1)][addr(addrlen)][tag(tagSize)][rm(1)][um(1)][payload]
  */
 static int
 verifyBlob(
@@ -2709,6 +2709,523 @@ testPackSameMessage(void)
   teardown(&env);
 }
 
+/* ===== rm/um + raw-injection coverage ===== */
+
+/*
+ * Craft and inject a single-fragment RSEC datagram directly into the
+ * in-process loopback transport's address bus.  Uses a synthetic src
+ * sockaddr_in so the delivered blob's addr prefix is well-formed; the
+ * src content is irrelevant to these tests (identity lives in the tag).
+ * Only 1-byte VLQs are emitted (padding < 128, shardLen < 128).
+ */
+extern int
+chanBlbTrnFdDatagramInject(
+  const struct sockaddr *dst
+ ,socklen_t dstLen
+ ,const struct sockaddr *src
+ ,socklen_t srcLen
+ ,const unsigned char *payload
+ ,unsigned int payloadLen
+);
+
+static int
+injectFrag(
+  int injFd
+ ,const struct sockaddr_in *dst
+ ,const unsigned char *tagBytes
+ ,unsigned int tagSize
+ ,unsigned char kMinus1
+ ,unsigned char mVal
+ ,unsigned char si
+ ,unsigned char padding
+ ,const unsigned char *shardData
+ ,unsigned char shardLen
+ ,const unsigned char *hmacBytes
+ ,unsigned int hmacLen
+ ,int corruptSmallHash
+){
+  unsigned char dg[512];
+  unsigned int pos;
+  unsigned int i;
+  unsigned char h;
+  struct sockaddr_in src;
+
+  (void)injFd;
+  pos = 0;
+  memcpy(dg + pos, tagBytes, tagSize);
+  pos += tagSize;
+  dg[pos++] = kMinus1;
+  dg[pos++] = mVal;
+  dg[pos++] = si;
+  dg[pos++] = padding;
+  dg[pos++] = shardLen;
+  memcpy(dg + pos, shardData, shardLen);
+  pos += shardLen;
+  if (hmacLen > 0) {
+    memcpy(dg + pos, hmacBytes, hmacLen);
+    pos += hmacLen;
+  }
+  h = 0xff;
+  for (i = 0; i < pos; ++i) {
+    h ^= dg[i];
+    h = (unsigned char)((h << 1) | (h >> 7));
+  }
+  dg[pos++] = corruptSmallHash ? (unsigned char)(h ^ 0xff) : h;
+
+  memset(&src, 0, sizeof (src));
+  src.sin_family = AF_INET;
+  src.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  src.sin_port = htons(1);  /* arbitrary non-zero marker */
+  return (chanBlbTrnFdDatagramInject(
+    (const struct sockaddr *)dst, (socklen_t)sizeof (*dst),
+    (const struct sockaddr *)&src, (socklen_t)sizeof (src),
+    dg, pos));
+}
+
+static void
+testRmUmNoDecode(void)
+{
+  struct testEnv env;
+  struct chanBlbChnRsecCtx rsecCtx;
+  chanBlb_t *m;
+  const char *msg = "rmum test";
+  unsigned int al;
+  unsigned int off;
+
+  printf("=== Test: rm/um bytes on direct delivery ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 2;
+  rsecCtx.dgramMax = 520;
+  rsecCtx.tableSize = 8;
+
+  if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
+
+  /* k=1, m=3, no drop: all data shards present -> rm=3, um=0 */
+  m = mkBlob(&env.sa, 2, 1, 3, 0, msg, strlen(msg));
+  check("send", sendBlob(env.outChan, m));
+  m = recvBlob(env.inChan, 2000000000L);
+  check("received", m != 0);
+  if (m) {
+    al = m->b[0];
+    off = 1 + al + 2;
+    check("rm == sender m (3)", m->b[off] == 3);
+    check("um == 0 (all data present, no parity used)", m->b[off + 1] == 0);
+    check("payload correct", verifyBlob(m, 2, msg, strlen(msg)));
+    free(m);
+  }
+  teardown(&env);
+}
+
+static void
+testRmUmWithDecode(void)
+{
+  struct testEnv env;
+  struct chanBlbChnRsecCtx rsecCtx;
+  chanBlb_t *m;
+  const char *msg = "decode um test abcdefghijkl";
+  unsigned int al;
+  unsigned int off;
+  unsigned int tries;
+  int sawUmGt0;
+  int sawRmMatches;
+
+  printf("=== Test: rm/um bytes when RS decode is used ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 2;
+  rsecCtx.dgramMax = 18;   /* shardSize=8 => k=4 for 27 bytes */
+  rsecCtx.tableSize = 8;
+
+  chanBlbTrnFdDatagramDropPct = 40;
+
+  if (!setup(&env, &rsecCtx)) { check("setup", 0); chanBlbTrnFdDatagramDropPct = 0; return; }
+
+  sawUmGt0 = 0;
+  sawRmMatches = 0;
+  for (tries = 0; tries < 10; ++tries) {
+    m = mkBlob(&env.sa, 2, (unsigned short)(200 + tries), 8, 0, msg, strlen(msg));
+    sendBlob(env.outChan, m);
+    m = recvBlob(env.inChan, 3000000000L);
+    if (m) {
+      al = m->b[0];
+      off = 1 + al + 2;
+      if (m->b[off] == 8) sawRmMatches = 1;
+      if (m->b[off + 1] > 0) sawUmGt0 = 1;
+      free(m);
+    }
+  }
+  check("rm == 8 observed", sawRmMatches);
+  check("um > 0 observed (parity consumed)", sawUmGt0);
+  check("igrDcd > 0", rsecCtx.igrDcd > 0);
+
+  chanBlbTrnFdDatagramDropPct = 0;
+  teardown(&env);
+}
+
+static void
+testIgrHashReject(void)
+{
+  struct testEnv env;
+  struct chanBlbChnRsecCtx rsecCtx;
+  chanBlb_t *m;
+  int injFd;
+  unsigned char tag[2];
+  unsigned char shard[3];
+
+  printf("=== Test: igrHash increments on bad smallhash ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 2;
+  rsecCtx.dgramMax = 520;
+  rsecCtx.tableSize = 8;
+
+  if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
+
+  injFd = socket(AF_INET, SOCK_DGRAM, 0);
+  check("injector socket", injFd >= 0);
+
+  tag[0] = 0x11; tag[1] = 0x22;
+  shard[0] = 'a'; shard[1] = 'b'; shard[2] = 'c';
+  check("inject bad-smallhash frag",
+    injectFrag(injFd, &env.sa, tag, 2, 0, 0, 0, 0, shard, 3, 0, 0, 1));
+
+  m = recvBlob(env.inChan, 500000000L);
+  check("no delivery on bad smallhash", m == 0);
+  if (m) free(m);
+
+  usleep(100000);
+  check("igrHash >= 1", rsecCtx.igrHash >= 1);
+  check("igrMsg == 0", rsecCtx.igrMsg == 0);
+
+  close(injFd);
+  teardown(&env);
+}
+
+static void
+testIgrHmacReject(void)
+{
+  struct testEnv env;
+  struct chanBlbChnRsecCtx rsecCtx;
+  struct hmacKeyCtx hk;
+  static const unsigned char key[] = "hmac-key-for-reject-test";
+  unsigned char badHmac[16];
+  unsigned char tag[2];
+  unsigned char shard[3];
+  chanBlb_t *m;
+  int injFd;
+  unsigned int i;
+
+  printf("=== Test: igrHmac increments on bad HMAC ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 2;
+  rsecCtx.dgramMax = 520;
+  rsecCtx.tableSize = 8;
+  rsecCtx.hmacSize = 16;
+  hk.key = key;
+  hk.keyLen = sizeof (key) - 1;
+  rsecCtx.hmacCtx = &hk;
+  rsecCtx.hmacSign = hmacSignCb;
+  rsecCtx.hmacVrfy = hmacVrfyCb;
+
+  if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
+
+  injFd = socket(AF_INET, SOCK_DGRAM, 0);
+  check("injector socket", injFd >= 0);
+
+  tag[0] = 0x33; tag[1] = 0x44;
+  shard[0] = 'x'; shard[1] = 'y'; shard[2] = 'z';
+  for (i = 0; i < sizeof (badHmac); ++i)
+    badHmac[i] = (unsigned char)(i * 13 + 5);
+  check("inject bad-HMAC frag (valid smallhash)",
+    injectFrag(injFd, &env.sa, tag, 2, 0, 0, 0, 0, shard, 3,
+               badHmac, sizeof (badHmac), 0));
+
+  m = recvBlob(env.inChan, 500000000L);
+  check("no delivery on bad HMAC", m == 0);
+  if (m) free(m);
+
+  usleep(100000);
+  check("igrHmac >= 1", rsecCtx.igrHmac >= 1);
+  check("igrHash == 0 (smallhash was valid)", rsecCtx.igrHash == 0);
+  check("igrMsg == 0", rsecCtx.igrMsg == 0);
+
+  close(injFd);
+  teardown(&env);
+}
+
+static void
+testIgrDupReject(void)
+{
+  struct testEnv env;
+  struct chanBlbChnRsecCtx rsecCtx;
+  chanBlb_t *m;
+  int injFd;
+  unsigned char tag[2];
+  unsigned char s0[3];
+  unsigned char s1[3];
+  unsigned int al;
+  unsigned int off;
+
+  printf("=== Test: igrDup increments on pre-delivery duplicate shard ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 2;
+  rsecCtx.dgramMax = 520;
+  rsecCtx.tableSize = 8;
+
+  if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
+
+  injFd = socket(AF_INET, SOCK_DGRAM, 0);
+  check("injector socket", injFd >= 0);
+
+  tag[0] = 0x55; tag[1] = 0x66;
+  s0[0] = 'A'; s0[1] = 'B'; s0[2] = 'C';
+  s1[0] = 'D'; s1[1] = 'E'; s1[2] = 'F';
+  /* k=2 (kMinus1=1) m=0: need both shards. Inject si=0 twice, then si=1. */
+  check("inject shard 0",
+    injectFrag(injFd, &env.sa, tag, 2, 1, 0, 0, 0, s0, 3, 0, 0, 0));
+  usleep(50000);
+  check("inject shard 0 duplicate",
+    injectFrag(injFd, &env.sa, tag, 2, 1, 0, 0, 0, s0, 3, 0, 0, 0));
+  usleep(50000);
+  check("inject shard 1",
+    injectFrag(injFd, &env.sa, tag, 2, 1, 0, 1, 0, s1, 3, 0, 0, 0));
+
+  m = recvBlob(env.inChan, 2000000000L);
+  check("message delivered despite dup", m != 0);
+  if (m) {
+    al = m->b[0];
+    off = 1 + al + 2 + 2;
+    check("reassembled payload == ABCDEF",
+      m->l == off + 6 && memcmp(m->b + off, "ABCDEF", 6) == 0);
+    free(m);
+  }
+
+  usleep(100000);
+  check("igrDup >= 1", rsecCtx.igrDup >= 1);
+  check("igrMsg == 1", rsecCtx.igrMsg == 1);
+  check("igrEvict == 0", rsecCtx.igrEvict == 0);
+
+  close(injFd);
+  teardown(&env);
+}
+
+static void
+testParamMismatchLossNotif(void)
+{
+  struct testEnv env;
+  struct chanBlbChnRsecCtx rsecCtx;
+  chanBlb_t *m;
+  chanBlb_t *loss;
+  chanBlb_t *second;
+  int injFd;
+  unsigned char tag[2];
+  unsigned char s0a[3];
+  unsigned char s0b[4];
+  unsigned int al;
+  unsigned int off;
+  unsigned int i;
+
+  printf("=== Test: parameter-mismatch eviction delivers loss notification ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 2;
+  rsecCtx.dgramMax = 520;
+  rsecCtx.tableSize = 8;
+
+  if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
+
+  injFd = socket(AF_INET, SOCK_DGRAM, 0);
+  check("injector socket", injFd >= 0);
+
+  tag[0] = 0x77; tag[1] = 0x88;
+  s0a[0] = 'P'; s0a[1] = 'Q'; s0a[2] = 'R';
+  s0b[0] = 'X'; s0b[1] = 'Y'; s0b[2] = 'Z'; s0b[3] = '!';
+
+  /* msg1: k=2 (kMinus1=1), m=0, shardSize=3.  Inject only shard 0 -> incomplete. */
+  check("inject msg1 shard 0 (incomplete)",
+    injectFrag(injFd, &env.sa, tag, 2, 1, 0, 0, 0, s0a, 3, 0, 0, 0));
+  usleep(80000);
+
+  /* msg2: same tag, k=1 (kMinus1=0), m=0, shardSize=4.  Params mismatch. */
+  check("inject msg2 shard 0 (param mismatch)",
+    injectFrag(injFd, &env.sa, tag, 2, 0, 0, 0, 0, s0b, 4, 0, 0, 0));
+
+  loss = 0;
+  second = 0;
+  for (i = 0; i < 2; ++i) {
+    m = recvBlob(env.inChan, 2000000000L);
+    if (!m) continue;
+    al = m->b[0];
+    off = 1 + al + 2;  /* rm byte offset */
+    /* loss notif: zero-length payload (total == prefixSize) with rm=0 */
+    if (m->l == off + 2 && m->b[off] == 0)
+      loss = m;
+    else if (m->l == off + 2 + 4 && memcmp(m->b + off + 2, "XYZ!", 4) == 0)
+      second = m;
+    else
+      free(m);
+  }
+
+  check("loss notification delivered", loss != 0);
+  if (loss) {
+    al = loss->b[0];
+    off = 1 + al + 2;
+    check("loss rm == 0", loss->b[off] == 0);
+    check("loss um == received (1)", loss->b[off + 1] == 1);
+    check("loss zero-length payload", loss->l == off + 2);
+    free(loss);
+  }
+  check("second message delivered (XYZ!)", second != 0);
+  if (second) free(second);
+
+  usleep(100000);
+  check("igrEvict >= 1", rsecCtx.igrEvict >= 1);
+  check("igrMsg >= 1 (second message)", rsecCtx.igrMsg >= 1);
+
+  close(injFd);
+  teardown(&env);
+}
+
+/*
+ * Same tag, same k, same shardSize — only m differs.
+ * Confirms that m alone drives parameter-mismatch eviction.
+ * Delivered-entry path (blob==NULL): silent evict, new entry collected,
+ * message delivered a SECOND time with the new m.  This is the duplicate-
+ * delivery risk callers with retransmit loops (e.g. AAB's ledger pump)
+ * must account for if m can change between re-emissions of the same tag.
+ */
+static void
+testSameTagMOnlyDelivered(void)
+{
+  struct testEnv env;
+  struct chanBlbChnRsecCtx rsecCtx;
+  chanBlb_t *first;
+  chanBlb_t *second;
+  int injFd;
+  unsigned char tag[2];
+  unsigned char shard[3];
+  unsigned int al;
+  unsigned int off;
+
+  printf("=== Test: same tag, m differs, original already delivered -> duplicate delivery ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 2;
+  rsecCtx.dgramMax = 520;
+  rsecCtx.tableSize = 8;
+
+  if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
+
+  injFd = socket(AF_INET, SOCK_DGRAM, 0);
+  check("injector socket", injFd >= 0);
+
+  tag[0] = 0x99; tag[1] = 0xAA;
+  shard[0] = 'M'; shard[1] = 'N'; shard[2] = 'O';
+
+  /* k=1 m=0 shardSize=3 -> completes on arrival */
+  check("inject msg with m=0",
+    injectFrag(injFd, &env.sa, tag, 2, 0, 0, 0, 0, shard, 3, 0, 0, 0));
+  first = recvBlob(env.inChan, 1000000000L);
+  check("first delivery", first != 0);
+  if (first) {
+    al = first->b[0];
+    off = 1 + al + 2;
+    check("first rm == 0", first->b[off] == 0);
+    free(first);
+  }
+
+  /* Same tag, same k, same shardSize, but m=5.  Param mismatch against
+   * the delivered entry (blob==NULL) evicts silently, new entry collects
+   * the shard, k=1 -> redelivered with m=5. */
+  usleep(50000);
+  check("inject same tag with m=5",
+    injectFrag(injFd, &env.sa, tag, 2, 0, 5, 0, 0, shard, 3, 0, 0, 0));
+  second = recvBlob(env.inChan, 1000000000L);
+  check("second (duplicate) delivery", second != 0);
+  if (second) {
+    al = second->b[0];
+    off = 1 + al + 2;
+    check("second rm == 5 (new m)", second->b[off] == 5);
+    free(second);
+  }
+
+  usleep(100000);
+  check("igrMsg == 2 (same message delivered twice)", rsecCtx.igrMsg == 2);
+  check("igrEvict == 0 (silent evict for delivered entry)",
+        rsecCtx.igrEvict == 0);
+
+  close(injFd);
+  teardown(&env);
+}
+
+/*
+ * Same tag, same k, same shardSize — only m differs, but the original
+ * entry is still incomplete when the mismatched fragment arrives.
+ * Fires igrEvict + loss notification (rm=0, um=received).
+ */
+static void
+testSameTagMOnlyIncomplete(void)
+{
+  struct testEnv env;
+  struct chanBlbChnRsecCtx rsecCtx;
+  chanBlb_t *m;
+  chanBlb_t *loss;
+  int injFd;
+  unsigned char tag[2];
+  unsigned char s0[3];
+  unsigned int al;
+  unsigned int off;
+  unsigned int i;
+
+  printf("=== Test: same tag, m differs, original incomplete -> loss notification ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 2;
+  rsecCtx.dgramMax = 520;
+  rsecCtx.tableSize = 8;
+
+  if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
+
+  injFd = socket(AF_INET, SOCK_DGRAM, 0);
+  check("injector socket", injFd >= 0);
+
+  tag[0] = 0xBB; tag[1] = 0xCC;
+  s0[0] = 'P'; s0[1] = 'Q'; s0[2] = 'R';
+
+  /* k=2 m=3 shardSize=3 -> incomplete after 1 shard */
+  check("inject shard 0 (k=2 m=3, incomplete)",
+    injectFrag(injFd, &env.sa, tag, 2, 1, 3, 0, 0, s0, 3, 0, 0, 0));
+  usleep(50000);
+
+  /* Same tag, same k, same shardSize, different m (7).  m-only mismatch
+   * still triggers param-mismatch eviction; the original is incomplete
+   * (blob != NULL) so igrEvict++ and a loss notification is delivered. */
+  check("inject shard 0 with different m (7)",
+    injectFrag(injFd, &env.sa, tag, 2, 1, 7, 0, 0, s0, 3, 0, 0, 0));
+
+  loss = 0;
+  for (i = 0; i < 3; ++i) {
+    m = recvBlob(env.inChan, 1000000000L);
+    if (!m) continue;
+    al = m->b[0];
+    off = 1 + al + 2;
+    if (m->l == off + 2 && m->b[off] == 0) {
+      loss = m;
+      break;
+    }
+    free(m);
+  }
+
+  check("loss notification delivered", loss != 0);
+  if (loss) {
+    al = loss->b[0];
+    off = 1 + al + 2;
+    check("loss rm == 0", loss->b[off] == 0);
+    check("loss um == 1", loss->b[off + 1] == 1);
+    free(loss);
+  }
+  check("igrEvict >= 1 (m-only change evicts incomplete)",
+        rsecCtx.igrEvict >= 1);
+
+  close(injFd);
+  teardown(&env);
+}
+
 int
 main(
   void
@@ -2800,6 +3317,16 @@ main(
   testPacePackingDensity();
   testPaceMaxDelayMixed();
   testPaceNoBlasting();
+
+  /* rm/um + raw-injection coverage */
+  testRmUmNoDecode();
+  testRmUmWithDecode();
+  testIgrHashReject();
+  testIgrHmacReject();
+  testIgrDupReject();
+  testParamMismatchLossNotif();
+  testSameTagMOnlyDelivered();
+  testSameTagMOnlyIncomplete();
 
   printf("\n=======================================\n");
   printf("Results: %d passed, %d failed\n", Pass, Fail);
