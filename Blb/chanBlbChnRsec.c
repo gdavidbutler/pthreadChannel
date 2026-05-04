@@ -28,29 +28,133 @@
 
 unsigned int
 chanBlbChnRsecShard(
-  const struct chanBlbChnRsecCtx *ctx
+  unsigned int dgramMax
+ ,unsigned int tagSize
+ ,unsigned int hmacSize
 ){
   unsigned int overhead;
 
-  overhead = ctx->tagSize + ctx->hmacSize + 8;
-  if (ctx->dgramMax <= overhead
-   || ctx->dgramMax - overhead > 16384) /* max 2-byte VLQ */
+  overhead = tagSize + hmacSize + 8;
+  if (dgramMax <= overhead
+   || dgramMax - overhead > 16384) /* max 2-byte VLQ */
     return (0);
-  return (ctx->dgramMax - overhead);
+  return (dgramMax - overhead);
 }
 
 unsigned int
 chanBlbChnRsecMax(
-  const struct chanBlbChnRsecCtx *ctx
+  unsigned int dgramMax
+ ,unsigned int tagSize
+ ,unsigned int hmacSize
  ,unsigned char m
 ){
   unsigned int overhead;
 
-  overhead = ctx->tagSize + ctx->hmacSize + 8;
-  if (ctx->dgramMax <= overhead
-   || ctx->dgramMax - overhead > 16384) /* max 2-byte VLQ */
+  overhead = tagSize + hmacSize + 8;
+  if (dgramMax <= overhead
+   || dgramMax - overhead > 16384) /* max 2-byte VLQ */
     return (0);
-  return ((256 - (unsigned int)m) * (ctx->dgramMax - overhead));
+  return ((256 - (unsigned int)m) * (dgramMax - overhead));
+}
+
+/*
+ * Private state behind opaque of each ctx.  The framer thread
+ * allocates this on entry using v->realloc and frees it on exit
+ * using v->free.  Application code never sees these structs and
+ * cannot read or write the counters through the public ctx struct.
+ *
+ * Memory ordering for Snap (called by some other thread):
+ *   The framer thread, immediately after pthread_mutex_init+memset
+ *   and before publishing opaque, does a self lock+unlock cycle.
+ *   A later Snap loads opaque; if non-NULL, its pthread_mutex_lock
+ *   acquires and pairs with the framer's release-unlock, making the
+ *   mutex_init writes and counter zeroing visible on weakly-ordered
+ *   architectures.
+ */
+struct egrPriv {
+  pthread_mutex_t m;
+  struct chanBlbChnRsecEgrCtrs ctrs;
+};
+
+struct igrPriv {
+  pthread_mutex_t m;
+  struct chanBlbChnRsecIgrCtrs ctrs;
+};
+
+/*
+ * pthread_cleanup_push targets that release priv on framer exit
+ * (normal return or cancellation).  Pushed inside v->fin so they
+ * run before chanBlb's per-thread teardown.  v carries v->frmCtx
+ * (the public ctx) and v->free (the chanBlb allocator pair).
+ */
+static void
+egrFinPriv(
+  void *v
+#define V ((struct chanBlbEgrCtx *)v)
+){
+  struct chanBlbChnRsecEgrCtx *ctx;
+  struct egrPriv *p;
+
+  ctx = (struct chanBlbChnRsecEgrCtx *)V->frmCtx;
+  p = (struct egrPriv *)ctx->opaque;
+  if (!p)
+    return;
+  ctx->opaque = 0;
+  pthread_mutex_destroy(&p->m);
+  V->free(p);
+#undef V
+}
+
+static void
+igrFinPriv(
+  void *v
+#define V ((struct chanBlbIgrCtx *)v)
+){
+  struct chanBlbChnRsecIgrCtx *ctx;
+  struct igrPriv *p;
+
+  ctx = (struct chanBlbChnRsecIgrCtx *)V->frmCtx;
+  p = (struct igrPriv *)ctx->opaque;
+  if (!p)
+    return;
+  ctx->opaque = 0;
+  pthread_mutex_destroy(&p->m);
+  V->free(p);
+#undef V
+}
+
+void
+chanBlbChnRsecEgrSnap(
+  struct chanBlbChnRsecEgrCtx *ctx
+ ,struct chanBlbChnRsecEgrCtrs *out
+){
+  struct egrPriv *p;
+
+  p = (struct egrPriv *)ctx->opaque;
+  if (!p) {
+    memset(out, 0, sizeof (*out));
+    return;
+  }
+  pthread_mutex_lock(&p->m);
+  *out = p->ctrs;
+  pthread_mutex_unlock(&p->m);
+}
+
+void
+chanBlbChnRsecIgrSnap(
+  struct chanBlbChnRsecIgrCtx *ctx
+ ,struct chanBlbChnRsecIgrCtrs *out
+){
+  struct igrPriv *p;
+
+  p = (struct igrPriv *)ctx->opaque;
+  if (!p) {
+    memset(out, 0, sizeof (*out));
+    return;
+  }
+  pthread_mutex_lock(&p->m);
+  *out = p->ctrs;
+  pthread_mutex_unlock(&p->m);
 }
 
 /* 1-byte hash for cheap stray packet rejection */
@@ -110,15 +214,18 @@ shardInsert(
 }
 
 /*
- * Pack and send one datagram starting from the head of the shard schedule.
- * Packs additional due shards from different messages to the same address.
- * *maxDelayMs (out): largest delay_ms among packed shards.
- * Returns 0 on output failure.
+ * Pack and send one datagram starting from the head of the shard
+ * schedule.  Packs additional due shards from different messages
+ * to the same address.  *maxDelayMs (out): largest delay_ms among
+ * packed shards.  Returns 0 on output failure.
+ *
+ * Caller holds priv->m for the duration of this call so the batch
+ * of ctrs.frg / ctrs.msg increments is atomic w.r.t. snapshot.
  */
 static int
 egrSendPack(
   struct chanBlbEgrCtx *v
- ,struct chanBlbChnRsecCtx *ctx
+ ,struct egrPriv *priv
  ,struct egrEntry *table
  ,unsigned int tableSize
  ,unsigned char *packBuf
@@ -159,7 +266,7 @@ egrSendPack(
   --(*shardCount);
   if (*shardCount > 0)
     memmove(shards, shards + 1, *shardCount * sizeof (struct shardItem));
-  ++ctx->egrFrg;
+  ++priv->ctrs.frg;
   ++table[ei].sent;
 
   /* scan remaining due shards for packing */
@@ -189,7 +296,7 @@ egrSendPack(
       packSeen[ei2] = 1;
       if (table[ei2].delayMs > *maxDelayMs)
         *maxDelayMs = table[ei2].delayMs;
-      ++ctx->egrFrg;
+      ++priv->ctrs.frg;
       ++table[ei2].sent;
       /* pop this item */
       --(*shardCount);
@@ -213,7 +320,7 @@ egrSendPack(
   for (ti = 0; ti < tableSize; ++ti) {
     if (packSeen[ti] && table[ti].work
      && table[ti].sent >= table[ti].km) {
-      ++ctx->egrMsg;
+      ++priv->ctrs.msg;
       v->free(table[ti].work);
       table[ti].work = 0;
     }
@@ -230,7 +337,8 @@ void *
 chanBlbChnRsecEgr(
   struct chanBlbEgrCtx *v
 ){
-  struct chanBlbChnRsecCtx *ctx;
+  struct chanBlbChnRsecEgrCtx *ctx;
+  struct egrPriv *priv;
   struct egrEntry *table;
   struct shardItem *shards;
   unsigned char *packBuf;
@@ -255,43 +363,18 @@ chanBlbChnRsecEgr(
   unsigned char lastMaxD;
   unsigned char hasEmit;
 
-  ctx = (struct chanBlbChnRsecCtx *)v->frmCtx;
+  ctx = (struct chanBlbChnRsecEgrCtx *)v->frmCtx;
   tagSize = ctx->tagSize;
   hmacSize = ctx->hmacSize;
   tableSize = ctx->tableSize;
   dgramMax = ctx->dgramMax;
   overhead = tagSize + hmacSize + 8;
-  if (dgramMax <= overhead || dgramMax - overhead > 16384 || !tableSize) {
-    v->fin(v);
-    return (0);
-  }
-  maxShardSize = dgramMax - overhead;
+  maxShardSize = (dgramMax > overhead) ? dgramMax - overhead : 0;
 
-  table = (struct egrEntry *)v->realloc(0,
-    (unsigned long)tableSize * sizeof (struct egrEntry));
-  if (!table) {
-    v->fin(v);
-    return (0);
-  }
-  for (ti = 0; ti < tableSize; ++ti)
-    table[ti].work = 0;
-
-  /* pack buffer: addr prefix (1+255 max) + wire payload (dgramMax) */
-  packBuf = (unsigned char *)v->realloc(0, 1 + 255 + dgramMax);
-  if (!packBuf) {
-    v->free(table);
-    v->fin(v);
-    return (0);
-  }
-  /* same-message avoidance: one byte per table entry */
-  packSeen = (unsigned char *)v->realloc(0, tableSize);
-  if (!packSeen) {
-    v->free(packBuf);
-    v->free(table);
-    v->fin(v);
-    return (0);
-  }
-
+  priv = 0;
+  table = 0;
+  packBuf = 0;
+  packSeen = 0;
   shards = 0;
   shardCount = 0;
   shardAlloc = 0;
@@ -299,7 +382,40 @@ chanBlbChnRsecEgr(
   lastMaxD = 0;
   hasEmit = 0;
 
+  if (!maxShardSize || maxShardSize > 16384 || !tableSize)
+    goto error;
+
+  /* private state.  The self lock+unlock dance creates a release
+   * edge that pairs with any later Snap caller's lock acquire
+   * (visibility of mutex_init + counter zero-fill). */
+  if (!(priv = (struct egrPriv *)v->realloc(0, sizeof (*priv))))
+    goto error;
+  if (pthread_mutex_init(&priv->m, 0)) {
+    v->free(priv);
+    priv = 0;
+    goto error;
+  }
+  memset(&priv->ctrs, 0, sizeof (priv->ctrs));
+  pthread_mutex_lock(&priv->m);
+  pthread_mutex_unlock(&priv->m);
+  ctx->opaque = priv;
+
+  if (!(table = (struct egrEntry *)v->realloc(0,
+        (unsigned long)tableSize * sizeof (struct egrEntry))))
+    goto error;
+  for (ti = 0; ti < tableSize; ++ti)
+    table[ti].work = 0;
+
+  /* pack buffer: addr prefix (1+255 max) + wire payload (dgramMax) */
+  if (!(packBuf = (unsigned char *)v->realloc(0, 1 + 255 + dgramMax)))
+    goto error;
+
+  /* same-message avoidance: one byte per table entry */
+  if (!(packSeen = (unsigned char *)v->realloc(0, tableSize)))
+    goto error;
+
   pthread_cleanup_push((void(*)(void*))v->fin, v);
+  pthread_cleanup_push(egrFinPriv, v);
   p[0].c = v->chan;
   p[0].v = (void **)&pending;
   p[0].o = chanOpGet;
@@ -370,9 +486,13 @@ chanBlbChnRsecEgr(
        || (target.tv_sec == now.tv_sec
         && target.tv_nsec <= now.tv_nsec)) {
         unsigned char packMaxD;
+        int sent;
 
-        if (!egrSendPack(v, ctx, table, tableSize, packBuf, packSeen,
-                         dgramMax, shards, &shardCount, &packMaxD))
+        pthread_mutex_lock(&priv->m);
+        sent = egrSendPack(v, priv, table, tableSize, packBuf, packSeen,
+                           dgramMax, shards, &shardCount, &packMaxD);
+        pthread_mutex_unlock(&priv->m);
+        if (!sent)
           goto exit;
         clock_gettime(CLOCK_MONOTONIC, &lastEmit);
         lastMaxD = packMaxD;
@@ -638,7 +758,19 @@ exit:
   v->free(packSeen);
   v->free(packBuf);
   v->free(table);
+  pthread_cleanup_pop(1); /* egrFinPriv */
   pthread_cleanup_pop(1); /* v->fin(v) */
+  return (0);
+
+error:
+  if (priv) {
+    ctx->opaque = 0;
+    pthread_mutex_destroy(&priv->m);
+  }
+  v->free(priv);
+  v->free(table);
+  v->free(packBuf);
+  v->fin(v);
   return (0);
 }
 
@@ -660,11 +792,23 @@ struct igrEntry {
  * Wire datagram (packed): [addrlen(1)][addr][frag1][frag2]...[fragN][smallhash(1)]
  * Each fragment: [tag(tagSize)][k-1(1)][m(1)][si(1)][pad_vlq(1-2)][shard_len_vlq(1-2)][shard_data(shard_len)][hmac(hmacSize)]
  */
+/*
+ * Bump one counter under the private mutex.  Used to keep the
+ * snapshot coherent without holding the mutex across blocking
+ * chanOne calls.
+ */
+#define IGR_BUMP(c) do {                  \
+  pthread_mutex_lock(&priv->m);           \
+  ++(c);                                  \
+  pthread_mutex_unlock(&priv->m);         \
+} while (0)
+
 void *
 chanBlbChnRsecIgr(
   struct chanBlbIgrCtx *v
 ){
-  struct chanBlbChnRsecCtx *ctx;
+  struct chanBlbChnRsecIgrCtx *ctx;
+  struct igrPriv *priv;
   struct igrEntry **table;
   unsigned char *buf;
   unsigned char *hdr;
@@ -677,38 +821,46 @@ chanBlbChnRsecIgr(
   unsigned int age;
   unsigned int ti;
 
-  ctx = (struct chanBlbChnRsecCtx *)v->frmCtx;
+  ctx = (struct chanBlbChnRsecIgrCtx *)v->frmCtx;
   tagSize = ctx->tagSize;
   tableSize = ctx->tableSize;
   hmacSize = ctx->hmacSize;
 
-  /* allocate collection table (sorted by tag, compact) */
-  table = (struct igrEntry **)v->realloc(0,
-    (unsigned long)tableSize * sizeof (struct igrEntry *));
-  if (!table) {
-    v->fin(v);
-    return (0);
-  }
+  priv = 0;
+  table = 0;
+  buf = 0;
+  hdr = 0;
 
-  /* allocate receive buffer: full address range (addrlen up to 255) */
+  /* private state.  See chanBlbChnRsecEgr for the self lock+unlock
+   * rationale. */
+  if (!(priv = (struct igrPriv *)v->realloc(0, sizeof (*priv))))
+    goto error;
+  if (pthread_mutex_init(&priv->m, 0)) {
+    v->free(priv);
+    priv = 0;
+    goto error;
+  }
+  memset(&priv->ctrs, 0, sizeof (priv->ctrs));
+  pthread_mutex_lock(&priv->m);
+  pthread_mutex_unlock(&priv->m);
+  ctx->opaque = priv;
+
+  /* collection table (sorted by tag, compact) */
+  if (!(table = (struct igrEntry **)v->realloc(0,
+        (unsigned long)tableSize * sizeof (struct igrEntry *))))
+    goto error;
+
+  /* receive buffer: full address range (addrlen up to 255) */
   bufSize = 1 + 255 + ctx->dgramMax;
-  buf = (unsigned char *)v->realloc(0, bufSize);
-  if (!buf) {
-    v->free(table);
-    v->fin(v);
-    return (0);
-  }
+  if (!(buf = (unsigned char *)v->realloc(0, bufSize)))
+    goto error;
 
-  /* allocate hdr reconstruction buffer for HMAC/crypto callbacks */
-  hdr = (unsigned char *)v->realloc(0, (unsigned long)(1 + 255) + tagSize + 3);
-  if (!hdr) {
-    v->free(buf);
-    v->free(table);
-    v->fin(v);
-    return (0);
-  }
+  /* hdr reconstruction buffer for HMAC/crypto callbacks */
+  if (!(hdr = (unsigned char *)v->realloc(0, (unsigned long)(1 + 255) + tagSize + 3)))
+    goto error;
 
   pthread_cleanup_push((void(*)(void*))v->fin, v);
+  pthread_cleanup_push(igrFinPriv, v);
   p[0].c = v->chan;
   p[0].v = 0;
   p[0].o = chanOpPut;
@@ -735,7 +887,7 @@ chanBlbChnRsecIgr(
 
     /* validate datagram-level smallhash at end */
     if (smallHash(buf + wp, n - wp - 1) != buf[n - 1]) {
-      ++ctx->igrHash;
+      IGR_BUMP(priv->ctrs.hash);
       continue;
     }
     n -= 1; /* strip smallhash */
@@ -757,7 +909,7 @@ chanBlbChnRsecIgr(
       int decoded;
       int found;
 
-      ++ctx->igrFrg;
+      IGR_BUMP(priv->ctrs.frg);
 
       /* parse fragment header */
       k = (unsigned int)buf[pos + tagSize] + 1;
@@ -819,7 +971,7 @@ chanBlbChnRsecIgr(
         if (!ctx->hmacVrfy(ctx->hmacCtx, hdr,
                            buf + pos + headerLen + fragShardSize,
                            buf + pos, headerLen + fragShardSize)) {
-          ++ctx->igrHmac;
+          IGR_BUMP(priv->ctrs.hmac);
           pos = fragEnd;
           continue;
         }
@@ -873,7 +1025,7 @@ chanBlbChnRsecIgr(
           if (table[slot]->blob) {
             chanBlb_t *lb;
 
-            ++ctx->igrEvict;
+            IGR_BUMP(priv->ctrs.evict);
             lb = table[slot]->blob;
             lb->l = table[slot]->prefixSize;
             lb->b[table[slot]->prefixSize - 2] = 0;
@@ -917,7 +1069,7 @@ chanBlbChnRsecIgr(
           if (table[lruIdx]->blob) {
             chanBlb_t *lb;
 
-            ++ctx->igrEvict;
+            IGR_BUMP(priv->ctrs.evict);
             lb = table[lruIdx]->blob;
             lb->l = table[lruIdx]->prefixSize;
             lb->b[table[lruIdx]->prefixSize - 2] = 0;
@@ -982,14 +1134,14 @@ chanBlbChnRsecIgr(
 
       /* already delivered: ignore late fragments */
       if (!ent->blob) {
-        ++ctx->igrLate;
+        IGR_BUMP(priv->ctrs.late);
         pos = fragEnd;
         continue;
       }
 
       /* ignore duplicate shard */
       if (ent->present[shardIdx]) {
-        ++ctx->igrDup;
+        IGR_BUMP(priv->ctrs.dup);
         pos = fragEnd;
         continue;
       }
@@ -1135,15 +1287,17 @@ chanBlbChnRsecIgr(
         goto done;
       }
       /* blob ownership transferred; keep entry for de-dup of late fragments */
-      ++ctx->igrMsg;
+      pthread_mutex_lock(&priv->m);
+      ++priv->ctrs.msg;
       if (decoded)
-        ++ctx->igrDcd;
+        ++priv->ctrs.dcd;
+      pthread_mutex_unlock(&priv->m);
       ent->blob = 0;
     }
   }
 
 done:
-  /* cleanup: free remaining entries and their blobs */
+  /* free remaining entries and their blobs */
   for (ti = 0; ti < tableUsed; ++ti) {
     if (table[ti]->blob)
       v->free(table[ti]->blob);
@@ -1152,6 +1306,18 @@ done:
   v->free(hdr);
   v->free(buf);
   v->free(table);
+  pthread_cleanup_pop(1); /* igrFinPriv */
   pthread_cleanup_pop(1); /* v->fin(v) */
+  return (0);
+
+error:
+  if (priv) {
+    ctx->opaque = 0;
+    pthread_mutex_destroy(&priv->m);
+  }
+  v->free(priv);
+  v->free(table);
+  v->free(buf);
+  v->fin(v);
   return (0);
 }

@@ -314,24 +314,26 @@ main(
 
 #ifdef RSEC
   {
-    static struct chanBlbChnRsecCtx rsecCtx;
+    static struct chanBlbChnRsecEgrCtx egrCtx;
+    static struct chanBlbChnRsecIgrCtx igrCtx;
     static struct hmacKeyCtx hmacKeyCtx;
 
-    rsecCtx.tagSize = TagSize;
-    rsecCtx.dgramMax = DgramMax;
-    rsecCtx.tableSize = TableSize;
+    egrCtx.tagSize = igrCtx.tagSize = TagSize;
+    egrCtx.dgramMax = igrCtx.dgramMax = DgramMax;
+    egrCtx.tableSize = igrCtx.tableSize = TableSize;
     if (HmacKey) {
       hmacKeyCtx.key = (const unsigned char *)HmacKey;
       hmacKeyCtx.keyLen = strlen(HmacKey);
-      rsecCtx.hmacSize = RMD128_SZ;
-      rsecCtx.hmacCtx = &hmacKeyCtx;
-      rsecCtx.hmacSign = hmacSignCb;
-      rsecCtx.hmacVrfy = hmacVrfyCb;
+      egrCtx.hmacSize = igrCtx.hmacSize = RMD128_SZ;
+      egrCtx.hmacCtx = igrCtx.hmacCtx = &hmacKeyCtx;
+      egrCtx.hmacSign = hmacSignCb;
+      igrCtx.hmacVrfy = hmacVrfyCb;
     }
+    /* opaque[] is zero (file-scope statics) — framer threads init/fini */
     /* start chanBlb with RSEC framing for both directions */
     if (!chanBlb(realloc, free
-        ,OutChan, chanBlbTrnFdDatagramOutputCtx(ctx, &fd4, fd6 >= 0 ? &fd6 : 0, fd4 >= 0 ? 1 : 0, fd6 >= 0 ? 1 : 0), chanBlbTrnFdDatagramOutput, chanBlbTrnFdDatagramOutputClose, &rsecCtx, chanBlbChnRsecEgr
-        ,InChan, chanBlbTrnFdDatagramInputCtx(ctx, &fd4, fd6 >= 0 ? &fd6 : 0, fd4 >= 0 ? 1 : 0, fd6 >= 0 ? 1 : 0), chanBlbTrnFdDatagramInput, chanBlbTrnFdDatagramInputClose, &rsecCtx, chanBlbChnRsecIgr, 0
+        ,OutChan, chanBlbTrnFdDatagramOutputCtx(ctx, &fd4, fd6 >= 0 ? &fd6 : 0, fd4 >= 0 ? 1 : 0, fd6 >= 0 ? 1 : 0), chanBlbTrnFdDatagramOutput, chanBlbTrnFdDatagramOutputClose, &egrCtx, chanBlbChnRsecEgr
+        ,InChan, chanBlbTrnFdDatagramInputCtx(ctx, &fd4, fd6 >= 0 ? &fd6 : 0, fd4 >= 0 ? 1 : 0, fd6 >= 0 ? 1 : 0), chanBlbTrnFdDatagramInput, chanBlbTrnFdDatagramInputClose, &igrCtx, chanBlbChnRsecIgr, 0
         ,ctx, chanBlbTrnFdDatagramFinalClose
         ,0)) {
       perror("chanBlb");

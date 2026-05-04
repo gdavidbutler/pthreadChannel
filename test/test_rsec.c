@@ -292,15 +292,78 @@ struct testEnv {
   struct sockaddr_in sa;
 };
 
+/*
+ * Test-only wrapper that holds the test's intended config in
+ * single-struct form and the split egr/igr contexts the library now
+ * requires.  setup() copies config fields into both halves; rsecSnap()
+ * pulls counters out of both halves.  Test code keeps the original
+ * single-rsecCtx style for brevity.
+ */
+struct rsecPair {
+  /* config — set by the test before setup() */
+  unsigned int tagSize;
+  unsigned int dgramMax;
+  unsigned int tableSize;
+  unsigned int hmacSize;
+  void *hmacCtx;
+  void (*hmacSign)(void *, const unsigned char *, unsigned char *, const unsigned char *, unsigned int);
+  int  (*hmacVrfy)(void *, const unsigned char *, const unsigned char *, const unsigned char *, unsigned int);
+  void *cryptCtx;
+  void (*encrypt)(void *, const unsigned char *, unsigned char *, unsigned int);
+  void (*decrypt)(void *, const unsigned char *, unsigned char *, unsigned int);
+  /* counter snapshot — populated by rsecSnap() */
+  unsigned int egrMsg, egrFrg;
+  unsigned int igrFrg, igrHash, igrHmac, igrDup, igrLate, igrMsg, igrDcd, igrEvict;
+  /* private — populated by setup() */
+  struct chanBlbChnRsecEgrCtx egr;
+  struct chanBlbChnRsecIgrCtx igr;
+};
+
+static void
+rsecSnap(
+  struct rsecPair *p
+){
+  struct chanBlbChnRsecEgrCtrs ec;
+  struct chanBlbChnRsecIgrCtrs ic;
+
+  chanBlbChnRsecEgrSnap(&p->egr, &ec);
+  chanBlbChnRsecIgrSnap(&p->igr, &ic);
+  p->egrMsg = ec.msg;
+  p->egrFrg = ec.frg;
+  p->igrFrg = ic.frg;
+  p->igrHash = ic.hash;
+  p->igrHmac = ic.hmac;
+  p->igrDup = ic.dup;
+  p->igrLate = ic.late;
+  p->igrMsg = ic.msg;
+  p->igrDcd = ic.dcd;
+  p->igrEvict = ic.evict;
+}
+
 static int
 setup(
   struct testEnv *env
- ,struct chanBlbChnRsecCtx *rsecCtx
+ ,struct rsecPair *rsecCtx
 ){
   void *dgramCtx;
   socklen_t sl;
   int one;
   int bufsz;
+
+  /* copy shared config into split contexts (opaque stays zero — the
+   * framer threads allocate / free private state on entry / exit) */
+  rsecCtx->egr.dgramMax  = rsecCtx->igr.dgramMax  = rsecCtx->dgramMax;
+  rsecCtx->egr.tagSize   = rsecCtx->igr.tagSize   = rsecCtx->tagSize;
+  rsecCtx->egr.tableSize = rsecCtx->igr.tableSize = rsecCtx->tableSize;
+  rsecCtx->egr.hmacSize  = rsecCtx->igr.hmacSize  = rsecCtx->hmacSize;
+  rsecCtx->egr.hmacCtx   = rsecCtx->igr.hmacCtx   = rsecCtx->hmacCtx;
+  rsecCtx->egr.hmacSign  = rsecCtx->hmacSign;
+  rsecCtx->igr.hmacVrfy  = rsecCtx->hmacVrfy;
+  rsecCtx->egr.cryptCtx  = rsecCtx->igr.cryptCtx  = rsecCtx->cryptCtx;
+  rsecCtx->egr.encrypt   = rsecCtx->encrypt;
+  rsecCtx->igr.decrypt   = rsecCtx->decrypt;
+  rsecCtx->egr.opaque    = 0;
+  rsecCtx->igr.opaque    = 0;
 
   memset(&env->sa, 0, sizeof (env->sa));
   env->sa.sin_family = AF_INET;
@@ -336,8 +399,8 @@ setup(
   }
 
   if (!chanBlb(realloc, free
-      ,env->outChan, chanBlbTrnFdDatagramOutputCtx(dgramCtx, &env->fd, 0, 1, 0), chanBlbTrnFdDatagramOutput, chanBlbTrnFdDatagramOutputClose, rsecCtx, chanBlbChnRsecEgr
-      ,env->inChan, chanBlbTrnFdDatagramInputCtx(dgramCtx, &env->fd, 0, 1, 0), chanBlbTrnFdDatagramInput, chanBlbTrnFdDatagramInputClose, rsecCtx, chanBlbChnRsecIgr, 0
+      ,env->outChan, chanBlbTrnFdDatagramOutputCtx(dgramCtx, &env->fd, 0, 1, 0), chanBlbTrnFdDatagramOutput, chanBlbTrnFdDatagramOutputClose, &rsecCtx->egr, chanBlbChnRsecEgr
+      ,env->inChan, chanBlbTrnFdDatagramInputCtx(dgramCtx, &env->fd, 0, 1, 0), chanBlbTrnFdDatagramInput, chanBlbTrnFdDatagramInputClose, &rsecCtx->igr, chanBlbChnRsecIgr, 0
       ,dgramCtx, chanBlbTrnFdDatagramFinalClose
       ,0)) {
     close(env->fd);
@@ -349,7 +412,9 @@ setup(
 static void
 teardown(
   struct testEnv *env
+ ,struct rsecPair *rsecCtx
 ){
+  (void)rsecCtx;
   chanShut(env->outChan);
   chanShut(env->inChan);
   shutdown(env->fd, SHUT_RDWR);
@@ -395,7 +460,7 @@ static void
 testBasicM1(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *m;
   const char *msg = "hello world";
 
@@ -412,14 +477,14 @@ testBasicM1(void)
   m = recvBlob(env.inChan, 2000000000L);
   check("received", m != 0);
   if (m) { check("payload correct", verifyBlob(m, 2, msg, strlen(msg))); free(m); }
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 static void
 testBasicM0(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *m;
   const char *msg = "no parity";
 
@@ -436,14 +501,14 @@ testBasicM0(void)
   m = recvBlob(env.inChan, 2000000000L);
   check("received", m != 0);
   if (m) { check("payload correct", verifyBlob(m, 2, msg, strlen(msg))); free(m); }
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 static void
 testDedupM2(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *m;
   const char *msg = "dedup test";
 
@@ -463,14 +528,14 @@ testDedupM2(void)
   m = recvBlob(env.inChan, 500000000L);
   check("no duplicate", m == 0);
   if (m) free(m);
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 static void
 testMultiShard(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *m;
   const char *msg = "multi shard message requiring several fragments";
 
@@ -487,14 +552,14 @@ testMultiShard(void)
   m = recvBlob(env.inChan, 3000000000L);
   check("received", m != 0);
   if (m) { check("payload correct", verifyBlob(m, 2, msg, strlen(msg))); free(m); }
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 static void
 testEmptyPayload(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *m;
 
   printf("=== Test: empty payload (leave message) ===\n");
@@ -510,14 +575,14 @@ testEmptyPayload(void)
   m = recvBlob(env.inChan, 2000000000L);
   check("received", m != 0);
   if (m) { check("empty payload", verifyBlob(m, 2, 0, 0)); free(m); }
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 static void
 testSequential(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *m;
   unsigned int i;
   unsigned int ok;
@@ -540,7 +605,7 @@ testSequential(void)
   for (i = 0; i < 5; ++i) {
     m = mkBlob(&env.sa, 2, (unsigned short)(i + 1), 1, 0,
                msgs[i], strlen(msgs[i]));
-    if (!sendBlob(env.outChan, m)) { check("send", 0); teardown(&env); return; }
+    if (!sendBlob(env.outChan, m)) { check("send", 0); teardown(&env, &rsecCtx); return; }
   }
   ok = 0;
   for (i = 0; i < 5; ++i) {
@@ -550,14 +615,14 @@ testSequential(void)
     free(m);
   }
   check("all 5 messages correct", ok == 5);
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 static void
 testHmacMatch(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   struct hmacKeyCtx hmacCtx;
   chanBlb_t *m;
   const char *msg = "hmac authenticated";
@@ -582,14 +647,14 @@ testHmacMatch(void)
   m = recvBlob(env.inChan, 2000000000L);
   check("received", m != 0);
   if (m) { check("payload correct", verifyBlob(m, 2, msg, strlen(msg))); free(m); }
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 static void
 testHmacMultiShard(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   struct hmacKeyCtx hmacCtx;
   chanBlb_t *m;
   const char *msg = "hmac multi shard test message payload";
@@ -617,14 +682,14 @@ testHmacMultiShard(void)
   m = recvBlob(env.inChan, 500000000L);
   check("no duplicate", m == 0);
   if (m) free(m);
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 static void
 testTinyShard(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *m;
   const char *msg = "stress test with tiny shards yep";
 
@@ -641,14 +706,14 @@ testTinyShard(void)
   m = recvBlob(env.inChan, 3000000000L);
   check("received", m != 0);
   if (m) { check("payload correct", verifyBlob(m, 2, msg, strlen(msg))); free(m); }
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 static void
 testVlq2Byte(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *m;
   const char *msg = "x";
 
@@ -665,14 +730,14 @@ testVlq2Byte(void)
   m = recvBlob(env.inChan, 2000000000L);
   check("received", m != 0);
   if (m) { check("payload correct", verifyBlob(m, 2, msg, 1)); free(m); }
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 static void
 testVlqMaxShard(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *m;
   const char *msg = "x";
 
@@ -690,13 +755,13 @@ testVlqMaxShard(void)
   m = recvBlob(env.inChan, 3000000000L);
   check("received", m != 0);
   if (m) { check("payload correct", verifyBlob(m, 2, msg, 1)); free(m); }
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 static void
 testDgramMaxValidation(void)
 {
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
 
   printf("=== Test: dgramMax validation (VLQ limit) ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
@@ -704,27 +769,27 @@ testDgramMaxValidation(void)
 
   /* overhead=2+0+8=10, max shardSize=16384, max dgramMax=16394 */
   rsecCtx.dgramMax = 16394;
-  check("16394 shard == 16384", chanBlbChnRsecShard(&rsecCtx) == 16384);
-  check("16394 max > 0", chanBlbChnRsecMax(&rsecCtx, 1) > 0);
+  check("16394 shard == 16384", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize) == 16384);
+  check("16394 max > 0", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, 1) > 0);
 
   rsecCtx.dgramMax = 16395;
-  check("16395 shard == 0", chanBlbChnRsecShard(&rsecCtx) == 0);
-  check("16395 max == 0", chanBlbChnRsecMax(&rsecCtx, 1) == 0);
+  check("16395 shard == 0", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize) == 0);
+  check("16395 max == 0", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, 1) == 0);
 
   /* with HMAC: overhead=2+16+8=26, max dgramMax=16410 */
   rsecCtx.hmacSize = 16;
   rsecCtx.dgramMax = 16410;
-  check("hmac 16410 shard == 16384", chanBlbChnRsecShard(&rsecCtx) == 16384);
+  check("hmac 16410 shard == 16384", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize) == 16384);
 
   rsecCtx.dgramMax = 16411;
-  check("hmac 16411 shard == 0", chanBlbChnRsecShard(&rsecCtx) == 0);
+  check("hmac 16411 shard == 0", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize) == 0);
 }
 
 static void
 testHighParity(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *m;
   const char *msg = "high parity m=5";
 
@@ -744,7 +809,7 @@ testHighParity(void)
   m = recvBlob(env.inChan, 500000000L);
   check("no duplicate", m == 0);
   if (m) free(m);
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 /* ===== MAX PAYLOAD TESTS ===== */
@@ -752,30 +817,30 @@ testHighParity(void)
 static void
 testMaxApi(void)
 {
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
 
   printf("=== Test: chanBlbChnRsecMax API ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
   rsecCtx.dgramMax = 520; /* overhead=2+0+8=10, shardSize=510 */
 
-  check("m=0 => 256*510=130560", chanBlbChnRsecMax(&rsecCtx, 0) == 130560);
-  check("m=1 => 255*510=130050", chanBlbChnRsecMax(&rsecCtx, 1) == 130050);
-  check("m=5 => 251*510=128010", chanBlbChnRsecMax(&rsecCtx, 5) == 128010);
-  check("m=255 => 1*510=510", chanBlbChnRsecMax(&rsecCtx, 255) == 510);
+  check("m=0 => 256*510=130560", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, 0) == 130560);
+  check("m=1 => 255*510=130050", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, 1) == 130050);
+  check("m=5 => 251*510=128010", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, 5) == 128010);
+  check("m=255 => 1*510=510", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, 255) == 510);
 
   rsecCtx.dgramMax = 16; /* overhead=10, shardSize=6 */
-  check("d=16 m=2 => 254*6=1524", chanBlbChnRsecMax(&rsecCtx, 2) == 1524);
+  check("d=16 m=2 => 254*6=1524", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, 2) == 1524);
 
   rsecCtx.dgramMax = 10; /* overhead=10, shardSize=0: too small */
-  check("dgramMax==overhead => 0", chanBlbChnRsecMax(&rsecCtx, 0) == 0);
+  check("dgramMax==overhead => 0", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, 0) == 0);
 }
 
 static void
 testMaxBoundary(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *m;
   unsigned int maxLen;
   unsigned char *payload;
@@ -786,7 +851,7 @@ testMaxBoundary(void)
   rsecCtx.dgramMax = 16;
   rsecCtx.tableSize = 64;
 
-  maxLen = chanBlbChnRsecMax(&rsecCtx, 1); /* 255 * 6 = 1530 */
+  maxLen = chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, 1); /* 255 * 6 = 1530 */
   check("maxLen == 1530", maxLen == 1530);
 
   payload = (unsigned char *)malloc(maxLen + 1);
@@ -816,7 +881,7 @@ testMaxBoundary(void)
   }
 
   free(payload);
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 /* ===== DROP TESTS ===== */
@@ -825,7 +890,7 @@ static void
 testDropRecovery(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *m;
   const char *msg = "drop recovery test message";
 
@@ -847,14 +912,14 @@ testDropRecovery(void)
   if (m) { check("payload correct", verifyBlob(m, 2, msg, strlen(msg))); free(m); }
 
   chanBlbTrnFdDatagramDropPct = 0;
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 static void
 testDropMultiShard(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *m;
   const char *msg = "drop multi shard recovery test!";
 
@@ -876,14 +941,14 @@ testDropMultiShard(void)
   if (m) { check("payload correct", verifyBlob(m, 2, msg, strlen(msg))); free(m); }
 
   chanBlbTrnFdDatagramDropPct = 0;
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 static void
 testDropMultipleMessages(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *m;
   unsigned int i;
   unsigned int ok;
@@ -927,7 +992,7 @@ testDropMultipleMessages(void)
 
 dropMsgDone:
   chanBlbTrnFdDatagramDropPct = 0;
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 /* ===== DELAY (REORDER) TESTS ===== */
@@ -936,7 +1001,7 @@ static void
 testDelayReorder(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *m;
   const char *msg = "delayed and reordered fragments";
 
@@ -958,14 +1023,14 @@ testDelayReorder(void)
   if (m) { check("payload correct", verifyBlob(m, 2, msg, strlen(msg))); free(m); }
 
   chanBlbTrnFdDatagramDelayMs = 0;
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 static void
 testDelaySequential(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *m;
   unsigned int i;
   unsigned int ok;
@@ -1013,7 +1078,7 @@ testDelaySequential(void)
 
 delaySeqDone:
   chanBlbTrnFdDatagramDelayMs = 0;
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 /* ===== COMBINED STRESS TESTS ===== */
@@ -1022,7 +1087,7 @@ static void
 testStressCombined(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *m;
   unsigned int i;
   unsigned int ok;
@@ -1075,7 +1140,7 @@ testStressCombined(void)
   check("all 10 messages survived drop+delay (any order)", ok == 10);
 
 stressTeardown:
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 stressDone:
   chanBlbTrnFdDatagramDropPct = 0;
   chanBlbTrnFdDatagramDelayMs = 0;
@@ -1085,7 +1150,7 @@ static void
 testStressMultiShardHmac(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   struct hmacKeyCtx hmacCtx;
   chanBlb_t *m;
   unsigned int i;
@@ -1141,7 +1206,7 @@ testStressMultiShardHmac(void)
   check("all 5 HMAC multi-shard messages survived stress (any order)", ok == 5);
 
 stressHmacTeardown:
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 stressHmacDone:
   chanBlbTrnFdDatagramDropPct = 0;
   chanBlbTrnFdDatagramDelayMs = 0;
@@ -1153,7 +1218,7 @@ static void
 testCountersBasic(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *m;
   const char *msg = "counter test";
 
@@ -1173,6 +1238,7 @@ testCountersBasic(void)
   if (m) free(m);
   usleep(100000);
 
+  rsecSnap(&rsecCtx);
   check("egrMsg == 1", rsecCtx.egrMsg == 1);
   check("egrFrg == 2", rsecCtx.egrFrg == 2);
   check("igrFrg == 2", rsecCtx.igrFrg == 2);
@@ -1183,14 +1249,14 @@ testCountersBasic(void)
   check("igrDup == 0", rsecCtx.igrDup == 0);
   check("igrLate > 0", rsecCtx.igrLate > 0);
   check("igrEvict == 0", rsecCtx.igrEvict == 0);
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 static void
 testCountersMultiShard(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *m;
   const char *msg = "multi shard counter test msg!";
 
@@ -1210,19 +1276,20 @@ testCountersMultiShard(void)
   if (m) free(m);
   usleep(100000);
 
+  rsecSnap(&rsecCtx);
   check("egrMsg == 1", rsecCtx.egrMsg == 1);
   check("egrFrg == 6", rsecCtx.egrFrg == 6);
   check("igrMsg == 1", rsecCtx.igrMsg == 1);
   check("igrDcd == 0", rsecCtx.igrDcd == 0);
   check("igrEvict == 0", rsecCtx.igrEvict == 0);
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 static void
 testCountersDrop(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *m;
   const char *msg = "drop counter test message!!";
 
@@ -1244,6 +1311,7 @@ testCountersDrop(void)
   if (m) free(m);
   usleep(100000);
 
+  rsecSnap(&rsecCtx);
   check("egrMsg == 1", rsecCtx.egrMsg == 1);
   check("egrFrg == 12", rsecCtx.egrFrg == 12);
   check("igrMsg == 1", rsecCtx.igrMsg == 1);
@@ -1253,14 +1321,14 @@ testCountersDrop(void)
   check("igrEvict == 0", rsecCtx.igrEvict == 0);
 
   chanBlbTrnFdDatagramDropPct = 0;
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 static void
 testCountersDedup(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *m;
   const char *msg = "dedup counter";
 
@@ -1283,6 +1351,7 @@ testCountersDedup(void)
   if (m) free(m);
   usleep(100000);
 
+  rsecSnap(&rsecCtx);
   check("egrMsg == 1", rsecCtx.egrMsg == 1);
   check("egrFrg == 3", rsecCtx.egrFrg == 3);
   check("igrFrg == 3", rsecCtx.igrFrg == 3);
@@ -1290,7 +1359,7 @@ testCountersDedup(void)
   check("igrDup == 0", rsecCtx.igrDup == 0);
   check("igrLate == 2", rsecCtx.igrLate == 2);
   check("igrEvict == 0", rsecCtx.igrEvict == 0);
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 /* ===== SHARD SIZE API TESTS ===== */
@@ -1298,24 +1367,24 @@ testCountersDedup(void)
 static void
 testShardApi(void)
 {
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
 
   printf("=== Test: chanBlbChnRsecShard API ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
   rsecCtx.dgramMax = 520; /* overhead=2+0+8=10, shardSize=510 */
 
-  check("shard=510", chanBlbChnRsecShard(&rsecCtx) == 510);
+  check("shard=510", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize) == 510);
 
   rsecCtx.hmacSize = 16; /* overhead=2+16+8=26, shardSize=494 */
-  check("shard=494 with hmac", chanBlbChnRsecShard(&rsecCtx) == 494);
+  check("shard=494 with hmac", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize) == 494);
 
   rsecCtx.dgramMax = 16;
   rsecCtx.hmacSize = 0; /* overhead=2+0+8=10, shardSize=6 */
-  check("shard=6 small dgram", chanBlbChnRsecShard(&rsecCtx) == 6);
+  check("shard=6 small dgram", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize) == 6);
 
   rsecCtx.dgramMax = 10; /* overhead=10, shardSize=0: too small */
-  check("dgramMax==overhead => 0", chanBlbChnRsecShard(&rsecCtx) == 0);
+  check("dgramMax==overhead => 0", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize) == 0);
 }
 
 /* ===== ENCRYPT/DECRYPT TESTS ===== */
@@ -1324,7 +1393,7 @@ static void
 testEncryptBasic(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   struct cryptKeyCtx cryptCtx;
   chanBlb_t *m;
   const char *msg = "encrypted hello";
@@ -1348,14 +1417,14 @@ testEncryptBasic(void)
   m = recvBlob(env.inChan, 2000000000L);
   check("received", m != 0);
   if (m) { check("payload correct", verifyBlob(m, 2, msg, strlen(msg))); free(m); }
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 static void
 testEncryptMultiShard(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   struct cryptKeyCtx cryptCtx;
   chanBlb_t *m;
   const char *msg = "encrypted multi shard message requiring several fragments";
@@ -1379,14 +1448,14 @@ testEncryptMultiShard(void)
   m = recvBlob(env.inChan, 3000000000L);
   check("received", m != 0);
   if (m) { check("payload correct", verifyBlob(m, 2, msg, strlen(msg))); free(m); }
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 static void
 testEncryptHmac(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   struct hmacKeyCtx hmacCtx;
   struct cryptKeyCtx cryptCtx;
   chanBlb_t *m;
@@ -1418,14 +1487,14 @@ testEncryptHmac(void)
   m = recvBlob(env.inChan, 2000000000L);
   check("received", m != 0);
   if (m) { check("payload correct", verifyBlob(m, 2, msg, strlen(msg))); free(m); }
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 static void
 testEncryptDrop(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   struct cryptKeyCtx cryptCtx;
   chanBlb_t *m;
   const char *msg = "encrypted drop recovery test!";
@@ -1453,7 +1522,7 @@ testEncryptDrop(void)
   if (m) { check("payload correct", verifyBlob(m, 2, msg, strlen(msg))); free(m); }
 
   chanBlbTrnFdDatagramDropPct = 0;
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 /* ===== HDR CALLBACK TESTS ===== */
@@ -1462,7 +1531,7 @@ static void
 testHmacHdr(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   struct hmacHdrCtx hmacCtx;
   chanBlb_t *m;
   const char *msg = "hmac hdr key derivation";
@@ -1488,14 +1557,14 @@ testHmacHdr(void)
   m = recvBlob(env.inChan, 2000000000L);
   check("received", m != 0);
   if (m) { check("payload correct", verifyBlob(m, 4, msg, strlen(msg))); free(m); }
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 static void
 testHmacHdrMultiTag(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   struct hmacHdrCtx hmacCtx;
   chanBlb_t *m;
   unsigned int i;
@@ -1526,7 +1595,7 @@ testHmacHdrMultiTag(void)
   for (i = 0; i < 3; ++i) {
     m = mkBlob(&env.sa, 4, (unsigned short)(i + 1), 1, 0,
                msgs[i], strlen(msgs[i]));
-    if (!sendBlob(env.outChan, m)) { check("send", 0); teardown(&env); return; }
+    if (!sendBlob(env.outChan, m)) { check("send", 0); teardown(&env, &rsecCtx); return; }
   }
   ok = 0;
   memset(seen, 0, sizeof (seen));
@@ -1545,14 +1614,14 @@ testHmacHdrMultiTag(void)
     free(m);
   }
   check("all 3 hdr-derived key messages correct", ok == 3);
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 static void
 testEncryptHdr(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   struct cryptHdrCtx cryptCtx;
   chanBlb_t *m;
   const char *msg = "encrypt hdr key derivation";
@@ -1577,14 +1646,14 @@ testEncryptHdr(void)
   m = recvBlob(env.inChan, 2000000000L);
   check("received", m != 0);
   if (m) { check("payload correct", verifyBlob(m, 4, msg, strlen(msg))); free(m); }
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 static void
 testEncryptHmacHdrDrop(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   struct hmacHdrCtx hmacCtx;
   struct cryptHdrCtx cryptCtx;
   chanBlb_t *m;
@@ -1643,11 +1712,12 @@ testEncryptHmacHdrDrop(void)
     free(m);
   }
   check("all 3 hdr-keyed messages delivered despite drops", ok == 3);
+  rsecSnap(&rsecCtx);
   printf("    (igrDcd=%u)\n", rsecCtx.igrDcd);
 
 hdrDropDone:
   chanBlbTrnFdDatagramDropPct = 0;
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 /* ===== EGRESS PACING TESTS ===== */
@@ -1656,7 +1726,7 @@ static void
 testEgressInterleave(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *m;
   const char *msgs[2];
   int seen[2];
@@ -1697,15 +1767,16 @@ testEgressInterleave(void)
   }
   check("both received", ok == 2);
   usleep(100000);
+  rsecSnap(&rsecCtx);
   check("egrMsg == 2", rsecCtx.egrMsg == 2);
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 static void
 testEgressBackpressure(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *m;
   const char *msg1 = "first msg";
   const char *msg2 = "second msg";
@@ -1744,15 +1815,16 @@ testEgressBackpressure(void)
   check("blob2 received", seen2);
 
   usleep(100000);
+  rsecSnap(&rsecCtx);
   check("egrMsg == 2", rsecCtx.egrMsg == 2);
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 static void
 testCountersBackpressure(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *m;
   const char *msg1 = "backpressure counter test!!";
   const char *msg2 = "ok";
@@ -1791,10 +1863,11 @@ testCountersBackpressure(void)
   check("blob2 received", seen2);
 
   usleep(100000);
+  rsecSnap(&rsecCtx);
   check("egrMsg == 2", rsecCtx.egrMsg == 2);
   /* blob1: 7 frags, blob2: 1 frag */
   check("egrFrg == 8", rsecCtx.egrFrg == 8);
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 /* ===== COVERAGE GAP TESTS ===== */
@@ -1803,7 +1876,7 @@ static void
 testRsDecodeAliasing(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *m;
   unsigned int i;
   unsigned int j;
@@ -1846,19 +1919,20 @@ testRsDecodeAliasing(void)
     free(m);
   }
   check("all 3 messages delivered", ok == 3);
+  rsecSnap(&rsecCtx);
   printf("    (igrDcd=%u)\n", rsecCtx.igrDcd);
   check("RS decode was used (igrDcd > 0)", rsecCtx.igrDcd > 0);
 
 rsAliasDone:
   chanBlbTrnFdDatagramDropPct = 0;
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 static void
 testMClampIntermediate(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *m;
   unsigned char *payload;
   unsigned int payloadLen;
@@ -1888,19 +1962,20 @@ testMClampIntermediate(void)
     free(m);
   }
   usleep(100000);
+  rsecSnap(&rsecCtx);
   /* m clamped from 10 to 6: 250 data + 6 parity = 256 fragments */
   check("egrFrg == 256", rsecCtx.egrFrg == 256);
   check("egrMsg == 1", rsecCtx.egrMsg == 1);
 
   free(payload);
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 static void
 testMalformedBlob(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *m;
 
   printf("=== Test: malformed blob protocol violation ===\n");
@@ -1913,7 +1988,7 @@ testMalformedBlob(void)
 
   /* blob too short: only 2 bytes, needs at least prefixSize+2 */
   m = (chanBlb_t *)malloc(chanBlb_tSize(2));
-  if (!m) { check("malloc", 0); teardown(&env); return; }
+  if (!m) { check("malloc", 0); teardown(&env, &rsecCtx); return; }
   m->l = 2;
   m->b[0] = 1;
   m->b[1] = 0;
@@ -1924,14 +1999,14 @@ testMalformedBlob(void)
   check("no message after protocol violation", m == 0);
   if (m) free(m);
 
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 static void
 testEmptyPayloadDrop(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *m;
 
   printf("=== Test: empty payload with 30%% drop, m=7 ===\n");
@@ -1952,14 +2027,14 @@ testEmptyPayloadDrop(void)
   if (m) { check("empty payload", verifyBlob(m, 2, 0, 0)); free(m); }
 
   chanBlbTrnFdDatagramDropPct = 0;
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 static void
 testTagSizeZero(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *m;
   const char *msg = "zero tag size test";
 
@@ -1977,14 +2052,14 @@ testTagSizeZero(void)
   check("received", m != 0);
   if (m) { check("payload correct", verifyBlob(m, 0, msg, strlen(msg))); free(m); }
 
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 static void
 testLargeK(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *m;
   unsigned char *payload;
   unsigned int payloadLen;
@@ -2013,18 +2088,19 @@ testLargeK(void)
     free(m);
   }
   usleep(100000);
+  rsecSnap(&rsecCtx);
   check("egrFrg == 251", rsecCtx.egrFrg == 251);
   check("egrMsg == 1", rsecCtx.egrMsg == 1);
 
   free(payload);
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 static void
 testEncryptRsDecode(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   struct hmacKeyCtx hmacCtx;
   struct cryptKeyCtx cryptCtx;
   chanBlb_t *m;
@@ -2084,12 +2160,13 @@ testEncryptRsDecode(void)
     free(m);
   }
   check("all 5 encrypted+HMAC messages delivered", ok == 5);
+  rsecSnap(&rsecCtx);
   printf("    (igrDcd=%u)\n", rsecCtx.igrDcd);
   check("RS decode was used (igrDcd > 0)", rsecCtx.igrDcd > 0);
 
 encRsDone:
   chanBlbTrnFdDatagramDropPct = 0;
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 /* ===== PACKING TESTS ===== */
@@ -2098,7 +2175,7 @@ static void
 testPackSmall(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *m;
   unsigned int i;
   unsigned int ok;
@@ -2122,7 +2199,7 @@ testPackSmall(void)
   for (i = 0; i < 5; ++i) {
     m = mkBlob(&env.sa, 2, (unsigned short)(i + 1), 1, 0,
                msgs[i], strlen(msgs[i]));
-    if (!sendBlob(env.outChan, m)) { check("send", 0); teardown(&env); return; }
+    if (!sendBlob(env.outChan, m)) { check("send", 0); teardown(&env, &rsecCtx); return; }
   }
   ok = 0;
   memset(seen, 0, sizeof (seen));
@@ -2143,14 +2220,14 @@ testPackSmall(void)
     free(m);
   }
   check("all 5 small packed messages delivered", ok == 5);
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 static void
 testPackMixedSize(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *m;
   unsigned int ok;
   int seen[3];
@@ -2172,11 +2249,11 @@ testPackMixedSize(void)
 
   /* send two small and one large */
   m = mkBlob(&env.sa, 2, 1, 1, 0, small1, strlen(small1));
-  if (!sendBlob(env.outChan, m)) { check("send", 0); teardown(&env); return; }
+  if (!sendBlob(env.outChan, m)) { check("send", 0); teardown(&env, &rsecCtx); return; }
   m = mkBlob(&env.sa, 2, 2, 1, 0, small2, strlen(small2));
-  if (!sendBlob(env.outChan, m)) { check("send", 0); teardown(&env); return; }
+  if (!sendBlob(env.outChan, m)) { check("send", 0); teardown(&env, &rsecCtx); return; }
   m = mkBlob(&env.sa, 2, 3, 1, 0, big, sizeof (big) / sizeof (big[0]));
-  if (!sendBlob(env.outChan, m)) { check("send", 0); teardown(&env); return; }
+  if (!sendBlob(env.outChan, m)) { check("send", 0); teardown(&env, &rsecCtx); return; }
 
   ok = 0;
   memset(seen, 0, sizeof (seen));
@@ -2193,14 +2270,14 @@ testPackMixedSize(void)
     free(m);
   }
   check("all 3 mixed-size messages delivered", ok == 3);
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 static void
 testPackDrop(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *m;
   unsigned int i;
   unsigned int ok;
@@ -2251,14 +2328,14 @@ testPackDrop(void)
 
 packDropDone:
   chanBlbTrnFdDatagramDropPct = 0;
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 static void
 testPackHdr(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   struct hmacHdrCtx hmacCtx;
   chanBlb_t *m;
   unsigned int i;
@@ -2289,7 +2366,7 @@ testPackHdr(void)
   for (i = 0; i < 3; ++i) {
     m = mkBlob(&env.sa, 4, (unsigned short)(i + 1), 1, 0,
                msgs[i], strlen(msgs[i]));
-    if (!sendBlob(env.outChan, m)) { check("send", 0); teardown(&env); return; }
+    if (!sendBlob(env.outChan, m)) { check("send", 0); teardown(&env, &rsecCtx); return; }
   }
   ok = 0;
   memset(seen, 0, sizeof (seen));
@@ -2308,14 +2385,14 @@ testPackHdr(void)
     free(m);
   }
   check("all 3 packed hdr-keyed messages correct", ok == 3);
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 static void
 testPackCounters(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *m;
   unsigned int i;
   unsigned int ok;
@@ -2337,7 +2414,7 @@ testPackCounters(void)
   for (i = 0; i < 3; ++i) {
     m = mkBlob(&env.sa, 2, (unsigned short)(i + 1), 1, 0,
                msgs[i], strlen(msgs[i]));
-    if (!sendBlob(env.outChan, m)) { check("send", 0); teardown(&env); return; }
+    if (!sendBlob(env.outChan, m)) { check("send", 0); teardown(&env, &rsecCtx); return; }
   }
   ok = 0;
   for (i = 0; i < 3; ++i) {
@@ -2347,10 +2424,11 @@ testPackCounters(void)
   check("all 3 received", ok == 3);
   usleep(100000);
 
+  rsecSnap(&rsecCtx);
   check("egrMsg == 3", rsecCtx.egrMsg == 3);
   check("egrFrg == 6", rsecCtx.egrFrg == 6);
   check("igrMsg == 3", rsecCtx.igrMsg == 3);
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 /* ===== PACING TESTS =====
@@ -2365,7 +2443,7 @@ static void
 testPaceSingleMessage(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *m;
   const char *msg = "paced single";
   unsigned char delayMs;
@@ -2404,6 +2482,7 @@ testPaceSingleMessage(void)
   usleep(300000);
   chanBlbTrnFdDatagramObsEnable = 0;
 
+  rsecSnap(&rsecCtx);
   check("egrFrg == 5", rsecCtx.egrFrg == 5);
   check("5 datagrams emitted", chanBlbTrnFdDatagramObsCnt == 5);
   ok = 1;
@@ -2418,14 +2497,14 @@ testPaceSingleMessage(void)
   }
   check("all inter-packet gaps >= delayMs", ok);
 
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 static void
 testPacePackingDensity(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *m;
   unsigned int i;
   unsigned int ok;
@@ -2462,7 +2541,7 @@ testPacePackingDensity(void)
     if (!sendBlob(env.outChan, m)) {
       check("send", 0);
       chanBlbTrnFdDatagramObsEnable = 0;
-      teardown(&env);
+      teardown(&env, &rsecCtx);
       return;
     }
   }
@@ -2487,16 +2566,17 @@ testPacePackingDensity(void)
   usleep(150000);
   chanBlbTrnFdDatagramObsEnable = 0;
 
+  rsecSnap(&rsecCtx);
   check("egrFrg == 5", rsecCtx.egrFrg == 5);
   check("packed: ObsCnt < egrFrg", chanBlbTrnFdDatagramObsCnt < rsecCtx.egrFrg);
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 static void
 testPaceMaxDelayMixed(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *m;
   const char *msgA = "slow";
   const char *msgB = "fast";
@@ -2562,6 +2642,7 @@ testPaceMaxDelayMixed(void)
   usleep(400000); /* wait for all shards to be emitted (~160ms + margin) */
   chanBlbTrnFdDatagramObsEnable = 0;
 
+  rsecSnap(&rsecCtx);
   check("egrFrg == 6", rsecCtx.egrFrg == 6);
   /* 6 shards packed into 4..6 datagrams depending on insertion
    * jitter (how many B shards overlap the A shards at the same tick).
@@ -2587,14 +2668,14 @@ testPaceMaxDelayMixed(void)
         sawFastGap == chanBlbTrnFdDatagramObsCnt - 1);
   check("some gap >= delayA (slow drives one wait)", hasSlowGap);
 
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 static void
 testPaceNoBlasting(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *m;
   unsigned int i;
   unsigned int ok;
@@ -2635,7 +2716,7 @@ testPaceNoBlasting(void)
     if (!sendBlob(env.outChan, m)) {
       check("send", 0);
       chanBlbTrnFdDatagramObsEnable = 0;
-      teardown(&env);
+      teardown(&env, &rsecCtx);
       return;
     }
   }
@@ -2659,6 +2740,7 @@ testPaceNoBlasting(void)
   usleep(400000);
   chanBlbTrnFdDatagramObsEnable = 0;
 
+  rsecSnap(&rsecCtx);
   check("egrFrg == 9", rsecCtx.egrFrg == 9);
   /* at least as many packets as shards-per-message (same-msg shards
    * never pack), at most one packet per shard */
@@ -2677,14 +2759,14 @@ testPaceNoBlasting(void)
   }
   check("no gap faster than delayMs", ok);
 
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 static void
 testPackSameMessage(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *m;
   const char *msg = "same msg shards not packed together";
 
@@ -2703,10 +2785,11 @@ testPackSameMessage(void)
   check("received", m != 0);
   if (m) { check("payload correct", verifyBlob(m, 2, msg, strlen(msg))); free(m); }
   usleep(100000);
+  rsecSnap(&rsecCtx);
   check("egrMsg == 1", rsecCtx.egrMsg == 1);
   /* 4 fragments from one message: none should be packed together */
   check("egrFrg == 4", rsecCtx.egrFrg == 4);
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 /* ===== rm/um + raw-injection coverage ===== */
@@ -2786,7 +2869,7 @@ static void
 testRmUmNoDecode(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *m;
   const char *msg = "rmum test";
   unsigned int al;
@@ -2813,14 +2896,14 @@ testRmUmNoDecode(void)
     check("payload correct", verifyBlob(m, 2, msg, strlen(msg)));
     free(m);
   }
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 static void
 testRmUmWithDecode(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *m;
   const char *msg = "decode um test abcdefghijkl";
   unsigned int al;
@@ -2855,17 +2938,18 @@ testRmUmWithDecode(void)
   }
   check("rm == 8 observed", sawRmMatches);
   check("um > 0 observed (parity consumed)", sawUmGt0);
+  rsecSnap(&rsecCtx);
   check("igrDcd > 0", rsecCtx.igrDcd > 0);
 
   chanBlbTrnFdDatagramDropPct = 0;
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 static void
 testIgrHashReject(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *m;
   int injFd;
   unsigned char tag[2];
@@ -2892,18 +2976,19 @@ testIgrHashReject(void)
   if (m) free(m);
 
   usleep(100000);
+  rsecSnap(&rsecCtx);
   check("igrHash >= 1", rsecCtx.igrHash >= 1);
   check("igrMsg == 0", rsecCtx.igrMsg == 0);
 
   close(injFd);
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 static void
 testIgrHmacReject(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   struct hmacKeyCtx hk;
   static const unsigned char key[] = "hmac-key-for-reject-test";
   unsigned char badHmac[16];
@@ -2943,19 +3028,20 @@ testIgrHmacReject(void)
   if (m) free(m);
 
   usleep(100000);
+  rsecSnap(&rsecCtx);
   check("igrHmac >= 1", rsecCtx.igrHmac >= 1);
   check("igrHash == 0 (smallhash was valid)", rsecCtx.igrHash == 0);
   check("igrMsg == 0", rsecCtx.igrMsg == 0);
 
   close(injFd);
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 static void
 testIgrDupReject(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *m;
   int injFd;
   unsigned char tag[2];
@@ -2999,19 +3085,20 @@ testIgrDupReject(void)
   }
 
   usleep(100000);
+  rsecSnap(&rsecCtx);
   check("igrDup >= 1", rsecCtx.igrDup >= 1);
   check("igrMsg == 1", rsecCtx.igrMsg == 1);
   check("igrEvict == 0", rsecCtx.igrEvict == 0);
 
   close(injFd);
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 static void
 testParamMismatchLossNotif(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *m;
   chanBlb_t *loss;
   chanBlb_t *second;
@@ -3076,11 +3163,12 @@ testParamMismatchLossNotif(void)
   if (second) free(second);
 
   usleep(100000);
+  rsecSnap(&rsecCtx);
   check("igrEvict >= 1", rsecCtx.igrEvict >= 1);
   check("igrMsg >= 1 (second message)", rsecCtx.igrMsg >= 1);
 
   close(injFd);
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 /*
@@ -3095,7 +3183,7 @@ static void
 testSameTagMOnlyDelivered(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *first;
   chanBlb_t *second;
   int injFd;
@@ -3146,12 +3234,13 @@ testSameTagMOnlyDelivered(void)
   }
 
   usleep(100000);
+  rsecSnap(&rsecCtx);
   check("igrMsg == 2 (same message delivered twice)", rsecCtx.igrMsg == 2);
   check("igrEvict == 0 (silent evict for delivered entry)",
         rsecCtx.igrEvict == 0);
 
   close(injFd);
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 /*
@@ -3163,7 +3252,7 @@ static void
 testSameTagMOnlyIncomplete(void)
 {
   struct testEnv env;
-  struct chanBlbChnRsecCtx rsecCtx;
+  struct rsecPair rsecCtx;
   chanBlb_t *m;
   chanBlb_t *loss;
   int injFd;
@@ -3219,11 +3308,12 @@ testSameTagMOnlyIncomplete(void)
     check("loss um == 1", loss->b[off + 1] == 1);
     free(loss);
   }
+  rsecSnap(&rsecCtx);
   check("igrEvict >= 1 (m-only change evicts incomplete)",
         rsecCtx.igrEvict >= 1);
 
   close(injFd);
-  teardown(&env);
+  teardown(&env, &rsecCtx);
 }
 
 int
