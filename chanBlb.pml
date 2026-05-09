@@ -1,6 +1,7 @@
 /*
  * Promela model of pthreadChannel chanBlb.c
  * Copyright (C) 2025 G. David Butler <gdb@dbSystems.com>
+ * Generated with Claude Code (https://claude.ai/code)
  *
  * Models the blob transport coordination to verify:
  *   - Deadlock freedom
