@@ -4,6 +4,8 @@
  * Link against chanBlbTrnFdDatagramStress.c for drop+delay simulation.
  */
 
+/* Generated with Claude Code (https://claude.ai/code) */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

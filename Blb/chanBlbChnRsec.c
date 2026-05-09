@@ -18,6 +18,8 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+/* Generated with Claude Code (https://claude.ai/code) */
+
 #include <string.h>
 #include <time.h>
 #include <pthread.h>

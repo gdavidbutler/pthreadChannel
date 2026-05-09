@@ -18,6 +18,8 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+/* Generated with Claude Code (https://claude.ai/code) */
+
 /* Broadcast datagram chat demonstrating chanBlbTrnFdDatagram */
 /* Compile with -DRSEC to enable Reed-Solomon erasure coding for reliability */
 
