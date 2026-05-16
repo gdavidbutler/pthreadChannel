@@ -50,7 +50,40 @@
 **          limits creating unused elements.        **
 *****************************************************/
 
-/*************************************************************************/
+/*****************************************************
+**           Patterns demonstrated here             **
+**                                                  **
+** Every agent follows the three-part anatomy:      **
+**  - context struct  (channels + config)           **
+**  - thread function (sink -> transform -> source) **
+**  - launcher        (chanOpen, create, detach)    **
+**                                                  **
+** Notable thread functions:                        **
+**  - addS_   chanAll for atomic multi-get          **
+**  - revS_   chanAll for atomic multi-put          **
+**  - mulS_   chanAll mixed get/put + recursion +   **
+**            demand channel (NULL put probes for   **
+**            a waiting Get before spawning subs)   **
+**  - xnS_    chanOne for event dispatch            **
+**                                                  **
+**        Patterns deliberately absent              **
+**                                                  **
+**  - pthread_join (threads are detached;           **
+**    refcount cascade IS the lifecycle)            **
+**  - "done" channels (chanShut cascades through    **
+**    the topology without explicit signalling)     **
+**  - mutexes / condvars / semaphores / atomics     **
+**  - shared mutable state between agents           **
+**  - polling via chanOp in a drain loop            **
+**                                                  **
+** printS chanShut after 12 coefficients tears      **
+** down the entire dynamically-spawned agent tree   **
+** by refcount cascade alone.                       **
+*****************************************************/
+
+/* portable LONG_MAX / LONG_MIN without <limits.h> */
+static const long Lmax = (long)((unsigned long)-1 >> 1);
+static const long Lmin = -(long)((unsigned long)-1 >> 1) - 1;
 
 /* https://en.wikipedia.org/wiki/Rational_number */
 typedef struct {
@@ -116,15 +149,17 @@ gcdI(
 ){
   long r;
   long t;
+  long g;
 
-  if ((a < 0 ? -a : a) < (b < 0 ? -b : b)) {
+  if ((a < 0 ? -(unsigned long)a : (unsigned long)a)
+    < (b < 0 ? -(unsigned long)b : (unsigned long)b)) {
     while (a) {
       r = b % a;
       t = a > r ? a - r : r - a;
       b = a;
       a = r < t ? r : t;
     }
-    return (b);
+    g = b;
   } else {
     while (b) {
       r = a % b;
@@ -132,8 +167,11 @@ gcdI(
       a = b;
       b = r < t ? r : t;
     }
-    return (a);
+    g = a;
   }
+  if (g == Lmin)
+    return (0);
+  return (g < 0 ? -g : g);
 }
 
 /* a/b + c/d = (ad + cb) / bd */
@@ -143,16 +181,22 @@ addR(
   const rat_t *a
  ,const rat_t *b
 ){
+  rat_t *r;
   long g;
   long t;
 
   if (!(g = gcdI(a->d, b->d)))
     return (0);
   t = b->d / g;
-  return (newR(
+  if ((r = newR(
    a->n * t + b->n * (a->d / g)
   ,a->d * t
-  ));
+     ))
+   && (g = gcdI(r->n, r->d))) {
+    r->n /= g;
+    r->d /= g;
+  }
+  return (r);
 }
 #endif
 
@@ -171,6 +215,10 @@ addToR(
   t = b->d / g;
   a->n = a->n * t + b->n * (a->d / g);
   a->d = a->d * t;
+  if ((g = gcdI(a->n, a->d))) {
+    a->n /= g;
+    a->d /= g;
+  }
 }
 
 /* a/b - c/d = (ad - cb) / bd */
@@ -224,7 +272,9 @@ mulR(
   long n;
   long d;
 
-  if (!(g1 = gcdI(a->n, b->d))
+  if ((!a->n && !a->d)
+   || (!b->n && !b->d)
+   || !(g1 = gcdI(a->n, b->d))
    || !(g2 = gcdI(b->n, a->d)))
     return (0);
   n = (a->n / g1) * (b->n / g2);
@@ -247,7 +297,9 @@ mulByR(
   long n;
   long d;
 
-  if (!(g1 = gcdI(a->n, b->d))
+  if ((!a->n && !a->d)
+   || (!b->n && !b->d)
+   || !(g1 = gcdI(a->n, b->d))
    || !(g2 = gcdI(b->n, a->d))) {
     a->n = a->d = 0;
     return;
@@ -259,12 +311,14 @@ mulByR(
   a->d = d / g1;
 }
 
-/* neg a/b = -1/b */
+/* neg a/b = -a/b */
 #if 0
 static rat_t *
 negR(
   const rat_t *a
 ){
+  if (a->d == Lmin || (a->d >= 0 && a->n == Lmin))
+    return (0);
   if (a->d < 0)
     return (newR(
      a->n
@@ -282,7 +336,9 @@ static void
 negOfR(
   rat_t *a
 ){
-  if (a->d < 0)
+  if (a->d == Lmin || (a->d >= 0 && a->n == Lmin))
+    a->n = a->d = 0;
+  else if (a->d < 0)
     a->d = -a->d;
   else
     a->n = -a->n;
@@ -296,6 +352,14 @@ rcpR(
 ){
   if (!a->n)
     return (0);
+  if (a->n < 0) {
+    if (a->n == Lmin || a->d == Lmin)
+      return (0);
+    return (newR(
+     -a->d
+    ,-a->n
+    ));
+  }
   return (newR(
    a->d
   ,a->n
@@ -313,9 +377,71 @@ rcpOfR(
     a->n = a->d = 0;
     return;
   }
-  a->n = a->d;
-  a->d = t;
+  if (t < 0) {
+    if (t == Lmin || a->d == Lmin) {
+      a->n = a->d = 0;
+      return;
+    }
+    a->n = -a->d;
+    a->d = -t;
+  } else {
+    a->n = a->d;
+    a->d = t;
+  }
 }
+
+/*************************************************************************/
+
+/*
+** CHAN_ALL: chanAll() or, for this example, an equivalent chanOne() loop.
+** Build with -DUSE_CHAN_ALL=0 to exercise the chanOne form.
+**
+** Although developed to exercise chanAll(), nothing here requires its
+** all-or-nothing semantics. The chanOne() form is more robust under load.
+** Use chanAll() only when its atomicity is actually required.
+*/
+#ifndef USE_CHAN_ALL
+#define USE_CHAN_ALL 1
+#endif
+#if USE_CHAN_ALL
+#define CHAN_ALL(n, a) (chanAll(0, n, a) == chanAlOp)
+#else
+static int
+chanOneAll(
+  unsigned int n
+ ,chanArr_t *a
+){
+  unsigned int i;
+  unsigned int c;
+
+  c = 0;
+  for (i = 0; i < n; ++i) {
+    a[i].x = (void *)(long)a[i].o;
+    if (a[i].o == chanOpGet || a[i].o == chanOpPut)
+      ++c;
+  }
+  while ((i = chanOne(0, n, a)) > 0) {
+    if (a[--i].s == chanOsSht) {
+      for (i = 0; i < n; ++i) {
+        if (a[i].o != chanOpNop || !a[i].v)
+          continue;
+        if (a[i].s == chanOsGet)
+          free(*(a[i].v));
+        else if (a[i].s == chanOsPut)
+          *(a[i].v) = 0;
+      }
+      return (0);
+    }
+    a[i].o = chanOpNop;
+    if (!--c)
+      break;
+  }
+  for (i = 0; i < n; ++i)
+    a[i].o = (chanOp_t)(long)a[i].x;
+  return (1);
+}
+#define CHAN_ALL(n, a) chanOneAll(n, a)
+#endif
 
 /*************************************************************************/
 
@@ -486,7 +612,7 @@ void *v
   pa[2].v = 0;
   pa[2].o = chanOpSht;
 
-  while (chanAll(0, sizeof (ga) / sizeof (ga[0]), ga) == chanAlOp) {
+  while (CHAN_ALL(sizeof (ga) / sizeof (ga[0]), ga)) {
     addToR(f, g);
     free(g);
     if (chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 1 || pa[0].s != chanOsPut) {
@@ -670,7 +796,7 @@ void *v
 
   ga1[F].o = ga1[G].o = chanOpGet;
   pa1[P].o = chanOpPut;
-  if ((i = chanAll(0, sizeof (ga1) / sizeof (ga1[0]), ga1)) != chanAlOp)
+  if (!CHAN_ALL(sizeof (ga1) / sizeof (ga1[0]), ga1))
     goto exit;
   cpyR(&f, r[F]);
   cpyR(&g, r[G]);
@@ -694,20 +820,20 @@ void *v
     goto exit;
   pa2[F0].o = pa2[F1].o = pa2[G0].o = pa2[G1].o = chanOpPut;
   ga2[Fg].o = ga2[Gf].o = ga2[xFG].o = chanOpGet;
-  while (chanAll(0, sizeof (ga1) / sizeof (ga1[0]), ga1) == chanAlOp) {
+  while (CHAN_ALL(sizeof (ga1) / sizeof (ga1[0]), ga1)) {
     r[F0] = r[F];
     r[G0] = r[G];
     r[G1] = 0;
     if (!(r[F1] = dupR(r[F]))
      || !(r[G1] = dupR(r[G]))
-     || chanAll(0, sizeof (pa2) / sizeof (pa2[0]), pa2) != chanAlOp) {
+     || !CHAN_ALL(sizeof (pa2) / sizeof (pa2[0]), pa2)) {
       free(r[F0]);
       free(r[F1]);
       free(r[G0]);
       free(r[G1]);
       break;
     }
-    if (chanAll(0, sizeof (ga2) / sizeof (ga2[0]), ga2) != chanAlOp)
+    if (!CHAN_ALL(sizeof (ga2) / sizeof (ga2[0]), ga2))
       break;
     r[P] = r[Fg];
     addToR(r[P], r[Gf]);
@@ -796,10 +922,11 @@ void *v
   free(f);
   setR(&n, 0, 1);
   while (chanOne(0, sizeof (ga) / sizeof (ga[0]), ga) == 2 && ga[1].s == chanOsGet) {
-    if (!++n.n) {
+    if (n.n == Lmax) { /* pre-check avoids signed overflow UB */
       free(f);
       break;
     }
+    ++n.n;
     mulByR(f, &n);
     if (chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 1 || pa[0].s != chanOsPut) {
       free(f);
@@ -882,10 +1009,11 @@ void *v
   }
   setR(&n, 1, 0);
   while (chanOne(0, sizeof (ga) / sizeof (ga[0]), ga) == 2 && ga[1].s == chanOsGet) {
-    if (!++n.d) {
+    if (n.d == Lmax) { /* pre-check avoids signed overflow UB */
       free(f);
       break;
     }
+    ++n.d;
     mulByR(f, &n);
     if (chanOne(0, sizeof (pa) / sizeof (pa[0]), pa) != 1 || pa[0].s != chanOsPut) {
       free(f);
@@ -1001,7 +1129,7 @@ void *v
   pa1[G0].o = pa1[G1].o = chanOpPut;
   while (chanOne(0, sizeof (ga1) / sizeof (ga1[0]), ga1) == G + 1 && ga1[G].s == chanOsGet) {
     if (!(r[G0] = dupR(r[G]))
-     || chanAll(0, sizeof (pa1) / sizeof (pa1[0]), pa1) != chanAlOp) {
+     || !CHAN_ALL(sizeof (pa1) / sizeof (pa1[0]), pa1)) {
       free(r[G0]);
       free(r[G]);
       break;
@@ -1097,7 +1225,7 @@ void *v
   while ((i = chanOne(0, sizeof (ga1) / sizeof (ga1[0]), ga1)) == X + 1 && ga1[X].s == chanOsGet) {
     r[X0] = r[X];
     if (!(r[X1] = dupR(r[X]))
-     || chanAll(0, sizeof (pa1) / sizeof (pa1[0]), pa1) != chanAlOp) {
+     || !CHAN_ALL(sizeof (pa1) / sizeof (pa1[0]), pa1)) {
       free(r[X0]);
       free(r[X1]);
       break;
@@ -1309,7 +1437,7 @@ void *v
   ga1[R].o = chanOpGet;
   pa1[R0].o = pa1[R1].o = chanOpPut;
   if (!(r[R1] = dupR(r[R0]))
-   || chanAll(0, sizeof (pa1) / sizeof (pa1[0]), pa1) != chanAlOp) {
+   || !CHAN_ALL(sizeof (pa1) / sizeof (pa1[0]), pa1)) {
     free(r[R1]);
     free(r[R0]);
     free(r[F]);
@@ -1321,7 +1449,7 @@ void *v
     r[RB1] = 0;
     if (!(r[RB0] = dupR(r[R]))
      || !(r[RB1] = dupR(r[R]))
-     || chanAll(0, sizeof (pa2) / sizeof (pa2[0]), pa2) != chanAlOp) {
+     || !CHAN_ALL(sizeof (pa2) / sizeof (pa2[0]), pa2)) {
       free(r[RB1]);
       free(r[RB0]);
       free(r[R]);
@@ -1329,7 +1457,7 @@ void *v
     }
     r[R0] = r[R];
     if (!(r[R1] = dupR(r[R]))
-     || chanAll(0, sizeof (pa1) / sizeof (pa1[0]), pa1) != chanAlOp) {
+     || !CHAN_ALL(sizeof (pa1) / sizeof (pa1[0]), pa1)) {
       free(r[R1]);
       free(r[R0]);
       break;

@@ -18,11 +18,11 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#ifndef __CHANSTRBLBSQL_H__
-#define __CHANSTRBLBSQL_H__
+#ifndef __CHANBLBSTRSQL_H__
+#define __CHANBLBSTRSQL_H__
 
 chanSs_t
-chanStrBlbSQLa(
+chanBlbStrSQLa(
   void *(*realloc)(void *, unsigned long)
  ,void (*free)(void *)
  ,void (*dequeue)(void *) 
@@ -39,4 +39,4 @@ chanStrBlbSQLa(
 /*  unsigned int size */
 );
 
-#endif /* __CHANSTRBLBSQL_H__ */
+#endif /* __CHANBLBSTRSQL_H__ */

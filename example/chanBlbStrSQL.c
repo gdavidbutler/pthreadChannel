@@ -25,9 +25,9 @@
 #include "chan.h"
 #include "chanBlb.h"
 #include "sqlite3.h"
-#include "chanStrBlbSQL.h"
+#include "chanBlbStrSQL.h"
 
-struct chanStrBlbSQLc {
+struct chanBlbStrSQLc {
   void (*f)(void *);          /* infrastructure free routine */
   void (*d)(void *);          /* blob delete routine */
   void *(*n)(unsigned long);  /* blob new routine */
@@ -42,10 +42,10 @@ struct chanStrBlbSQLc {
   sqlite3_stmt *sel;
 };
 
-#define C ((struct chanStrBlbSQLc *)c)
+#define C ((struct chanBlbStrSQLc *)c)
 
 static void
-chanStrBlbSQLd(
+chanBlbStrSQLd(
   void *c
  ,chanSs_t s
 ){
@@ -68,7 +68,7 @@ chanStrBlbSQLd(
 #define V ((chanBlb_t **)v)
 
 static chanSs_t
-chanStrBlbSQLi(
+chanBlbStrSQLi(
   void *c
  ,chanSo_t o
  ,chanSw_t w
@@ -126,7 +126,7 @@ err:
 #undef C
 
 chanSs_t
-chanStrBlbSQLa(
+chanBlbStrSQLa(
   void *(*a)(void *, unsigned long)
  ,void (*f)(void *)
  ,void (*u)(void *)
@@ -149,7 +149,7 @@ chanStrBlbSQLa(
    ,"PRAGMA synchronous=FULL;"
    ,"PRAGMA synchronous=EXTRA;"
   };
-  struct chanStrBlbSQLc *c;
+  struct chanBlbStrSQLc *c;
   void *(*n)(unsigned long);
   const char *p;
   unsigned int o;
@@ -243,14 +243,14 @@ chanStrBlbSQLa(
     s |= chanSsCanPut;
   sqlite3_reset(c->sel);
   sqlite3_step(c->cmt), sqlite3_reset(c->cmt);
-  *d = chanStrBlbSQLd;
-  *i = chanStrBlbSQLi;
+  *d = chanBlbStrSQLd;
+  *i = chanBlbStrSQLi;
   *v = c;
   return (s);
 err:
 fprintf(stderr, "SQLite error %s\n", sqlite3_errmsg(c->b));
   sqlite3_step(c->rlb), sqlite3_reset(c->rlb);
-  chanStrBlbSQLd(c, 0);
+  chanBlbStrSQLd(c, 0);
   return (0);
 /* locking_mode=EXCLUSIVE unused */
   (void)w; /* wake callback */

@@ -22,8 +22,8 @@ clean:
 	rm -f sockproxy pipeproxy datagramchat datagramchat-rsec squint floydWarshall
 	rm -f chanBlbChnRsec.o
 	rm -f chanBlbTrnKcp.o
-	rm -f chanStrBlbSQL.o
-	rm -f chanStrBlbSQLtest
+	rm -f chanBlbStrSQL.o
+	rm -f chanBlbStrSQLtest
 	rm -f test_rsec
 
 sockproxy: example/sockproxy.c chan.h Blb/chanBlb.h Blb/chanBlbTrnFd.h Blb/chanBlbTrnFdStream.h chan.o chanBlb.o chanBlbTrnFd.o chanBlbTrnFdStream.o
@@ -47,11 +47,11 @@ squint: example/squint.c chan.h chan.o
 floydWarshall: example/floydWarshall.c chan.h chan.o
 	$(CC) $(CFLAGS) -Iexample -DFWMAIN -DFWEQL -DFWBLK -o floydWarshall example/floydWarshall.c chan.o -lpthread
 
-chanStrBlbSQLtest: example/chanStrBlbSQLtest.c example/chanStrBlbSQL.h chan.h Str/chanStrFIFO.h Blb/chanBlb.h chanStrBlbSQL.o chanStrFIFO.o chanBlb.o
-	$(CC) $(SQLITE_CFLAGS) -Iexample -o chanStrBlbSQLtest example/chanStrBlbSQLtest.c chanStrBlbSQL.o chanStrFIFO.o chanBlb.o chan.o $(SQLITE_LIB)
+chanBlbStrSQLtest: example/chanBlbStrSQLtest.c example/chanBlbStrSQL.h chan.h Str/chanStrFIFO.h Blb/chanBlb.h chanBlbStrSQL.o chanStrFIFO.o chanBlb.o
+	$(CC) $(SQLITE_CFLAGS) -Iexample -o chanBlbStrSQLtest example/chanBlbStrSQLtest.c chanBlbStrSQL.o chanStrFIFO.o chanBlb.o chan.o $(SQLITE_LIB)
 
-chanStrBlbSQL.o: example/chanStrBlbSQL.c example/chanStrBlbSQL.h chan.h Str/chanStrFIFO.h Blb/chanBlb.h
-	$(CC) $(SQLITE_CFLAGS) -Iexample -c example/chanStrBlbSQL.c
+chanBlbStrSQL.o: example/chanBlbStrSQL.c example/chanBlbStrSQL.h chan.h Str/chanStrFIFO.h Blb/chanBlb.h
+	$(CC) $(SQLITE_CFLAGS) -Iexample -c example/chanBlbStrSQL.c
 
 chanBlbTrnKcp.o: example/chanBlbTrnKcp.c example/chanBlbTrnKcp.h Blb/chanBlb.h chan.h $(KCP)/ikcp.h
 	$(CC) $(CFLAGS) -I$(KCP) -c example/chanBlbTrnKcp.c

@@ -20,7 +20,7 @@
 
 /*
  * If you have SQLite installed in your system, after setting SQLITE flags in toplevel Makefile, run:
- *   make chanStrBlbSQLtest
+ *   make chanBlbStrSQLtest
  *
  * else...
  *
@@ -30,15 +30,15 @@
  *
  * compile example with something like:
  *
- *  cc -I. -IStr -Iexample -Isqlite-amalgamation-??????? -c example/chanStrBlbSQL.c
- *  cc -I. -Iexample -Isqlite-amalgamation-??????? -c example/chanStrBlbSQLtest.c
+ *  cc -I. -IStr -Iexample -Isqlite-amalgamation-??????? -c example/chanBlbStrSQL.c
+ *  cc -I. -Iexample -Isqlite-amalgamation-??????? -c example/chanBlbStrSQLtest.c
  *
  * link it all together with channel objects like:
  *
- *  cc -o chanStrBlbSQLtest chanStrBlbSQLtest.o chanStrBlbSQL.o sqlite3.o chanBlb.o chanStrFIFO.o chan.o -lpthread
+ *  cc -o chanBlbStrSQLtest chanBlbStrSQLtest.o chanBlbStrSQL.o sqlite3.o chanBlb.o chanStrFIFO.o chan.o -lpthread
  *
  * Usage:
- *  ./chanStrBlbSQLtest file journal(0:DELETE,1:TRUNCATE,2:PERSIST,3:WAL) synchronous(0:OFF,1:NORMAL,2:FULL,3:EXTRA) messages g|p|b
+ *  ./chanBlbStrSQLtest file journal(0:DELETE,1:TRUNCATE,2:PERSIST,3:WAL) synchronous(0:OFF,1:NORMAL,2:FULL,3:EXTRA) messages g|p|b
  *
  *  (file for SQLite, :memory: is fast but much more expensive than chanStrFIFO, which is used if file is zero length)
  *  (SQLite PRAGMA journal_mode, 0=DELETE, 1=TRUNCATE, 2=PERSIST, 3=WAL)
@@ -48,17 +48,17 @@
  *
  * run it like:
  *
- *  ./chanStrBlbSQLtest test.db 0 2 100 p < README.md
+ *  ./chanBlbStrSQLtest test.db 0 2 100 p < README.md
  *   test.db is full of README.md blobs
  *
- *  ./chanStrBlbSQLtest test.db 0 2 100 g > README.out
+ *  ./chanBlbStrSQLtest test.db 0 2 100 g > README.out
  *   test.db is empty
  *
  *  cmp README.md README.out
  *
  * or both in one process:
  *
- *  ./chanStrBlbSQLtest test.db 0 2 100 b < README.md > README.out
+ *  ./chanBlbStrSQLtest test.db 0 2 100 b < README.md > README.out
  *   test.db is empty
  *
  *  cmp README.md README.out
@@ -72,7 +72,7 @@
 #include "chanBlb.h"
 #include "sqlite3.h"
 #include "chanStrFIFO.h"
-#include "chanStrBlbSQL.h"
+#include "chanBlbStrSQL.h"
 
 /* input thread for get */
 static void *
@@ -171,7 +171,7 @@ main(
   chanInit(realloc, free);
   sqlite3_initialize();
   if (*argv[arg_file])
-    c = chanCreate(free, chanStrBlbSQLa, malloc, argv[arg_file], j, s, z);
+    c = chanCreate(free, chanBlbStrSQLa, malloc, argv[arg_file], j, s, z);
   else
     c = chanCreate(free, chanStrFIFOa, z);
   if (!c) {
