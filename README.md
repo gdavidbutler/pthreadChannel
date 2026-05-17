@@ -220,6 +220,8 @@ Every agent has three parts:
 
 See `conS` / `multS` / `addS` in [squint](#Examples). Reading any one shows the pattern.
 
+The library defends against `pthread_cancel` with `pthread_cleanup_push` because it cannot know its callers' cancellation policy. Application code that controls its own policy — squint never cancels; a process-monitored daemon exits on uncorrectable error rather than cancelling threads — can omit `pthread_cleanup_push` and place chanShut/chanClose/free at the exit label directly. The rule is `pthread_cancel` reachability, not taste.
+
 #### Shutdown is a cascade
 
 There is no quit message, no done Channel, no `pthread_cancel`, no `pthread_join`. Shutdown propagates through chanShut and reference counting:

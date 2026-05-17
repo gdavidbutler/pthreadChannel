@@ -113,14 +113,14 @@ chanBlb(
  ,unsigned int (*output)(void *outputCtx, const unsigned char *buffer, unsigned int size) /* return 0 on failure */
  ,void (*outputClose)(void *outputCtx)
  ,void *egressFrmCtx
- ,void *(*egessrFrm)(struct chanBlbEgrCtx *)
+ ,void *(*egressFrm)(struct chanBlbEgrCtx *)
 
  ,chan_t *ingress
  ,void *inputCtx
  ,unsigned int (*input)(void *inputCtx, unsigned char *buffer, unsigned int size) /* return 0 on failure */
  ,void (*inputClose)(void *inputCtx)
- ,void *igessrFrmCtx
- ,void *(*igessrFrm)(struct chanBlbIgrCtx *)
+ ,void *ingressFrmCtx
+ ,void *(*ingressFrm)(struct chanBlbIgrCtx *)
  ,chanBlb_t *blb
 
  ,void *finalCtx
