@@ -716,6 +716,12 @@ burstDrop(
   return (0);
 }
 
+/* Token-bucket bandwidth limit.  chanBlbTrnFdDatagramBwLimit is the
+ * sustained rate in bits/sec; the bucket holds one second of tokens.
+ * Charges len*8 bits per datagram -- callers pass the wire datagram
+ * length (the in-process [addrlen][addr] prefix already excluded, since
+ * that prefix is stripped before sendto and never reaches the wire).
+ * Returns 1 to drop when the bucket cannot cover the cost. */
 static int
 bwDrop(
   struct ctx *c
@@ -780,7 +786,11 @@ chanBlbTrnFdDatagramOutput(
           && arc4random_uniform(100) < chanBlbTrnFdDatagramDropPct) {
     return (l);
   }
-  if (bwDrop(V, l))
+  /* Charge the wire datagram, not the in-process buffer: the
+   * [addrlen][addr] prefix is stripped before sendto (see
+   * chanBlbTrnFdDatagramOutput in chanBlbTrnFdDatagram.c) and never
+   * reaches the wire.  Same length the ObsEnable hook records above. */
+  if (bwDrop(V, l > 1U + b[0] ? l - 1 - b[0] : 0))
     return (l);
 
   if (chanBlbTrnFdDatagramDelayMs == 0)
