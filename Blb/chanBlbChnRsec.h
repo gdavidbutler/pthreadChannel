@@ -59,6 +59,7 @@
 struct chanBlbChnRsecEgrCtrs {
   unsigned int msg;       /* messages fully sent */
   unsigned int frg;       /* fragments sent */
+  unsigned int full;      /* messages blocked (table was full) */
 };
 
 struct chanBlbChnRsecIgrCtrs {
@@ -69,7 +70,7 @@ struct chanBlbChnRsecIgrCtrs {
   unsigned int late;      /* late fragments after delivery */
   unsigned int msg;       /* messages delivered */
   unsigned int dcd;       /* messages via RS decode */
-  unsigned int evict;     /* incomplete messages evicted */
+  unsigned int evict;     /* messages evicted (table was full) */
 };
 
 struct chanBlbChnRsecEgrCtx {

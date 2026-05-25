@@ -354,14 +354,10 @@ chanBlbChnRsecEgr(
   unsigned long shardCount;
   unsigned long shardAlloc;
   unsigned int ti;
-  /* Inter-packet pacing state.  After emitting, the next emit
-   * must wait at least lastMaxD ms — the largest delay_ms among
-   * shards packed into that packet.  Per-message scheduling
-   * (shards[].ts) is unchanged so same-destination shards whose
-   * timestamps coincide still pack into one datagram. */
   struct timespec lastEmit;
   unsigned char lastMaxD;
   unsigned char hasEmit;
+  unsigned char pendingFresh;
 
   ctx = (struct chanBlbChnRsecEgrCtx *)v->frmCtx;
   tagSize = ctx->tagSize;
@@ -381,6 +377,7 @@ chanBlbChnRsecEgr(
   pending = 0;
   lastMaxD = 0;
   hasEmit = 0;
+  pendingFresh = 0;
 
   if (!maxShardSize || maxShardSize > 16384 || !tableSize)
     goto error;
@@ -473,6 +470,7 @@ chanBlbChnRsecEgr(
       /* pending now holds the blob; pause gets, monitor shutdown */
       p[0].v = 0;
       p[0].o = chanOpSht;
+      pendingFresh = 1;
     } else if (p[0].s != chanOsTmo) {
       break; /* shutdown */
     }
@@ -510,6 +508,15 @@ chanBlbChnRsecEgr(
           slot = ti;
           break;
         }
+      }
+
+      if (pendingFresh) {
+        if (slot >= tableSize) {
+          pthread_mutex_lock(&priv->m);
+          ++priv->ctrs.full;
+          pthread_mutex_unlock(&priv->m);
+        }
+        pendingFresh = 0;
       }
 
       if (slot < tableSize) {

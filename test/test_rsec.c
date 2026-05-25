@@ -373,7 +373,7 @@ struct rsecPair {
   void (*hashSign)(void *, const unsigned char *, unsigned char *, const unsigned char *, unsigned int);
   int  (*hashVrfy)(void *, const unsigned char *, const unsigned char *, const unsigned char *, unsigned int);
   /* counter snapshot — populated by rsecSnap() */
-  unsigned int egrMsg, egrFrg;
+  unsigned int egrMsg, egrFrg, egrFull;
   unsigned int igrFrg, igrHash, igrHmac, igrDup, igrLate, igrMsg, igrDcd, igrEvict;
   /* private — populated by setup() */
   struct chanBlbChnRsecEgrCtx egr;
@@ -391,6 +391,7 @@ rsecSnap(
   chanBlbChnRsecIgrSnap(&p->igr, &ic);
   p->egrMsg = ec.msg;
   p->egrFrg = ec.frg;
+  p->egrFull = ec.full;
   p->igrFrg = ic.frg;
   p->igrHash = ic.hash;
   p->igrHmac = ic.hmac;
@@ -1314,6 +1315,7 @@ testCountersBasic(void)
   rsecSnap(&rsecCtx);
   check("egrMsg == 1", rsecCtx.egrMsg == 1);
   check("egrFrg == 2", rsecCtx.egrFrg == 2);
+  check("egrFull == 0", rsecCtx.egrFull == 0);
   check("igrFrg == 2", rsecCtx.igrFrg == 2);
   check("igrHash == 0", rsecCtx.igrHash == 0);
   check("igrHmac == 0", rsecCtx.igrHmac == 0);
@@ -1322,6 +1324,50 @@ testCountersBasic(void)
   check("igrDup == 0", rsecCtx.igrDup == 0);
   check("igrLate > 0", rsecCtx.igrLate > 0);
   check("igrEvict == 0", rsecCtx.igrEvict == 0);
+  teardown(&env, &rsecCtx);
+}
+
+static void
+testCountersEgrFull(void)
+{
+  struct testEnv env;
+  struct rsecPair rsecCtx;
+  chanBlb_t *m;
+  unsigned int i;
+  const char *msg = "egrFull trigger";
+
+  /* With tableSize=1 and slot dwell (k+m)*delay_ms ~ 200 ms, three
+   * back-to-back sends must enroll serially: msg 1 enrolls
+   * immediately, msgs 2 and 3 each find the slot full when egress
+   * picks them up.  Expected egrFull = 2. */
+  printf("=== Test: egrFull counter (tableSize=1, serialized) ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 2;
+  rsecCtx.dgramMax = 520;
+  rsecCtx.tableSize = 1;
+
+  if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
+
+  for (i = 0; i < 3; ++i) {
+    /* mVal=4 -> k=1+m=5 shards; delay_ms=50 -> ~250 ms slot dwell */
+    m = mkBlob(&env.sa, 2, (unsigned short)(0x100 + i), 4, 50,
+               msg, strlen(msg));
+    check("send", sendBlob(env.outChan, m));
+  }
+  for (i = 0; i < 3; ++i) {
+    m = recvBlob(env.inChan, 3000000000L);
+    check("received", m != 0);
+    if (m) free(m);
+  }
+  /* egrMsg increments only after ALL shards of a message have been
+   * emitted (recvBlob returns as soon as k shards decode).  Wait long
+   * enough for the egress thread to finish draining the last
+   * message's shards (~250 ms per message dwell). */
+  usleep(800000);
+
+  rsecSnap(&rsecCtx);
+  check("egrMsg == 3", rsecCtx.egrMsg == 3);
+  check("egrFull == 2", rsecCtx.egrFull == 2);
   teardown(&env, &rsecCtx);
 }
 
@@ -3558,6 +3604,7 @@ main(
 
   /* counter tests */
   testCountersBasic();
+  testCountersEgrFull();
   testCountersMultiShard();
   testCountersDrop();
   testCountersDedup();
