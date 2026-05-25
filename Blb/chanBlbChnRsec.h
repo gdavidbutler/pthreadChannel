@@ -30,8 +30,8 @@
  * Each context is owned by a single thread; there is no cross-thread
  * sharing of callbacks, callback contexts, or counters.
  *
- * The wire-format-defining sizes (dgramMax, tagSize, hmacSize) MUST
- * match between a sender's egress context and the corresponding
+ * The wire-format-defining sizes (dgramMax, tagSize, hmacSize, hashSize)
+ * MUST match between a sender's egress context and the corresponding
  * receiver's ingress context, and likewise within a single peer that
  * runs both directions.  tableSize is per-direction.
  *
@@ -40,6 +40,20 @@
  * realloc/free pair (`v->realloc`/`v->free`) and releases on exit.
  * The application supplies the ctx with config fields populated and
  * `opaque` zero (e.g. via calloc); no explicit init/fini calls.
+ *
+ * Two-layer authentication:
+ *   - Datagram layer (hashSign/hashVrfy, called once per datagram):
+ *     a keyed gate that lets the ingress reject adversarial floods
+ *     before any per-fragment HMAC work runs.  `adr` points to the
+ *     [addrlen][addr] prefix from the wire; on egress this is the
+ *     destination address (chosen by the local application), on
+ *     ingress this is the kernel-supplied source address (worthless
+ *     against a spoofing adversary; advisory only).  The application
+ *     decides what to do with `adr` — use it as a hint, ignore it,
+ *     or trial-verify across a peer-key set.
+ *   - Fragment layer (hmacSign/hmacVrfy, called once per fragment):
+ *     end-to-end authentication of each shard, keyed by per-fragment
+ *     header material.
  */
 
 struct chanBlbChnRsecEgrCtrs {
@@ -49,7 +63,7 @@ struct chanBlbChnRsecEgrCtrs {
 
 struct chanBlbChnRsecIgrCtrs {
   unsigned int frg;       /* fragments received */
-  unsigned int hash;      /* small hash failures */
+  unsigned int hash;      /* datagram MAC failures */
   unsigned int hmac;      /* HMAC failures */
   unsigned int dup;       /* duplicate fragments */
   unsigned int late;      /* late fragments after delivery */
@@ -59,6 +73,9 @@ struct chanBlbChnRsecIgrCtrs {
 };
 
 struct chanBlbChnRsecEgrCtx {
+  void *hashCtx;
+  /* adr points to [addrlen(1)][addr(addrlen)] of the destination */
+  void (*hashSign)(void *hashCtx, const unsigned char *adr, unsigned char *dst, const unsigned char *src, unsigned int len);
   void *hmacCtx;
   /* hdr points to fragment header ([addrlen][addr][tag][k-1][m][si]) for key selection */
   void (*hmacSign)(void *hmacCtx, const unsigned char *hdr, unsigned char *dst, const unsigned char *src, unsigned int len);
@@ -67,11 +84,11 @@ struct chanBlbChnRsecEgrCtx {
   void (*encrypt)(void *cryptCtx, const unsigned char *hdr, unsigned char *data, unsigned int len);
   /*
    * Max datagram payload size (transport MTU minus headers).
-   * Max shard size (dgramMax - tagSize - hmacSize - 8) must not
-   * exceed 16384; chanBlbChnRsecShard() returns 0 if violated.
+   * Max shard size (dgramMax - tagSize - hmacSize - hashSize - 7)
+   * must not exceed 16384; chanBlbChnRsecShard() returns 0 if violated.
    *
    * Wire format packs multiple fragments per datagram:
-   *   [frag1][frag2]...[fragN][smallhash(1)]
+   *   [frag1][frag2]...[fragN][hash(hashSize)]
    * Each fragment:
    *   [tag][k-1][m][si][pad_vlq(1-2)][shard_len_vlq(1-2)][shard_data][hmac]
    *
@@ -89,11 +106,21 @@ struct chanBlbChnRsecEgrCtx {
    */
   unsigned int tagSize;
   unsigned int tableSize; /* max in-flight messages being paced */
-  unsigned int hmacSize;  /* HMAC size in bytes (0 = no HMAC) */
+  unsigned int hmacSize;  /* fragment HMAC size in bytes (0 = no fragment HMAC) */
+  unsigned int hashSize;  /* datagram MAC size in bytes (0 = no datagram MAC) */
   void *opaque;           /* private: managed by chanBlbChnRsecEgr; init to 0 */
 };
 
 struct chanBlbChnRsecIgrCtx {
+  void *hashCtx;
+  /*
+   * adr points to [addrlen(1)][addr(addrlen)] of the kernel-supplied
+   * source address.  This address is attacker-controlled in any
+   * threat model that includes adversarial peers — the callback
+   * MUST NOT trust it as a key selector.  Use it as a routing hint,
+   * ignore it, or trial-verify across a peer-key set.
+   */
+  int (*hashVrfy)(void *hashCtx, const unsigned char *adr, const unsigned char *mac, const unsigned char *src, unsigned int len);
   void *hmacCtx;
   /* hdr points to fragment header ([addrlen][addr][tag][k-1][m][si]) for key selection */
   int (*hmacVrfy)(void *hmacCtx, const unsigned char *hdr, const unsigned char *mac, const unsigned char *src, unsigned int len);
@@ -113,6 +140,7 @@ struct chanBlbChnRsecIgrCtx {
    */
   unsigned int tableSize;
   unsigned int hmacSize;  /* must match the sender's egress hmacSize */
+  unsigned int hashSize;  /* must match the sender's egress hashSize */
   void *opaque;           /* private: managed by chanBlbChnRsecIgr; init to 0 */
 };
 
@@ -135,6 +163,7 @@ chanBlbChnRsecShard(
   unsigned int dgramMax
  ,unsigned int tagSize
  ,unsigned int hmacSize
+ ,unsigned int hashSize
 );
 
 /* Return max payload bytes for a given m parity count (0 if invalid config) */
@@ -143,6 +172,7 @@ chanBlbChnRsecMax(
   unsigned int dgramMax
  ,unsigned int tagSize
  ,unsigned int hmacSize
+ ,unsigned int hashSize
  ,unsigned char m
 );
 

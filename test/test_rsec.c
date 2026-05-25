@@ -18,6 +18,7 @@
 #include "chanBlbTrnFdDatagram.h"
 #include "chanBlbChnRsec.h"
 #include "rmd128.h"
+#include "halfsiphash.h"
 
 /* transport pathology knobs (defined in chanBlbTrnFdDatagramStress.c) */
 extern unsigned int chanBlbTrnFdDatagramDelayMs;
@@ -106,6 +107,60 @@ hmacVrfyCb(
   rmd128hmac(k->key, k->keyLen, src, len, computed);
   diff = 0;
   for (i = 0; i < RMD128_SZ; ++i)
+    diff |= mac[i] ^ computed[i];
+  return (diff == 0);
+}
+
+/*
+ * Datagram-layer hash callbacks — HalfSipHash-2-4, 64-bit key, 32-bit tag.
+ *
+ * Cheap keyed PRF for the chanBlbChnRsec datagram-level DoS gate.  Forgery
+ * against this only buys the attacker the right to have the datagram's
+ * fragments routed to the per-fragment HMAC layer, where their actual
+ * integrity attempt dies.  The 64-bit key is the security ceiling; a real
+ * application would derive it from a pre-shared key.
+ *
+ * adr points to [addrlen(1)][addr(addrlen)] of the datagram.  On egress
+ * that's the destination address; on ingress it's the kernel-supplied
+ * source address (attacker-controlled — these test callbacks ignore it).
+ */
+struct hashKeyCtx {
+  unsigned char key[HALFSIPHASH_KEY_SZ];
+};
+
+static void
+hashSignCb(
+  void *ctx
+ ,const unsigned char *adr
+ ,unsigned char *dst
+ ,const unsigned char *src
+ ,unsigned int len
+){
+  struct hashKeyCtx *k;
+
+  (void)adr;
+  k = (struct hashKeyCtx *)ctx;
+  halfsiphash(src, len, k->key, dst);
+}
+
+static int
+hashVrfyCb(
+  void *ctx
+ ,const unsigned char *adr
+ ,const unsigned char *mac
+ ,const unsigned char *src
+ ,unsigned int len
+){
+  struct hashKeyCtx *k;
+  unsigned char computed[HALFSIPHASH_HSH_SZ];
+  unsigned char diff;
+  unsigned int i;
+
+  (void)adr;
+  k = (struct hashKeyCtx *)ctx;
+  halfsiphash(src, len, k->key, computed);
+  diff = 0;
+  for (i = 0; i < HALFSIPHASH_HSH_SZ; ++i)
     diff |= mac[i] ^ computed[i];
   return (diff == 0);
 }
@@ -313,6 +368,10 @@ struct rsecPair {
   void *cryptCtx;
   void (*encrypt)(void *, const unsigned char *, unsigned char *, unsigned int);
   void (*decrypt)(void *, const unsigned char *, unsigned char *, unsigned int);
+  unsigned int hashSize;
+  void *hashCtx;
+  void (*hashSign)(void *, const unsigned char *, unsigned char *, const unsigned char *, unsigned int);
+  int  (*hashVrfy)(void *, const unsigned char *, const unsigned char *, const unsigned char *, unsigned int);
   /* counter snapshot — populated by rsecSnap() */
   unsigned int egrMsg, egrFrg;
   unsigned int igrFrg, igrHash, igrHmac, igrDup, igrLate, igrMsg, igrDcd, igrEvict;
@@ -364,6 +423,10 @@ setup(
   rsecCtx->egr.cryptCtx  = rsecCtx->igr.cryptCtx  = rsecCtx->cryptCtx;
   rsecCtx->egr.encrypt   = rsecCtx->encrypt;
   rsecCtx->igr.decrypt   = rsecCtx->decrypt;
+  rsecCtx->egr.hashSize  = rsecCtx->igr.hashSize  = rsecCtx->hashSize;
+  rsecCtx->egr.hashCtx   = rsecCtx->igr.hashCtx   = rsecCtx->hashCtx;
+  rsecCtx->egr.hashSign  = rsecCtx->hashSign;
+  rsecCtx->igr.hashVrfy  = rsecCtx->hashVrfy;
   rsecCtx->egr.opaque    = 0;
   rsecCtx->igr.opaque    = 0;
 
@@ -722,7 +785,7 @@ testVlq2Byte(void)
   printf("=== Test: 2-byte VLQ padding (dgramMax=266, 1-byte payload) ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
-  rsecCtx.dgramMax = 266; /* overhead=10, shardSize=256, 1-byte payload => padding=255 (2-byte VLQ) */
+  rsecCtx.dgramMax = 266; /* overhead=9, shardSize=257, 1-byte payload => padding=256 (2-byte VLQ) */
   rsecCtx.tableSize = 64;
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
@@ -743,10 +806,10 @@ testVlqMaxShard(void)
   chanBlb_t *m;
   const char *msg = "x";
 
-  printf("=== Test: VLQ max shard (dgramMax=16394, shardSize=16384) ===\n");
+  printf("=== Test: VLQ max shard (dgramMax=16393, shardSize=16384) ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
-  rsecCtx.dgramMax = 16394; /* overhead=10, shardSize=16384, padding=16383 */
+  rsecCtx.dgramMax = 16393; /* overhead=9, shardSize=16384, padding=16383 */
   rsecCtx.tableSize = 64;
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
@@ -769,22 +832,30 @@ testDgramMaxValidation(void)
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
 
-  /* overhead=2+0+8=10, max shardSize=16384, max dgramMax=16394 */
+  /* overhead=2+0+0+7=9, max shardSize=16384, max dgramMax=16393 */
+  rsecCtx.dgramMax = 16393;
+  check("16393 shard == 16384", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize) == 16384);
+  check("16393 max > 0", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize, 1) > 0);
+
   rsecCtx.dgramMax = 16394;
-  check("16394 shard == 16384", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize) == 16384);
-  check("16394 max > 0", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, 1) > 0);
+  check("16394 shard == 0", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize) == 0);
+  check("16394 max == 0", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize, 1) == 0);
 
-  rsecCtx.dgramMax = 16395;
-  check("16395 shard == 0", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize) == 0);
-  check("16395 max == 0", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, 1) == 0);
-
-  /* with HMAC: overhead=2+16+8=26, max dgramMax=16410 */
+  /* with HMAC: overhead=2+16+0+7=25, max dgramMax=16409 */
   rsecCtx.hmacSize = 16;
-  rsecCtx.dgramMax = 16410;
-  check("hmac 16410 shard == 16384", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize) == 16384);
+  rsecCtx.dgramMax = 16409;
+  check("hmac 16409 shard == 16384", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize) == 16384);
 
-  rsecCtx.dgramMax = 16411;
-  check("hmac 16411 shard == 0", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize) == 0);
+  rsecCtx.dgramMax = 16410;
+  check("hmac 16410 shard == 0", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize) == 0);
+
+  /* with HMAC + datagram MAC: overhead=2+16+16+7=41, max dgramMax=16425 */
+  rsecCtx.hashSize = 16;
+  rsecCtx.dgramMax = 16425;
+  check("hash 16425 shard == 16384", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize) == 16384);
+
+  rsecCtx.dgramMax = 16426;
+  check("hash 16426 shard == 0", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize) == 0);
 }
 
 static void
@@ -824,18 +895,18 @@ testMaxApi(void)
   printf("=== Test: chanBlbChnRsecMax API ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
-  rsecCtx.dgramMax = 520; /* overhead=2+0+8=10, shardSize=510 */
+  rsecCtx.dgramMax = 520; /* overhead=2+0+0+7=9, shardSize=511 */
 
-  check("m=0 => 256*510=130560", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, 0) == 130560);
-  check("m=1 => 255*510=130050", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, 1) == 130050);
-  check("m=5 => 251*510=128010", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, 5) == 128010);
-  check("m=255 => 1*510=510", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, 255) == 510);
+  check("m=0 => 256*511=130816", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize, 0) == 130816);
+  check("m=1 => 255*511=130305", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize, 1) == 130305);
+  check("m=5 => 251*511=128261", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize, 5) == 128261);
+  check("m=255 => 1*511=511", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize, 255) == 511);
 
-  rsecCtx.dgramMax = 16; /* overhead=10, shardSize=6 */
-  check("d=16 m=2 => 254*6=1524", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, 2) == 1524);
+  rsecCtx.dgramMax = 16; /* overhead=9, shardSize=7 */
+  check("d=16 m=2 => 254*7=1778", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize, 2) == 1778);
 
-  rsecCtx.dgramMax = 10; /* overhead=10, shardSize=0: too small */
-  check("dgramMax==overhead => 0", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, 0) == 0);
+  rsecCtx.dgramMax = 9; /* overhead=9, shardSize=0: too small */
+  check("dgramMax==overhead => 0", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize, 0) == 0);
 }
 
 static void
@@ -853,8 +924,8 @@ testMaxBoundary(void)
   rsecCtx.dgramMax = 16;
   rsecCtx.tableSize = 64;
 
-  maxLen = chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, 1); /* 255 * 6 = 1530 */
-  check("maxLen == 1530", maxLen == 1530);
+  maxLen = chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize, 1); /* 255 * 7 = 1785 */
+  check("maxLen == 1785", maxLen == 1785);
 
   payload = (unsigned char *)malloc(maxLen + 1);
   if (!payload) { check("malloc", 0); return; }
@@ -1295,17 +1366,17 @@ testCountersDrop(void)
   chanBlb_t *m;
   const char *msg = "drop counter test message!!";
 
-  printf("=== Test: counters with 20%% drop, multi-shard s=8 m=8 ===\n");
+  printf("=== Test: counters with 20%% drop, multi-shard s=9 m=8 ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
-  rsecCtx.dgramMax = 18; /* overhead=10, shardSize=8 */
+  rsecCtx.dgramMax = 18; /* overhead=9, shardSize=9 */
   rsecCtx.tableSize = 64;
 
   chanBlbTrnFdDatagramDropPct = 20;
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); chanBlbTrnFdDatagramDropPct = 0; return; }
 
-  /* 4 data, m=8 => 12 fragments sent, need 4 */
+  /* 27-byte msg / 9 = 3 data, m=8 => 11 fragments sent, need 3 */
   m = mkBlob(&env.sa, 2, 1, 8, 0, msg, strlen(msg));
   check("send", sendBlob(env.outChan, m));
   m = recvBlob(env.inChan, 5000000000L);
@@ -1315,7 +1386,7 @@ testCountersDrop(void)
 
   rsecSnap(&rsecCtx);
   check("egrMsg == 1", rsecCtx.egrMsg == 1);
-  check("egrFrg == 12", rsecCtx.egrFrg == 12);
+  check("egrFrg == 11", rsecCtx.egrFrg == 11);
   check("igrMsg == 1", rsecCtx.igrMsg == 1);
   /* if any data shard was dropped, RS decode was needed */
   printf("    (igrDcd=%u igrFrg=%u igrDup=%u)\n",
@@ -1374,19 +1445,23 @@ testShardApi(void)
   printf("=== Test: chanBlbChnRsecShard API ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
-  rsecCtx.dgramMax = 520; /* overhead=2+0+8=10, shardSize=510 */
+  rsecCtx.dgramMax = 520; /* overhead=2+0+0+7=9, shardSize=511 */
 
-  check("shard=510", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize) == 510);
+  check("shard=511", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize) == 511);
 
-  rsecCtx.hmacSize = 16; /* overhead=2+16+8=26, shardSize=494 */
-  check("shard=494 with hmac", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize) == 494);
+  rsecCtx.hmacSize = 16; /* overhead=2+16+0+7=25, shardSize=495 */
+  check("shard=495 with hmac", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize) == 495);
+
+  rsecCtx.hashSize = 16; /* overhead=2+16+16+7=41, shardSize=479 */
+  check("shard=479 with hmac+hash", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize) == 479);
 
   rsecCtx.dgramMax = 16;
-  rsecCtx.hmacSize = 0; /* overhead=2+0+8=10, shardSize=6 */
-  check("shard=6 small dgram", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize) == 6);
+  rsecCtx.hmacSize = 0;
+  rsecCtx.hashSize = 0; /* overhead=2+0+0+7=9, shardSize=7 */
+  check("shard=7 small dgram", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize) == 7);
 
-  rsecCtx.dgramMax = 10; /* overhead=10, shardSize=0: too small */
-  check("dgramMax==overhead => 0", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize) == 0);
+  rsecCtx.dgramMax = 9; /* overhead=9, shardSize=0: too small */
+  check("dgramMax==overhead => 0", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize) == 0);
 }
 
 /* ===== ENCRYPT/DECRYPT TESTS ===== */
@@ -1842,7 +1917,7 @@ testCountersBackpressure(void)
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
 
-  /* blob1: 27 bytes / 6 = 5 data, m=2, km=7, delayMs=10 */
+  /* blob1: 27 bytes / 7 = 4 data, m=2, km=6, delayMs=10 */
   m = mkBlob(&env.sa, 2, 1, 2, 10, msg1, strlen(msg1));
   check("send1", sendBlob(env.outChan, m));
   /* blob2 blocks until blob1 completes (backpressure) */
@@ -1867,8 +1942,8 @@ testCountersBackpressure(void)
   usleep(100000);
   rsecSnap(&rsecCtx);
   check("egrMsg == 2", rsecCtx.egrMsg == 2);
-  /* blob1: 7 frags, blob2: 1 frag */
-  check("egrFrg == 8", rsecCtx.egrFrg == 8);
+  /* blob1: 6 frags, blob2: 1 frag */
+  check("egrFrg == 7", rsecCtx.egrFrg == 7);
   teardown(&env, &rsecCtx);
 }
 
@@ -1943,11 +2018,11 @@ testMClampIntermediate(void)
   printf("=== Test: m clamping k=250 m=10->6 ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
-  rsecCtx.dgramMax = 18; /* overhead=10, shardSize=8 */
+  rsecCtx.dgramMax = 18; /* overhead=9, shardSize=9 */
   rsecCtx.tableSize = 64;
 
-  /* k = ceil(2000/8) = 250, m=10 requested => km=260>256 => m clamped to 6 */
-  payloadLen = 2000;
+  /* k = ceil(2250/9) = 250, m=10 requested => km=260>256 => m clamped to 6 */
+  payloadLen = 2250;
   payload = (unsigned char *)malloc(payloadLen);
   if (!payload) { check("malloc", 0); return; }
   for (i = 0; i < payloadLen; ++i)
@@ -2070,10 +2145,10 @@ testLargeK(void)
   printf("=== Test: large k=250 m=1 (251 fragments) ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
-  rsecCtx.dgramMax = 18; /* overhead=10, shardSize=8 */
+  rsecCtx.dgramMax = 18; /* overhead=9, shardSize=9 */
   rsecCtx.tableSize = 64;
 
-  payloadLen = 2000; /* k = ceil(2000/8) = 250, m=1 => 251 fragments */
+  payloadLen = 2250; /* k = ceil(2250/9) = 250, m=1 => 251 fragments */
   payload = (unsigned char *)malloc(payloadLen);
   if (!payload) { check("malloc", 0); return; }
   for (i = 0; i < payloadLen; ++i)
@@ -2813,6 +2888,17 @@ chanBlbTrnFdDatagramInject(
  ,unsigned int payloadLen
 );
 
+/*
+ * Build and inject one datagram carrying a single fragment.
+ *
+ * Wire format produced (matches chanBlbChnRsec ingress expectation,
+ * post-addr-prefix):
+ *   [tag(tagSize)][k-1][m][si][padding_vlq(1)][shardLen_vlq(1)]
+ *   [shard(shardLen)][hmac(hmacLen)][hash(hashLen)]
+ *
+ * hashBytes / hashLen: caller-computed trailing datagram MAC (0 to omit).
+ * Tests that exercise hashVrfy rejection pass deliberately bad hashBytes.
+ */
 static int
 injectFrag(
   int injFd
@@ -2827,12 +2913,11 @@ injectFrag(
  ,unsigned char shardLen
  ,const unsigned char *hmacBytes
  ,unsigned int hmacLen
- ,int corruptSmallHash
+ ,const unsigned char *hashBytes
+ ,unsigned int hashLen
 ){
   unsigned char dg[512];
   unsigned int pos;
-  unsigned int i;
-  unsigned char h;
   struct sockaddr_in src;
 
   (void)injFd;
@@ -2850,12 +2935,10 @@ injectFrag(
     memcpy(dg + pos, hmacBytes, hmacLen);
     pos += hmacLen;
   }
-  h = 0xff;
-  for (i = 0; i < pos; ++i) {
-    h ^= dg[i];
-    h = (unsigned char)((h << 1) | (h >> 7));
+  if (hashLen > 0) {
+    memcpy(dg + pos, hashBytes, hashLen);
+    pos += hashLen;
   }
-  dg[pos++] = corruptSmallHash ? (unsigned char)(h ^ 0xff) : h;
 
   memset(&src, 0, sizeof (src));
   src.sin_family = AF_INET;
@@ -2952,16 +3035,26 @@ testIgrHashReject(void)
 {
   struct testEnv env;
   struct rsecPair rsecCtx;
+  struct hashKeyCtx hk;
   chanBlb_t *m;
   int injFd;
   unsigned char tag[2];
   unsigned char shard[3];
+  unsigned char badHash[HALFSIPHASH_HSH_SZ];
+  unsigned int i;
 
-  printf("=== Test: igrHash increments on bad smallhash ===\n");
+  printf("=== Test: igrHash increments on bad datagram MAC (halfsiphash) ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
   rsecCtx.dgramMax = 520;
   rsecCtx.tableSize = 8;
+  /* arbitrary 64-bit key for the test */
+  for (i = 0; i < sizeof (hk.key); ++i)
+    hk.key[i] = (unsigned char)(0xa5 ^ i);
+  rsecCtx.hashSize = HALFSIPHASH_HSH_SZ;
+  rsecCtx.hashCtx  = &hk;
+  rsecCtx.hashSign = hashSignCb;
+  rsecCtx.hashVrfy = hashVrfyCb;
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
 
@@ -2970,11 +3063,16 @@ testIgrHashReject(void)
 
   tag[0] = 0x11; tag[1] = 0x22;
   shard[0] = 'a'; shard[1] = 'b'; shard[2] = 'c';
-  check("inject bad-smallhash frag",
-    injectFrag(injFd, &env.sa, tag, 2, 0, 0, 0, 0, shard, 3, 0, 0, 1));
+  /* deliberately wrong trailing MAC: cannot be produced by anyone
+   * who doesn't have the key, so hashVrfy must reject */
+  for (i = 0; i < sizeof (badHash); ++i)
+    badHash[i] = (unsigned char)(i * 7 + 3);
+  check("inject bad-datagram-MAC frag",
+    injectFrag(injFd, &env.sa, tag, 2, 0, 0, 0, 0, shard, 3, 0, 0,
+               badHash, sizeof (badHash)));
 
   m = recvBlob(env.inChan, 500000000L);
-  check("no delivery on bad smallhash", m == 0);
+  check("no delivery on bad datagram MAC", m == 0);
   if (m) free(m);
 
   usleep(100000);
@@ -2983,6 +3081,103 @@ testIgrHashReject(void)
   check("igrMsg == 0", rsecCtx.igrMsg == 0);
 
   close(injFd);
+  teardown(&env, &rsecCtx);
+}
+
+static void
+testHashMatch(void)
+{
+  struct testEnv env;
+  struct rsecPair rsecCtx;
+  struct hashKeyCtx hk;
+  chanBlb_t *m;
+  const char *msg = "datagram MAC enabled, no fragment hmac";
+  unsigned int i;
+
+  printf("=== Test: datagram MAC (halfsiphash) round-trip ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 2;
+  rsecCtx.dgramMax = 520;
+  rsecCtx.tableSize = 64;
+  for (i = 0; i < sizeof (hk.key); ++i)
+    hk.key[i] = (unsigned char)(0x5a ^ i);
+  rsecCtx.hashSize = HALFSIPHASH_HSH_SZ;
+  rsecCtx.hashCtx  = &hk;
+  rsecCtx.hashSign = hashSignCb;
+  rsecCtx.hashVrfy = hashVrfyCb;
+
+  if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
+
+  m = mkBlob(&env.sa, 2, 1, 1, 0, msg, strlen(msg));
+  check("send", sendBlob(env.outChan, m));
+  m = recvBlob(env.inChan, 2000000000L);
+  check("received", m != 0);
+  if (m) { check("payload correct", verifyBlob(m, 2, msg, strlen(msg))); free(m); }
+  rsecSnap(&rsecCtx);
+  check("no datagram MAC failures", rsecCtx.igrHash == 0);
+  check("no fragment HMAC failures", rsecCtx.igrHmac == 0);
+  teardown(&env, &rsecCtx);
+}
+
+static void
+testAllThreeLayers(void)
+{
+  struct testEnv env;
+  struct rsecPair rsecCtx;
+  struct hashKeyCtx hashKey;
+  struct hmacKeyCtx hmacCtx;
+  struct cryptKeyCtx cryptCtx;
+  chanBlb_t *m;
+  const char *msg = "all three callback layers active: hashSign+hmacSign+encrypt round-trip";
+  const char *hmacKey = "hmacAllThreeKey";
+  const char *cryptKey = "cryptAllThreeKey";
+  unsigned int i;
+
+  printf("=== Test: datagram MAC + fragment HMAC + encrypt (all three layers) ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 2;
+  rsecCtx.dgramMax = 40; /* small to force multi-fragment */
+  rsecCtx.tableSize = 64;
+
+  /* datagram MAC layer: halfsiphash, 64-bit key, 4-byte tag */
+  for (i = 0; i < sizeof (hashKey.key); ++i)
+    hashKey.key[i] = (unsigned char)(0x3c ^ i);
+  rsecCtx.hashSize = HALFSIPHASH_HSH_SZ;
+  rsecCtx.hashCtx  = &hashKey;
+  rsecCtx.hashSign = hashSignCb;
+  rsecCtx.hashVrfy = hashVrfyCb;
+
+  /* fragment HMAC layer: RMD128-HMAC */
+  hmacCtx.key = (const unsigned char *)hmacKey;
+  hmacCtx.keyLen = strlen(hmacKey);
+  rsecCtx.hmacSize = RMD128_SZ;
+  rsecCtx.hmacCtx  = &hmacCtx;
+  rsecCtx.hmacSign = hmacSignCb;
+  rsecCtx.hmacVrfy = hmacVrfyCb;
+
+  /* fragment encrypt/decrypt layer: XOR stream cipher (test only) */
+  cryptCtx.key = (const unsigned char *)cryptKey;
+  cryptCtx.keyLen = strlen(cryptKey);
+  rsecCtx.cryptCtx = &cryptCtx;
+  rsecCtx.encrypt  = xorCryptCb;
+  rsecCtx.decrypt  = xorCryptCb;
+
+  if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
+
+  m = mkBlob(&env.sa, 2, 1, 2, 0, msg, strlen(msg));
+  check("send", sendBlob(env.outChan, m));
+  m = recvBlob(env.inChan, 3000000000L);
+  check("received", m != 0);
+  if (m) {
+    check("payload correct (all three layers reversed)", verifyBlob(m, 2, msg, strlen(msg)));
+    free(m);
+  }
+  rsecSnap(&rsecCtx);
+  /* clean round-trip: all counters should be zero on the failure side */
+  check("no datagram MAC failures", rsecCtx.igrHash == 0);
+  check("no fragment HMAC failures", rsecCtx.igrHmac == 0);
+  check("multiple fragments sent", rsecCtx.egrFrg > 1);
+  check("message delivered", rsecCtx.igrMsg == 1);
   teardown(&env, &rsecCtx);
 }
 
@@ -3021,9 +3216,9 @@ testIgrHmacReject(void)
   shard[0] = 'x'; shard[1] = 'y'; shard[2] = 'z';
   for (i = 0; i < sizeof (badHmac); ++i)
     badHmac[i] = (unsigned char)(i * 13 + 5);
-  check("inject bad-HMAC frag (valid smallhash)",
+  check("inject bad-HMAC frag (no datagram MAC layer)",
     injectFrag(injFd, &env.sa, tag, 2, 0, 0, 0, 0, shard, 3,
-               badHmac, sizeof (badHmac), 0));
+               badHmac, sizeof (badHmac), 0, 0));
 
   m = recvBlob(env.inChan, 500000000L);
   check("no delivery on bad HMAC", m == 0);
@@ -3032,7 +3227,7 @@ testIgrHmacReject(void)
   usleep(100000);
   rsecSnap(&rsecCtx);
   check("igrHmac >= 1", rsecCtx.igrHmac >= 1);
-  check("igrHash == 0 (smallhash was valid)", rsecCtx.igrHash == 0);
+  check("igrHash == 0 (no datagram MAC configured)", rsecCtx.igrHash == 0);
   check("igrMsg == 0", rsecCtx.igrMsg == 0);
 
   close(injFd);
@@ -3068,13 +3263,13 @@ testIgrDupReject(void)
   s1[0] = 'D'; s1[1] = 'E'; s1[2] = 'F';
   /* k=2 (kMinus1=1) m=0: need both shards. Inject si=0 twice, then si=1. */
   check("inject shard 0",
-    injectFrag(injFd, &env.sa, tag, 2, 1, 0, 0, 0, s0, 3, 0, 0, 0));
+    injectFrag(injFd, &env.sa, tag, 2, 1, 0, 0, 0, s0, 3, 0, 0, 0, 0));
   usleep(50000);
   check("inject shard 0 duplicate",
-    injectFrag(injFd, &env.sa, tag, 2, 1, 0, 0, 0, s0, 3, 0, 0, 0));
+    injectFrag(injFd, &env.sa, tag, 2, 1, 0, 0, 0, s0, 3, 0, 0, 0, 0));
   usleep(50000);
   check("inject shard 1",
-    injectFrag(injFd, &env.sa, tag, 2, 1, 0, 1, 0, s1, 3, 0, 0, 0));
+    injectFrag(injFd, &env.sa, tag, 2, 1, 0, 1, 0, s1, 3, 0, 0, 0, 0));
 
   m = recvBlob(env.inChan, 2000000000L);
   check("message delivered despite dup", m != 0);
@@ -3129,12 +3324,12 @@ testParamMismatchLossNotif(void)
 
   /* msg1: k=2 (kMinus1=1), m=0, shardSize=3.  Inject only shard 0 -> incomplete. */
   check("inject msg1 shard 0 (incomplete)",
-    injectFrag(injFd, &env.sa, tag, 2, 1, 0, 0, 0, s0a, 3, 0, 0, 0));
+    injectFrag(injFd, &env.sa, tag, 2, 1, 0, 0, 0, s0a, 3, 0, 0, 0, 0));
   usleep(80000);
 
   /* msg2: same tag, k=1 (kMinus1=0), m=0, shardSize=4.  Params mismatch. */
   check("inject msg2 shard 0 (param mismatch)",
-    injectFrag(injFd, &env.sa, tag, 2, 0, 0, 0, 0, s0b, 4, 0, 0, 0));
+    injectFrag(injFd, &env.sa, tag, 2, 0, 0, 0, 0, s0b, 4, 0, 0, 0, 0));
 
   loss = 0;
   second = 0;
@@ -3210,7 +3405,7 @@ testSameTagMOnlyDelivered(void)
 
   /* k=1 m=0 shardSize=3 -> completes on arrival */
   check("inject msg with m=0",
-    injectFrag(injFd, &env.sa, tag, 2, 0, 0, 0, 0, shard, 3, 0, 0, 0));
+    injectFrag(injFd, &env.sa, tag, 2, 0, 0, 0, 0, shard, 3, 0, 0, 0, 0));
   first = recvBlob(env.inChan, 1000000000L);
   check("first delivery", first != 0);
   if (first) {
@@ -3225,7 +3420,7 @@ testSameTagMOnlyDelivered(void)
    * the shard, k=1 -> redelivered with m=5. */
   usleep(50000);
   check("inject same tag with m=5",
-    injectFrag(injFd, &env.sa, tag, 2, 0, 5, 0, 0, shard, 3, 0, 0, 0));
+    injectFrag(injFd, &env.sa, tag, 2, 0, 5, 0, 0, shard, 3, 0, 0, 0, 0));
   second = recvBlob(env.inChan, 1000000000L);
   check("second (duplicate) delivery", second != 0);
   if (second) {
@@ -3280,14 +3475,14 @@ testSameTagMOnlyIncomplete(void)
 
   /* k=2 m=3 shardSize=3 -> incomplete after 1 shard */
   check("inject shard 0 (k=2 m=3, incomplete)",
-    injectFrag(injFd, &env.sa, tag, 2, 1, 3, 0, 0, s0, 3, 0, 0, 0));
+    injectFrag(injFd, &env.sa, tag, 2, 1, 3, 0, 0, s0, 3, 0, 0, 0, 0));
   usleep(50000);
 
   /* Same tag, same k, same shardSize, different m (7).  m-only mismatch
    * still triggers param-mismatch eviction; the original is incomplete
    * (blob != NULL) so igrEvict++ and a loss notification is delivered. */
   check("inject shard 0 with different m (7)",
-    injectFrag(injFd, &env.sa, tag, 2, 1, 7, 0, 0, s0, 3, 0, 0, 0));
+    injectFrag(injFd, &env.sa, tag, 2, 1, 7, 0, 0, s0, 3, 0, 0, 0, 0));
 
   loss = 0;
   for (i = 0; i < 3; ++i) {
@@ -3414,6 +3609,8 @@ main(
   testRmUmNoDecode();
   testRmUmWithDecode();
   testIgrHashReject();
+  testHashMatch();
+  testAllThreeLayers();
   testIgrHmacReject();
   testIgrDupReject();
   testParamMismatchLossNotif();

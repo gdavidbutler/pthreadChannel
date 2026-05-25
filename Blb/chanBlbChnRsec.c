@@ -28,15 +28,22 @@
 #include "rsec.h"
 #include "chanBlbChnRsec.h"
 
+/*
+ * Overhead per fragment in a single-fragment datagram:
+ *   tagSize + 3 (k-1, m, si) + 2+2 (max padding/shardlen VLQ)
+ *   + hmacSize (per-fragment HMAC) + hashSize (trailing datagram MAC)
+ * = tagSize + hmacSize + hashSize + 7
+ */
 unsigned int
 chanBlbChnRsecShard(
   unsigned int dgramMax
  ,unsigned int tagSize
  ,unsigned int hmacSize
+ ,unsigned int hashSize
 ){
   unsigned int overhead;
 
-  overhead = tagSize + hmacSize + 8;
+  overhead = tagSize + hmacSize + hashSize + 7;
   if (dgramMax <= overhead
    || dgramMax - overhead > 16384) /* max 2-byte VLQ */
     return (0);
@@ -48,11 +55,12 @@ chanBlbChnRsecMax(
   unsigned int dgramMax
  ,unsigned int tagSize
  ,unsigned int hmacSize
+ ,unsigned int hashSize
  ,unsigned char m
 ){
   unsigned int overhead;
 
-  overhead = tagSize + hmacSize + 8;
+  overhead = tagSize + hmacSize + hashSize + 7;
   if (dgramMax <= overhead
    || dgramMax - overhead > 16384) /* max 2-byte VLQ */
     return (0);
@@ -159,22 +167,6 @@ chanBlbChnRsecIgrSnap(
   pthread_mutex_unlock(&p->m);
 }
 
-/* 1-byte hash for cheap stray packet rejection */
-static unsigned char
-smallHash(
-  const unsigned char *d
- ,unsigned int l
-){
-  unsigned char h;
-
-  h = 0xff;
-  while (l--) {
-    h ^= *d++;
-    h = (unsigned char)((h << 1) | (h >> 7));
-  }
-  return (h);
-}
-
 struct egrEntry {
   unsigned char *work;  /* NULL = empty slot */
   unsigned int stride;
@@ -227,16 +219,18 @@ shardInsert(
 static int
 egrSendPack(
   struct chanBlbEgrCtx *v
+ ,struct chanBlbChnRsecEgrCtx *ctx
  ,struct egrPriv *priv
  ,struct egrEntry *table
  ,unsigned int tableSize
  ,unsigned char *packBuf
  ,unsigned char *packSeen
- ,unsigned int dgramMax
  ,struct shardItem *shards
  ,unsigned long *shardCount
  ,unsigned char *maxDelayMs
 ){
+  unsigned int dgramMax;
+  unsigned int hashSize;
   unsigned long si2;
   unsigned int ei;
   unsigned int si;
@@ -246,6 +240,8 @@ egrSendPack(
   unsigned int ti;
   struct timespec now;
 
+  dgramMax = ctx->dgramMax;
+  hashSize = ctx->hashSize;
   ei = shards[0].entry;
   si = shards[0].shard;
 
@@ -290,7 +286,7 @@ egrSendPack(
     if (wp2 == wp
      && memcmp(table[ei2].work, packBuf, wp) == 0
      && !packSeen[ei2]
-     && packPos + fragLen2 + 1 <= wp + dgramMax) {
+     && packPos + fragLen2 + hashSize <= wp + dgramMax) {
       memcpy(packBuf + packPos,
         table[ei2].work + (unsigned long)shards[si2].shard * table[ei2].stride + wp2,
         fragLen2);
@@ -311,9 +307,11 @@ egrSendPack(
     }
   }
 
-  /* append smallhash (per-datagram) */
-  packBuf[packPos] = smallHash(packBuf + wp, packPos - wp);
-  ++packPos;
+  /* append datagram MAC (keyed, per-datagram) */
+  if (hashSize > 0)
+    ctx->hashSign(ctx->hashCtx, packBuf,
+      packBuf + packPos, packBuf + wp, packPos - wp);
+  packPos += hashSize;
 
   if (!v->out(v->outCtx, packBuf, packPos))
     return (0);
@@ -331,9 +329,9 @@ egrSendPack(
 }
 
 /*
- * Wire datagram (packed): [addrlen(1)][addr][frag1][frag2]...[fragN][smallhash(1)]
+ * Wire datagram (packed): [addrlen(1)][addr][frag1][frag2]...[fragN][hash(hashSize)]
  * Each fragment: [tag(tagSize)][k-1(1)][m(1)][si(1)][pad_vlq(1-2)][shard_len_vlq(1-2)][shard_data(shard_len)][hmac(hmacSize)]
- * Work buffer per shard slot (no smallhash): [addrlen][addr][tag][k-1][m][si][pad_vlq][shard_len_vlq][shard_data(msgShardSize)][hmac]
+ * Work buffer per shard slot (no hash): [addrlen][addr][tag][k-1][m][si][pad_vlq][shard_len_vlq][shard_data(msgShardSize)][hmac]
  */
 void *
 chanBlbChnRsecEgr(
@@ -370,7 +368,7 @@ chanBlbChnRsecEgr(
   hmacSize = ctx->hmacSize;
   tableSize = ctx->tableSize;
   dgramMax = ctx->dgramMax;
-  overhead = tagSize + hmacSize + 8;
+  overhead = tagSize + hmacSize + ctx->hashSize + 7;
   maxShardSize = (dgramMax > overhead) ? dgramMax - overhead : 0;
 
   priv = 0;
@@ -491,8 +489,8 @@ chanBlbChnRsecEgr(
         int sent;
 
         pthread_mutex_lock(&priv->m);
-        sent = egrSendPack(v, priv, table, tableSize, packBuf, packSeen,
-                           dgramMax, shards, &shardCount, &packMaxD);
+        sent = egrSendPack(v, ctx, priv, table, tableSize, packBuf, packSeen,
+                           shards, &shardCount, &packMaxD);
         pthread_mutex_unlock(&priv->m);
         if (!sent)
           goto exit;
@@ -791,7 +789,7 @@ struct igrEntry {
 };
 
 /*
- * Wire datagram (packed): [addrlen(1)][addr][frag1][frag2]...[fragN][smallhash(1)]
+ * Wire datagram (packed): [addrlen(1)][addr][frag1][frag2]...[fragN][hash(hashSize)]
  * Each fragment: [tag(tagSize)][k-1(1)][m(1)][si(1)][pad_vlq(1-2)][shard_len_vlq(1-2)][shard_data(shard_len)][hmac(hmacSize)]
  */
 /*
@@ -818,6 +816,7 @@ chanBlbChnRsecIgr(
   unsigned int tagSize;
   unsigned int tableSize;
   unsigned int hmacSize;
+  unsigned int hashSize;
   unsigned int bufSize;
   unsigned int tableUsed;
   unsigned int age;
@@ -827,6 +826,7 @@ chanBlbChnRsecIgr(
   tagSize = ctx->tagSize;
   tableSize = ctx->tableSize;
   hmacSize = ctx->hmacSize;
+  hashSize = ctx->hashSize;
 
   priv = 0;
   table = 0;
@@ -883,16 +883,18 @@ chanBlbChnRsecIgr(
     addrlen = buf[0];
     wp = 1 + addrlen;
 
-    /* need at least addr prefix + one minimal fragment + smallhash */
-    if (n < wp + tagSize + 3 + 1 + 1 + hmacSize + 1)
+    /* need at least addr prefix + one minimal fragment + datagram MAC */
+    if (n < wp + tagSize + 3 + 1 + 1 + hmacSize + hashSize)
       continue;
 
-    /* validate datagram-level smallhash at end */
-    if (smallHash(buf + wp, n - wp - 1) != buf[n - 1]) {
+    /* validate datagram MAC at end (keyed DoS gate) */
+    if (hashSize > 0
+     && !ctx->hashVrfy(ctx->hashCtx, buf,
+                       buf + n - hashSize, buf + wp, n - wp - hashSize)) {
       IGR_BUMP(priv->ctrs.hash);
       continue;
     }
-    n -= 1; /* strip smallhash */
+    n -= hashSize; /* strip trailing MAC */
 
     /* parse fragments within the datagram */
     pos = wp;

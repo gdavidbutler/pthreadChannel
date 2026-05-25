@@ -47,7 +47,7 @@ squint: example/squint.c chan.h chan.o
 floydWarshall: example/floydWarshall.c chan.h chan.o
 	$(CC) $(CFLAGS) -Iexample -DFWMAIN -DFWEQL -DFWBLK -o floydWarshall example/floydWarshall.c chan.o -lpthread
 
-chanBlbStrSQLtest: example/chanBlbStrSQLtest.c example/chanBlbStrSQL.h chan.h Str/chanStrFIFO.h Blb/chanBlb.h chanBlbStrSQL.o chanStrFIFO.o chanBlb.o
+chanBlbStrSQLtest: example/chanBlbStrSQLtest.c example/chanBlbStrSQL.h chan.h Str/chanStrFIFO.h Blb/chanBlb.h chanBlbStrSQL.o chanStrFIFO.o chanBlb.o chan.o
 	$(CC) $(SQLITE_CFLAGS) -Iexample -o chanBlbStrSQLtest example/chanBlbStrSQLtest.c chanBlbStrSQL.o chanStrFIFO.o chanBlb.o chan.o $(SQLITE_LIB)
 
 chanBlbStrSQL.o: example/chanBlbStrSQL.c example/chanBlbStrSQL.h chan.h Str/chanStrFIFO.h Blb/chanBlb.h
@@ -104,8 +104,8 @@ chanBlbTrnFdStream.o: Blb/chanBlbTrnFdStream.c Blb/chanBlbTrnFdStream.h Blb/chan
 chanBlbTrnFdDatagram.o: Blb/chanBlbTrnFdDatagram.c Blb/chanBlbTrnFdDatagram.h Blb/chanBlb.h chan.h
 	$(CC) $(CFLAGS) -c Blb/chanBlbTrnFdDatagram.c
 
-test_rsec: test/test_rsec.c test/chanBlbTrnFdDatagramStress.c chan.h Blb/chanBlb.h Blb/chanBlbTrnFdDatagram.h Blb/chanBlbChnRsec.h chan.o chanBlb.o chanBlbChnRsec.o
-	$(CC) $(CFLAGS) -I$(RSEC) -I$(RMD128) -o test_rsec test/test_rsec.c test/chanBlbTrnFdDatagramStress.c chan.o chanBlb.o chanBlbChnRsec.o $(RSEC)/rsec.o $(RMD128)/rmd128.o -lpthread
+test_rsec: test/test_rsec.c test/chanBlbTrnFdDatagramStress.c test/halfsiphash.c test/halfsiphash.h chan.h Blb/chanBlb.h Blb/chanBlbTrnFdDatagram.h Blb/chanBlbChnRsec.h chan.o chanBlb.o chanBlbChnRsec.o
+	$(CC) $(CFLAGS) -I$(RSEC) -I$(RMD128) -Itest -o test_rsec test/test_rsec.c test/chanBlbTrnFdDatagramStress.c test/halfsiphash.c chan.o chanBlb.o chanBlbChnRsec.o $(RSEC)/rsec.o $(RMD128)/rmd128.o -lpthread
 
 check: squint pipeproxy floydWarshall
 	./squint
