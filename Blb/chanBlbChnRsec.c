@@ -213,14 +213,15 @@ shardInsert(
  * to the same address.  *maxDelayMs (out): largest delay_ms among
  * packed shards.  Returns 0 on output failure.
  *
- * Caller holds priv->m for the duration of this call so the batch
- * of ctrs.frg / ctrs.msg increments is atomic w.r.t. snapshot.
+ * No locks held: callbacks (hashSign, v->out, v->free) and the
+ * slot-free pass run unlocked.  The caller flushes the returned
+ * counter deltas into priv->ctrs.frg / priv->ctrs.msg under
+ * priv->m so the batch is atomic w.r.t. snapshot.
  */
 static int
 egrSendPack(
   struct chanBlbEgrCtx *v
  ,struct chanBlbChnRsecEgrCtx *ctx
- ,struct egrPriv *priv
  ,struct egrEntry *table
  ,unsigned int tableSize
  ,unsigned char *packBuf
@@ -228,6 +229,8 @@ egrSendPack(
  ,struct shardItem *shards
  ,unsigned long *shardCount
  ,unsigned char *maxDelayMs
+ ,unsigned int *frgAdd
+ ,unsigned int *msgAdd
 ){
   unsigned int dgramMax;
   unsigned int hashSize;
@@ -238,12 +241,16 @@ egrSendPack(
   unsigned int packPos;
   unsigned int fragLen;
   unsigned int ti;
+  unsigned int frgLocal;
+  unsigned int msgLocal;
   struct timespec now;
 
   dgramMax = ctx->dgramMax;
   hashSize = ctx->hashSize;
   ei = shards[0].entry;
   si = shards[0].shard;
+  frgLocal = 0;
+  msgLocal = 0;
 
   /* start pack: copy addr prefix */
   wp = 1 + table[ei].work[0];
@@ -264,7 +271,7 @@ egrSendPack(
   --(*shardCount);
   if (*shardCount > 0)
     memmove(shards, shards + 1, *shardCount * sizeof (struct shardItem));
-  ++priv->ctrs.frg;
+  ++frgLocal;
   ++table[ei].sent;
 
   /* scan remaining due shards for packing */
@@ -294,7 +301,7 @@ egrSendPack(
       packSeen[ei2] = 1;
       if (table[ei2].delayMs > *maxDelayMs)
         *maxDelayMs = table[ei2].delayMs;
-      ++priv->ctrs.frg;
+      ++frgLocal;
       ++table[ei2].sent;
       /* pop this item */
       --(*shardCount);
@@ -313,18 +320,23 @@ egrSendPack(
       packBuf + packPos, packBuf + wp, packPos - wp);
   packPos += hashSize;
 
-  if (!v->out(v->outCtx, packBuf, packPos))
+  if (!v->out(v->outCtx, packBuf, packPos)) {
+    *frgAdd = frgLocal;
+    *msgAdd = 0;
     return (0);
+  }
 
   /* check all packed entries for completion */
   for (ti = 0; ti < tableSize; ++ti) {
     if (packSeen[ti] && table[ti].work
      && table[ti].sent >= table[ti].km) {
-      ++priv->ctrs.msg;
+      ++msgLocal;
       v->free(table[ti].work);
       table[ti].work = 0;
     }
   }
+  *frgAdd = frgLocal;
+  *msgAdd = msgLocal;
   return (1);
 }
 
@@ -484,12 +496,20 @@ chanBlbChnRsecEgr(
        || (target.tv_sec == now.tv_sec
         && target.tv_nsec <= now.tv_nsec)) {
         unsigned char packMaxD;
+        unsigned int frgAdd;
+        unsigned int msgAdd;
         int sent;
 
-        pthread_mutex_lock(&priv->m);
-        sent = egrSendPack(v, ctx, priv, table, tableSize, packBuf, packSeen,
-                           shards, &shardCount, &packMaxD);
-        pthread_mutex_unlock(&priv->m);
+        frgAdd = 0;
+        msgAdd = 0;
+        sent = egrSendPack(v, ctx, table, tableSize, packBuf, packSeen,
+                           shards, &shardCount, &packMaxD, &frgAdd, &msgAdd);
+        if (frgAdd || msgAdd) {
+          pthread_mutex_lock(&priv->m);
+          priv->ctrs.frg += frgAdd;
+          priv->ctrs.msg += msgAdd;
+          pthread_mutex_unlock(&priv->m);
+        }
         if (!sent)
           goto exit;
         clock_gettime(CLOCK_MONOTONIC, &lastEmit);
