@@ -605,7 +605,7 @@ testMultiShard(void)
   chanBlb_t *m;
   const char *msg = "multi shard message requiring several fragments";
 
-  printf("=== Test: multi-shard (dgramMax=16, shardSize=6) ===\n");
+  printf("=== Test: multi-shard (dgramMax=16, shardSize=8) ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
   rsecCtx.dgramMax = 16;
@@ -759,7 +759,7 @@ testTinyShard(void)
   chanBlb_t *m;
   const char *msg = "stress test with tiny shards yep";
 
-  printf("=== Test: tiny dgramMax=12 shardSize=2 m=2 (many fragments) ===\n");
+  printf("=== Test: tiny dgramMax=12 shardSize=4 m=2 (many fragments) ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
   rsecCtx.dgramMax = 12;
@@ -783,10 +783,10 @@ testVlq2Byte(void)
   chanBlb_t *m;
   const char *msg = "x";
 
-  printf("=== Test: 2-byte VLQ padding (dgramMax=266, 1-byte payload) ===\n");
+  printf("=== Test: small dgram, 1-byte payload (dgramMax=266) ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
-  rsecCtx.dgramMax = 266; /* overhead=9, shardSize=257, 1-byte payload => padding=256 (2-byte VLQ) */
+  rsecCtx.dgramMax = 266; /* overhead=8, shardSize=258; padding is a single byte */
   rsecCtx.tableSize = 64;
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
@@ -807,15 +807,15 @@ testVlqMaxShard(void)
   chanBlb_t *m;
   const char *msg = "x";
 
-  printf("=== Test: VLQ max shard (dgramMax=16393, shardSize=16384) ===\n");
+  printf("=== Test: VLQ max shard (dgramMax=16392, shardSize=16384) ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
-  rsecCtx.dgramMax = 16393; /* overhead=9, shardSize=16384, padding=16383 */
+  rsecCtx.dgramMax = 16392; /* overhead=8, shardSize=16384 (max 2-byte shard_len VLQ) */
   rsecCtx.tableSize = 64;
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
 
-  /* 1-byte payload, shardSize=16384 => padding=16383 (max 2-byte VLQ) */
+  /* 1-byte payload, shardSize=16384 (exercises the 2-byte shard_len VLQ) */
   m = mkBlob(&env.sa, 2, 1, 1, 0, msg, 1);
   check("send", sendBlob(env.outChan, m));
   m = recvBlob(env.inChan, 3000000000L);
@@ -833,30 +833,30 @@ testDgramMaxValidation(void)
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
 
-  /* overhead=2+0+0+7=9, max shardSize=16384, max dgramMax=16393 */
+  /* overhead=2+0+0+6=8, max shardSize=16384, max dgramMax=16392 */
+  rsecCtx.dgramMax = 16392;
+  check("16392 shard == 16384", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize) == 16384);
+  check("16392 max > 0", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize, 1) > 0);
+
   rsecCtx.dgramMax = 16393;
-  check("16393 shard == 16384", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize) == 16384);
-  check("16393 max > 0", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize, 1) > 0);
+  check("16393 shard == 0", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize) == 0);
+  check("16393 max == 0", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize, 1) == 0);
 
-  rsecCtx.dgramMax = 16394;
-  check("16394 shard == 0", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize) == 0);
-  check("16394 max == 0", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize, 1) == 0);
-
-  /* with HMAC: overhead=2+16+0+7=25, max dgramMax=16409 */
+  /* with HMAC: overhead=2+16+0+6=24, max dgramMax=16408 */
   rsecCtx.hmacSize = 16;
+  rsecCtx.dgramMax = 16408;
+  check("hmac 16408 shard == 16384", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize) == 16384);
+
   rsecCtx.dgramMax = 16409;
-  check("hmac 16409 shard == 16384", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize) == 16384);
+  check("hmac 16409 shard == 0", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize) == 0);
 
-  rsecCtx.dgramMax = 16410;
-  check("hmac 16410 shard == 0", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize) == 0);
-
-  /* with HMAC + datagram MAC: overhead=2+16+16+7=41, max dgramMax=16425 */
+  /* with HMAC + datagram MAC: overhead=2+16+16+6=40, max dgramMax=16424 */
   rsecCtx.hashSize = 16;
-  rsecCtx.dgramMax = 16425;
-  check("hash 16425 shard == 16384", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize) == 16384);
+  rsecCtx.dgramMax = 16424;
+  check("hash 16424 shard == 16384", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize) == 16384);
 
-  rsecCtx.dgramMax = 16426;
-  check("hash 16426 shard == 0", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize) == 0);
+  rsecCtx.dgramMax = 16425;
+  check("hash 16425 shard == 0", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize) == 0);
 }
 
 static void
@@ -896,17 +896,17 @@ testMaxApi(void)
   printf("=== Test: chanBlbChnRsecMax API ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
-  rsecCtx.dgramMax = 520; /* overhead=2+0+0+7=9, shardSize=511 */
+  rsecCtx.dgramMax = 520; /* overhead=2+0+0+6=8, shardSize=512 */
 
-  check("m=0 => 256*511=130816", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize, 0) == 130816);
-  check("m=1 => 255*511=130305", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize, 1) == 130305);
-  check("m=5 => 251*511=128261", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize, 5) == 128261);
-  check("m=255 => 1*511=511", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize, 255) == 511);
+  check("m=0 => 256*512=131072", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize, 0) == 131072);
+  check("m=1 => 255*512=130560", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize, 1) == 130560);
+  check("m=5 => 251*512=128512", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize, 5) == 128512);
+  check("m=255 => 1*512=512", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize, 255) == 512);
 
-  rsecCtx.dgramMax = 16; /* overhead=9, shardSize=7 */
-  check("d=16 m=2 => 254*7=1778", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize, 2) == 1778);
+  rsecCtx.dgramMax = 16; /* overhead=8, shardSize=8 */
+  check("d=16 m=2 => 254*8=2032", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize, 2) == 2032);
 
-  rsecCtx.dgramMax = 9; /* overhead=9, shardSize=0: too small */
+  rsecCtx.dgramMax = 8; /* overhead=8, shardSize=0: too small */
   check("dgramMax==overhead => 0", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize, 0) == 0);
 }
 
@@ -925,8 +925,8 @@ testMaxBoundary(void)
   rsecCtx.dgramMax = 16;
   rsecCtx.tableSize = 64;
 
-  maxLen = chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize, 1); /* 255 * 7 = 1785 */
-  check("maxLen == 1785", maxLen == 1785);
+  maxLen = chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize, 1); /* 255 * 8 = 2040 */
+  check("maxLen == 2040", maxLen == 2040);
 
   payload = (unsigned char *)malloc(maxLen + 1);
   if (!payload) { check("malloc", 0); return; }
@@ -1000,7 +1000,7 @@ testDropMultiShard(void)
   printf("=== Test: 20%% drop, multi-shard dgramMax=18 m=8 ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
-  rsecCtx.dgramMax = 18; /* overhead=10, shardSize=8 */
+  rsecCtx.dgramMax = 18; /* small dgram => small shards, so the msg spans several */
   rsecCtx.tableSize = 64;
 
   chanBlbTrnFdDatagramDropPct = 20;
@@ -1242,7 +1242,7 @@ testStressMultiShardHmac(void)
   printf("=== Test: 15%% drop + 30ms delay, multi-shard dgramMax=42 m=6, HMAC ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
-  rsecCtx.dgramMax = 42; /* overhead=26, shardSize=16 */
+  rsecCtx.dgramMax = 42; /* overhead=2+16+0+6=24, shardSize=18 */
   rsecCtx.tableSize = 64;
   hmacCtx.key = (const unsigned char *)key;
   hmacCtx.keyLen = strlen(key);
@@ -1378,8 +1378,10 @@ testCountersMultiShard(void)
   struct rsecPair rsecCtx;
   chanBlb_t *m;
   const char *msg = "multi shard counter test msg!";
+  unsigned int shard;
+  unsigned int k;
 
-  printf("=== Test: counters multi-shard s=6 m=1 ===\n");
+  printf("=== Test: counters multi-shard m=1 ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
   rsecCtx.dgramMax = 16;
@@ -1387,7 +1389,9 @@ testCountersMultiShard(void)
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
 
-  /* 28 bytes / 6 = 5 data shards, m=1 => 6 fragments */
+  /* k data shards (derived from the API shard size) + m=1 parity */
+  shard = chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize);
+  k = (strlen(msg) + shard - 1) / shard;
   m = mkBlob(&env.sa, 2, 1, 1, 0, msg, strlen(msg));
   check("send", sendBlob(env.outChan, m));
   m = recvBlob(env.inChan, 3000000000L);
@@ -1397,7 +1401,7 @@ testCountersMultiShard(void)
 
   rsecSnap(&rsecCtx);
   check("egrMsg == 1", rsecCtx.egrMsg == 1);
-  check("egrFrg == 6", rsecCtx.egrFrg == 6);
+  check("egrFrg == k+1", rsecCtx.egrFrg == k + 1);
   check("igrMsg == 1", rsecCtx.igrMsg == 1);
   check("igrDcd == 0", rsecCtx.igrDcd == 0);
   check("igrEvict == 0", rsecCtx.igrEvict == 0);
@@ -1411,18 +1415,22 @@ testCountersDrop(void)
   struct rsecPair rsecCtx;
   chanBlb_t *m;
   const char *msg = "drop counter test message!!";
+  unsigned int shard;
+  unsigned int k;
 
-  printf("=== Test: counters with 20%% drop, multi-shard s=9 m=8 ===\n");
+  printf("=== Test: counters with 20%% drop, multi-shard m=8 ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
-  rsecCtx.dgramMax = 18; /* overhead=9, shardSize=9 */
+  rsecCtx.dgramMax = 18; /* small dgram => small shards, so the msg spans several */
   rsecCtx.tableSize = 64;
 
   chanBlbTrnFdDatagramDropPct = 20;
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); chanBlbTrnFdDatagramDropPct = 0; return; }
 
-  /* 27-byte msg / 9 = 3 data, m=8 => 11 fragments sent, need 3 */
+  /* k data shards (derived from the API shard size) + m=8 parity */
+  shard = chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize);
+  k = (strlen(msg) + shard - 1) / shard;
   m = mkBlob(&env.sa, 2, 1, 8, 0, msg, strlen(msg));
   check("send", sendBlob(env.outChan, m));
   m = recvBlob(env.inChan, 5000000000L);
@@ -1432,7 +1440,7 @@ testCountersDrop(void)
 
   rsecSnap(&rsecCtx);
   check("egrMsg == 1", rsecCtx.egrMsg == 1);
-  check("egrFrg == 11", rsecCtx.egrFrg == 11);
+  check("egrFrg == k+8", rsecCtx.egrFrg == k + 8);
   check("igrMsg == 1", rsecCtx.igrMsg == 1);
   /* if any data shard was dropped, RS decode was needed */
   printf("    (igrDcd=%u igrFrg=%u igrDup=%u)\n",
@@ -1491,22 +1499,22 @@ testShardApi(void)
   printf("=== Test: chanBlbChnRsecShard API ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
-  rsecCtx.dgramMax = 520; /* overhead=2+0+0+7=9, shardSize=511 */
+  rsecCtx.dgramMax = 520; /* overhead=2+0+0+6=8, shardSize=512 */
 
-  check("shard=511", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize) == 511);
+  check("shard=512", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize) == 512);
 
-  rsecCtx.hmacSize = 16; /* overhead=2+16+0+7=25, shardSize=495 */
-  check("shard=495 with hmac", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize) == 495);
+  rsecCtx.hmacSize = 16; /* overhead=2+16+0+6=24, shardSize=496 */
+  check("shard=496 with hmac", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize) == 496);
 
-  rsecCtx.hashSize = 16; /* overhead=2+16+16+7=41, shardSize=479 */
-  check("shard=479 with hmac+hash", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize) == 479);
+  rsecCtx.hashSize = 16; /* overhead=2+16+16+6=40, shardSize=480 */
+  check("shard=480 with hmac+hash", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize) == 480);
 
   rsecCtx.dgramMax = 16;
   rsecCtx.hmacSize = 0;
-  rsecCtx.hashSize = 0; /* overhead=2+0+0+7=9, shardSize=7 */
-  check("shard=7 small dgram", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize) == 7);
+  rsecCtx.hashSize = 0; /* overhead=2+0+0+6=8, shardSize=8 */
+  check("shard=8 small dgram", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize) == 8);
 
-  rsecCtx.dgramMax = 9; /* overhead=9, shardSize=0: too small */
+  rsecCtx.dgramMax = 8; /* overhead=8, shardSize=0: too small */
   check("dgramMax==overhead => 0", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize) == 0);
 }
 
@@ -1626,7 +1634,7 @@ testEncryptDrop(void)
   printf("=== Test: encrypt + 20%% drop, multi-shard dgramMax=18 m=8 ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
-  rsecCtx.dgramMax = 18; /* overhead=10, shardSize=8 */
+  rsecCtx.dgramMax = 18; /* small dgram => small shards, so the msg spans several */
   rsecCtx.tableSize = 64;
   cryptCtx.key = (const unsigned char *)key;
   cryptCtx.keyLen = strlen(key);
@@ -1954,6 +1962,8 @@ testCountersBackpressure(void)
   int seen1;
   int seen2;
   unsigned int i;
+  unsigned int shard;
+  unsigned int k;
 
   printf("=== Test: backpressure counter tableSize=1 multi-shard ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
@@ -1963,7 +1973,9 @@ testCountersBackpressure(void)
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
 
-  /* blob1: 27 bytes / 7 = 4 data, m=2, km=6, delayMs=10 */
+  /* blob1: k data shards (from API) + m=2 parity, delayMs=10; blob2: 2 bytes => 1 frag */
+  shard = chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize);
+  k = (strlen(msg1) + shard - 1) / shard;
   m = mkBlob(&env.sa, 2, 1, 2, 10, msg1, strlen(msg1));
   check("send1", sendBlob(env.outChan, m));
   /* blob2 blocks until blob1 completes (backpressure) */
@@ -1988,8 +2000,8 @@ testCountersBackpressure(void)
   usleep(100000);
   rsecSnap(&rsecCtx);
   check("egrMsg == 2", rsecCtx.egrMsg == 2);
-  /* blob1: 6 frags, blob2: 1 frag */
-  check("egrFrg == 7", rsecCtx.egrFrg == 7);
+  /* blob1: k+2 frags, blob2: 1 frag */
+  check("egrFrg == (k+2)+1", rsecCtx.egrFrg == (k + 2) + 1);
   teardown(&env, &rsecCtx);
 }
 
@@ -2014,14 +2026,14 @@ testRsDecodeAliasing(void)
   printf("=== Test: RS decode with mixed data+parity (aliasing fix) ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
-  rsecCtx.dgramMax = 18; /* overhead=10, shardSize=8, k=4 for ~29 byte msgs */
+  rsecCtx.dgramMax = 18; /* small dgram => small shards: ~29-byte msgs span a few */
   rsecCtx.tableSize = 64;
 
   chanBlbTrnFdDatagramDropPct = 50;
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); chanBlbTrnFdDatagramDropPct = 0; return; }
 
-  /* k=4 m=20 => 24 shards, need 4. 50% drop => P(loss) < 0.02% per msg */
+  /* k=3 m=20 => 23 shards, need 3. 50% drop => P(loss) tiny per msg */
   for (i = 0; i < 3; ++i) {
     m = mkBlob(&env.sa, 2, (unsigned short)(i + 1), 20, 0,
                msgs[i], strlen(msgs[i]));
@@ -2060,15 +2072,21 @@ testMClampIntermediate(void)
   unsigned char *payload;
   unsigned int payloadLen;
   unsigned int i;
+  unsigned int shard;
+  unsigned int km;
 
   printf("=== Test: m clamping k=250 m=10->6 ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
-  rsecCtx.dgramMax = 18; /* overhead=9, shardSize=9 */
+  rsecCtx.dgramMax = 18; /* small dgram => small shards (size from API below) */
   rsecCtx.tableSize = 64;
 
-  /* k = ceil(2250/9) = 250, m=10 requested => km=260>256 => m clamped to 6 */
-  payloadLen = 2250;
+  /* force exactly k=250 data shards; m=10 requested => km=260>256 => m clamped */
+  shard = chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize);
+  payloadLen = 250 * shard;
+  km = 250 + 10;
+  if (km > 256)
+    km = 256;
   payload = (unsigned char *)malloc(payloadLen);
   if (!payload) { check("malloc", 0); return; }
   for (i = 0; i < payloadLen; ++i)
@@ -2087,7 +2105,7 @@ testMClampIntermediate(void)
   usleep(100000);
   rsecSnap(&rsecCtx);
   /* m clamped from 10 to 6: 250 data + 6 parity = 256 fragments */
-  check("egrFrg == 256", rsecCtx.egrFrg == 256);
+  check("egrFrg == km (clamped)", rsecCtx.egrFrg == km);
   check("egrMsg == 1", rsecCtx.egrMsg == 1);
 
   free(payload);
@@ -2187,14 +2205,19 @@ testLargeK(void)
   unsigned char *payload;
   unsigned int payloadLen;
   unsigned int i;
+  unsigned int shard;
+  unsigned int k;
 
   printf("=== Test: large k=250 m=1 (251 fragments) ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
-  rsecCtx.dgramMax = 18; /* overhead=9, shardSize=9 */
+  rsecCtx.dgramMax = 18; /* small dgram => small shards (size from API below) */
   rsecCtx.tableSize = 64;
 
-  payloadLen = 2250; /* k = ceil(2250/9) = 250, m=1 => 251 fragments */
+  /* force exactly k=250 data shards via the API shard size; m=1 => k+1 fragments */
+  k = 250;
+  shard = chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize);
+  payloadLen = k * shard;
   payload = (unsigned char *)malloc(payloadLen);
   if (!payload) { check("malloc", 0); return; }
   for (i = 0; i < payloadLen; ++i)
@@ -2212,7 +2235,7 @@ testLargeK(void)
   }
   usleep(100000);
   rsecSnap(&rsecCtx);
-  check("egrFrg == 251", rsecCtx.egrFrg == 251);
+  check("egrFrg == k+1", rsecCtx.egrFrg == k + 1);
   check("egrMsg == 1", rsecCtx.egrMsg == 1);
 
   free(payload);
@@ -2922,7 +2945,7 @@ testPackSameMessage(void)
  * in-process loopback transport's address bus.  Uses a synthetic src
  * sockaddr_in so the delivered blob's addr prefix is well-formed; the
  * src content is irrelevant to these tests (identity lives in the tag).
- * Only 1-byte VLQs are emitted (padding < 128, shardLen < 128).
+ * padding is a fixed byte; only 1-byte shardLen VLQs are emitted (shardLen < 128).
  */
 extern int
 chanBlbTrnFdDatagramInject(
@@ -2939,7 +2962,7 @@ chanBlbTrnFdDatagramInject(
  *
  * Wire format produced (matches chanBlbChnRsec ingress expectation,
  * post-addr-prefix):
- *   [tag(tagSize)][k-1][m][si][padding_vlq(1)][shardLen_vlq(1)]
+ *   [tag(tagSize)][k-1][m][si][padding(1)][shardLen_vlq(1)]
  *   [shard(shardLen)][hmac(hmacLen)][hash(hashLen)]
  *
  * hashBytes / hashLen: caller-computed trailing datagram MAC (0 to omit).
@@ -3046,7 +3069,7 @@ testRmUmWithDecode(void)
   printf("=== Test: rm/um bytes when RS decode is used ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
-  rsecCtx.dgramMax = 18;   /* shardSize=8 => k=4 for 27 bytes */
+  rsecCtx.dgramMax = 18;   /* small dgram => small shards: 27-byte msg spans a few */
   rsecCtx.tableSize = 8;
 
   chanBlbTrnFdDatagramDropPct = 40;

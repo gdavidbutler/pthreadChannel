@@ -85,13 +85,37 @@ struct chanBlbChnRsecEgrCtx {
   void (*encrypt)(void *cryptCtx, const unsigned char *hdr, unsigned char *data, unsigned int len);
   /*
    * Max datagram payload size (transport MTU minus headers).
-   * Max shard size (dgramMax - tagSize - hmacSize - hashSize - 7)
+   * Max shard size (dgramMax - tagSize - hmacSize - hashSize - 6)
    * must not exceed 16384; chanBlbChnRsecShard() returns 0 if violated.
    *
-   * Wire format packs multiple fragments per datagram:
+   * Wire format (what is actually transmitted) packs multiple
+   * fragments per datagram:
    *   [frag1][frag2]...[fragN][hash(hashSize)]
    * Each fragment:
-   *   [tag][k-1][m][si][pad_vlq(1-2)][shard_len_vlq(1-2)][shard_data][hmac]
+   *   [tag][k-1][m][si][pad(1)][shard_len_vlq(1-2)][shard_data][hmac]
+   * Field encodings:
+   *   k-1: data shard count minus 1 (so k in 1..256 fits one byte)
+   *   m:   parity shard count, unbiased (0..255)
+   *   si:  shard index, 0-based
+   *   pad: padding bytes appended to the last data shard, one byte.
+   *     padding = k*ceil(payloadLen/k) - payloadLen is always in
+   *     [0, k-1] and k <= 256, so it never exceeds 255.
+   *   shard_len_vlq: 1-2 byte variable-length quantity --
+   *     byte0 & 0x80 == 0: 1-byte form, value = byte0 (0..127)
+   *     byte0 & 0x80 != 0: 2-byte form,
+   *       value = (((byte0 & 0x7f) << 7) | (byte1 & 0x7f)) + 1 (1..16384)
+   *     The 2-byte form is BIASED BY -1 (it encodes value-1); that bias
+   *     is what lets shard_len reach 16384.  The encoder always picks the
+   *     1-byte form for value < 128, so the encoding is canonical.
+   * The [addrlen][addr] prefix the framer reads (egress) or writes
+   * (ingress) is a transport-local frame, NOT on the wire: the datagram
+   * transport (chanBlbTrnFdDatagram) consumes it as the sendto()
+   * destination and strips it before transmission, and re-derives it
+   * from recvfrom() on receive.  It is therefore NOT covered by the MAC.
+   * The trailing hash(hashSize) is the datagram MAC; its scope is every
+   * byte from the first fragment through the last (absent when
+   * hashSize == 0).  Each fragment's hmac covers the bytes from tag
+   * through shard_data (the hmac itself excluded).
    *
    * WARNING: Datagrams exceeding the path MTU are IP-fragmented;
    * loss of any IP fragment drops the entire datagram, defeating

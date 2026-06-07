@@ -30,9 +30,10 @@
 
 /*
  * Overhead per fragment in a single-fragment datagram:
- *   tagSize + 3 (k-1, m, si) + 2+2 (max padding/shardlen VLQ)
+ *   tagSize + 3 (k-1, m, si) + 1 (padding byte) + 2 (max shardlen VLQ)
  *   + hmacSize (per-fragment HMAC) + hashSize (trailing datagram MAC)
- * = tagSize + hmacSize + hashSize + 7
+ * = tagSize + hmacSize + hashSize + 6
+ * (padding is a fixed byte: padding = k*ceil(L/k) - L in [0, k-1], k <= 256.)
  */
 unsigned int
 chanBlbChnRsecShard(
@@ -43,7 +44,7 @@ chanBlbChnRsecShard(
 ){
   unsigned int overhead;
 
-  overhead = tagSize + hmacSize + hashSize + 7;
+  overhead = tagSize + hmacSize + hashSize + 6;
   if (dgramMax <= overhead
    || dgramMax - overhead > 16384) /* max 2-byte VLQ */
     return (0);
@@ -60,7 +61,7 @@ chanBlbChnRsecMax(
 ){
   unsigned int overhead;
 
-  overhead = tagSize + hmacSize + hashSize + 7;
+  overhead = tagSize + hmacSize + hashSize + 6;
   if (dgramMax <= overhead
    || dgramMax - overhead > 16384) /* max 2-byte VLQ */
     return (0);
@@ -341,9 +342,15 @@ egrSendPack(
 }
 
 /*
- * Wire datagram (packed): [addrlen(1)][addr][frag1][frag2]...[fragN][hash(hashSize)]
- * Each fragment: [tag(tagSize)][k-1(1)][m(1)][si(1)][pad_vlq(1-2)][shard_len_vlq(1-2)][shard_data(shard_len)][hmac(hmacSize)]
- * Work buffer per shard slot (no hash): [addrlen][addr][tag][k-1][m][si][pad_vlq][shard_len_vlq][shard_data(msgShardSize)][hmac]
+ * Transport buffer (packed), as handed to v->out:
+ *   [addrlen(1)][addr][frag1][frag2]...[fragN][hash(hashSize)]
+ * The [addrlen][addr] prefix is a transport-local frame: the datagram
+ * transport consumes it as the sendto() destination and strips it before
+ * transmission, so it is NOT on the wire and NOT under the MAC (the hash
+ * covers [frag1]..[fragN]).  Each fragment:
+ *   [tag(tagSize)][k-1(1)][m(1)][si(1)][pad(1)][shard_len_vlq(1-2)][shard_data(shard_len)][hmac(hmacSize)]
+ * See chanBlbChnRsec.h for the k-1/m/si/pad and VLQ field encodings.
+ * Work buffer per shard slot (no hash): [addrlen][addr][tag][k-1][m][si][pad(1)][shard_len_vlq][shard_data(msgShardSize)][hmac]
  */
 void *
 chanBlbChnRsecEgr(
@@ -376,7 +383,7 @@ chanBlbChnRsecEgr(
   hmacSize = ctx->hmacSize;
   tableSize = ctx->tableSize;
   dgramMax = ctx->dgramMax;
-  overhead = tagSize + hmacSize + ctx->hashSize + 7;
+  overhead = tagSize + hmacSize + ctx->hashSize + 6;
   maxShardSize = (dgramMax > overhead) ? dgramMax - overhead : 0;
 
   priv = 0;
@@ -547,14 +554,12 @@ chanBlbChnRsecEgr(
         unsigned int km;
         unsigned int msgShardSize;
         unsigned int padding;
-        unsigned int padVlqLen;
         unsigned int shardVlqLen;
         unsigned int headerGap;
         unsigned int stride;
         unsigned int i;
         unsigned char mVal;
         unsigned char delayMs;
-        unsigned char padVlq[2];
         unsigned char shardVlq[2];
         unsigned char *work;
         const unsigned char **dataPtrs;
@@ -604,16 +609,8 @@ chanBlbChnRsecEgr(
         /* per-message shard size: tighter than maxShardSize */
         msgShardSize = payloadLen > 0 ? (payloadLen + k - 1) / k : 0;
 
-        /* padding */
+        /* padding fits one byte: k*ceil(L/k) - L in [0, k-1], k <= 256 */
         padding = k * msgShardSize - payloadLen;
-        if (padding < 128) {
-          padVlq[0] = (unsigned char)padding;
-          padVlqLen = 1;
-        } else {
-          padVlq[0] = (unsigned char)(0x80 | ((padding - 1) >> 7));
-          padVlq[1] = (unsigned char)((padding - 1) & 0x7f);
-          padVlqLen = 2;
-        }
 
         /* shard_len VLQ encode */
         if (msgShardSize < 128) {
@@ -625,8 +622,8 @@ chanBlbChnRsecEgr(
           shardVlqLen = 2;
         }
 
-        /* work slot layout: [addrlen][addr][tag][k-1][m][si][pad_vlq][shard_len_vlq][shard_data(msgShardSize)][hmac] */
-        headerGap = prefixSize + 3 + padVlqLen + shardVlqLen;
+        /* work slot layout: [addrlen][addr][tag][k-1][m][si][pad(1)][shard_len_vlq][shard_data(msgShardSize)][hmac] */
+        headerGap = prefixSize + 4 + shardVlqLen;
         stride = headerGap + msgShardSize + hmacSize;
 
         /* allocate pointer arrays separately from the byte work buffer so
@@ -659,8 +656,8 @@ chanBlbChnRsecEgr(
         work[prefixSize] = (unsigned char)(k - 1);       /* k-1 on wire */
         work[prefixSize + 1] = mVal;                     /* m */
         work[prefixSize + 2] = 0;                        /* shard_index placeholder */
-        memcpy(work + prefixSize + 3, padVlq, padVlqLen);
-        memcpy(work + prefixSize + 3 + padVlqLen, shardVlq, shardVlqLen);
+        work[prefixSize + 3] = (unsigned char)padding;   /* padding byte */
+        memcpy(work + prefixSize + 4, shardVlq, shardVlqLen);
 
         /* replicate header into all slots, set shard_index, copy payload */
         for (i = 0; i < km; ++i) {
@@ -816,8 +813,13 @@ struct igrEntry {
 };
 
 /*
- * Wire datagram (packed): [addrlen(1)][addr][frag1][frag2]...[fragN][hash(hashSize)]
- * Each fragment: [tag(tagSize)][k-1(1)][m(1)][si(1)][pad_vlq(1-2)][shard_len_vlq(1-2)][shard_data(shard_len)][hmac(hmacSize)]
+ * Transport buffer (packed), as delivered by v->inp / chanBlbIgrBlb:
+ *   [addrlen(1)][addr][frag1][frag2]...[fragN][hash(hashSize)]
+ * The [addrlen][addr] prefix is re-derived from recvfrom() by the
+ * transport; it is NOT on the wire and NOT under the MAC (the hash
+ * covers [frag1]..[fragN]).  Each fragment:
+ *   [tag(tagSize)][k-1(1)][m(1)][si(1)][pad(1)][shard_len_vlq(1-2)][shard_data(shard_len)][hmac(hmacSize)]
+ * See chanBlbChnRsec.h for the k-1/m/si/pad and VLQ field encodings.
  */
 /*
  * Bump one counter under the private mutex.  Used to keep the
@@ -930,7 +932,6 @@ chanBlbChnRsecIgr(
       unsigned int mVal;
       unsigned int shardIdx;
       unsigned int padding;
-      unsigned int padVlqLen;
       unsigned int fragShardSize;
       unsigned int shardVlqLen;
       unsigned int headerLen;
@@ -951,23 +952,14 @@ chanBlbChnRsecIgr(
         break; /* malformed: stop parsing this datagram */
       }
 
-      /* decode padding VLQ */
-      if (buf[pos + tagSize + 3] & 0x80) {
-        if (pos + tagSize + 5 > n)
-          break;
-        padding = (unsigned int)(buf[pos + tagSize + 3] & 0x7f);
-        padding = ((padding << 7) | (unsigned int)(buf[pos + tagSize + 4] & 0x7f)) + 1;
-        padVlqLen = 2;
-      } else {
-        padding = buf[pos + tagSize + 3];
-        padVlqLen = 1;
-      }
+      /* padding is a fixed byte (guaranteed present by the while guard) */
+      padding = buf[pos + tagSize + 3];
 
       /* decode shard_len VLQ */
       {
         unsigned int vlqOff;
 
-        vlqOff = pos + tagSize + 3 + padVlqLen;
+        vlqOff = pos + tagSize + 4;
         if (vlqOff >= n)
           break;
         if (buf[vlqOff] & 0x80) {
@@ -982,7 +974,7 @@ chanBlbChnRsecIgr(
         }
       }
 
-      headerLen = tagSize + 3 + padVlqLen + shardVlqLen;
+      headerLen = tagSize + 4 + shardVlqLen;
       fragEnd = pos + headerLen + fragShardSize + hmacSize;
       if (fragEnd > n)
         break; /* fragment extends past datagram */
