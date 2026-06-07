@@ -29,22 +29,25 @@
 #include "chanBlbChnRsec.h"
 
 /*
- * Overhead per fragment in a single-fragment datagram:
+ * Overhead in a single-fragment datagram:
  *   tagSize + 3 (k-1, m, si) + 1 (padding byte) + 2 (max shardlen VLQ)
- *   + hmacSize (per-fragment HMAC) + hashSize (trailing datagram MAC)
- * = tagSize + hmacSize + hashSize + 6
+ *   + frgHmacSize (per-fragment AUTH)
+ *   + dtgHmacSize (trailing datagram AUTH)
+ *   + dtgHashSize (trailing datagram GATE)
+ * = tagSize + frgHmacSize + dtgHmacSize + dtgHashSize + 6
  * (padding is a fixed byte: padding = k*ceil(L/k) - L in [0, k-1], k <= 256.)
  */
 unsigned int
 chanBlbChnRsecShard(
   unsigned int dgramMax
  ,unsigned int tagSize
- ,unsigned int hmacSize
- ,unsigned int hashSize
+ ,unsigned int frgHmacSize
+ ,unsigned int dtgHmacSize
+ ,unsigned int dtgHashSize
 ){
   unsigned int overhead;
 
-  overhead = tagSize + hmacSize + hashSize + 6;
+  overhead = tagSize + frgHmacSize + dtgHmacSize + dtgHashSize + 6;
   if (dgramMax <= overhead
    || dgramMax - overhead > 16384) /* max 2-byte VLQ */
     return (0);
@@ -55,13 +58,14 @@ unsigned int
 chanBlbChnRsecMax(
   unsigned int dgramMax
  ,unsigned int tagSize
- ,unsigned int hmacSize
- ,unsigned int hashSize
+ ,unsigned int frgHmacSize
+ ,unsigned int dtgHmacSize
+ ,unsigned int dtgHashSize
  ,unsigned char m
 ){
   unsigned int overhead;
 
-  overhead = tagSize + hmacSize + hashSize + 6;
+  overhead = tagSize + frgHmacSize + dtgHmacSize + dtgHashSize + 6;
   if (dgramMax <= overhead
    || dgramMax - overhead > 16384) /* max 2-byte VLQ */
     return (0);
@@ -214,7 +218,7 @@ shardInsert(
  * to the same address.  *maxDelayMs (out): largest delay_ms among
  * packed shards.  Returns 0 on output failure.
  *
- * No locks held: callbacks (hashSign, v->out, v->free) and the
+ * No locks held: callbacks (dtgHmacSign, dtgHashSign, v->out, v->free) and the
  * slot-free pass run unlocked.  The caller flushes the returned
  * counter deltas into priv->ctrs.frg / priv->ctrs.msg under
  * priv->m so the batch is atomic w.r.t. snapshot.
@@ -227,6 +231,7 @@ egrSendPack(
  ,unsigned int tableSize
  ,unsigned char *packBuf
  ,unsigned char *packSeen
+ ,unsigned int *frgOff
  ,struct shardItem *shards
  ,unsigned long *shardCount
  ,unsigned char *maxDelayMs
@@ -234,7 +239,8 @@ egrSendPack(
  ,unsigned int *msgAdd
 ){
   unsigned int dgramMax;
-  unsigned int hashSize;
+  unsigned int dtgHmacSize;
+  unsigned int dtgHashSize;
   unsigned long si2;
   unsigned int ei;
   unsigned int si;
@@ -247,7 +253,8 @@ egrSendPack(
   struct timespec now;
 
   dgramMax = ctx->dgramMax;
-  hashSize = ctx->hashSize;
+  dtgHmacSize = ctx->dtgHmacSize;
+  dtgHashSize = ctx->dtgHashSize;
   ei = shards[0].entry;
   si = shards[0].shard;
   frgLocal = 0;
@@ -259,8 +266,9 @@ egrSendPack(
   packPos = wp;
   memset(packSeen, 0, tableSize);
 
-  /* add first fragment */
+  /* add first fragment (its tag offset within src is 0) */
   fragLen = table[ei].stride - wp;
+  frgOff[0] = packPos - wp;
   memcpy(packBuf + packPos,
     table[ei].work + (unsigned long)si * table[ei].stride + wp,
     fragLen);
@@ -290,11 +298,12 @@ egrSendPack(
     wp2 = 1 + table[ei2].work[0];
     fragLen2 = table[ei2].stride - wp2;
 
-    /* same address, not same message, fits */
+    /* same address, not same message, fits (room for both trailers) */
     if (wp2 == wp
      && memcmp(table[ei2].work, packBuf, wp) == 0
      && !packSeen[ei2]
-     && packPos + fragLen2 + hashSize <= wp + dgramMax) {
+     && packPos + fragLen2 + dtgHmacSize + dtgHashSize <= wp + dgramMax) {
+      frgOff[frgLocal] = packPos - wp;
       memcpy(packBuf + packPos,
         table[ei2].work + (unsigned long)shards[si2].shard * table[ei2].stride + wp2,
         fragLen2);
@@ -315,11 +324,19 @@ egrSendPack(
     }
   }
 
-  /* append datagram MAC (keyed, per-datagram) */
-  if (hashSize > 0)
-    ctx->hashSign(ctx->hashCtx, packBuf,
+  /* append datagram AUTH (keyed, per-datagram) over all fragments,
+   * handing the callback the packed fragment structure (offsets+count) */
+  if (dtgHmacSize > 0)
+    ctx->dtgHmacSign(ctx->dtgHmacCtx, packBuf,
+      packBuf + packPos, packBuf + wp, packPos - wp, frgOff, frgLocal);
+  packPos += dtgHmacSize;
+
+  /* append datagram GATE (keyed, per-datagram) over all fragments AND
+   * the dtgHmac just appended; the gate is outermost, verified first */
+  if (dtgHashSize > 0)
+    ctx->dtgHashSign(ctx->dtgHashCtx, packBuf,
       packBuf + packPos, packBuf + wp, packPos - wp);
-  packPos += hashSize;
+  packPos += dtgHashSize;
 
   if (!v->out(v->outCtx, packBuf, packPos)) {
     *frgAdd = frgLocal;
@@ -343,14 +360,16 @@ egrSendPack(
 
 /*
  * Transport buffer (packed), as handed to v->out:
- *   [addrlen(1)][addr][frag1][frag2]...[fragN][hash(hashSize)]
+ *   [addrlen(1)][addr][frag1][frag2]...[fragN][dtgHmac(dtgHmacSize)][dtgHash(dtgHashSize)]
  * The [addrlen][addr] prefix is a transport-local frame: the datagram
  * transport consumes it as the sendto() destination and strips it before
- * transmission, so it is NOT on the wire and NOT under the MAC (the hash
- * covers [frag1]..[fragN]).  Each fragment:
- *   [tag(tagSize)][k-1(1)][m(1)][si(1)][pad(1)][shard_len_vlq(1-2)][shard_data(shard_len)][hmac(hmacSize)]
+ * transmission, so it is NOT on the wire and NOT under any MAC.  The
+ * dtgHmac (datagram AUTH) covers [frag1]..[fragN]; the dtgHash (datagram
+ * GATE) covers [frag1]..[fragN][dtgHmac] (outermost, verified first).
+ * Each fragment:
+ *   [tag(tagSize)][k-1(1)][m(1)][si(1)][pad(1)][shard_len_vlq(1-2)][shard_data(shard_len)][frgHmac(frgHmacSize)]
  * See chanBlbChnRsec.h for the k-1/m/si/pad and VLQ field encodings.
- * Work buffer per shard slot (no hash): [addrlen][addr][tag][k-1][m][si][pad(1)][shard_len_vlq][shard_data(msgShardSize)][hmac]
+ * Work buffer per shard slot (no datagram trailers): [addrlen][addr][tag][k-1][m][si][pad(1)][shard_len_vlq][shard_data(msgShardSize)][frgHmac]
  */
 void *
 chanBlbChnRsecEgr(
@@ -362,10 +381,11 @@ chanBlbChnRsecEgr(
   struct shardItem *shards;
   unsigned char *packBuf;
   unsigned char *packSeen;
+  unsigned int *frgOff;
   chanBlb_t *pending;
   chanArr_t p[1];
   unsigned int tagSize;
-  unsigned int hmacSize;
+  unsigned int frgHmacSize;
   unsigned int tableSize;
   unsigned int dgramMax;
   unsigned int overhead;
@@ -380,16 +400,17 @@ chanBlbChnRsecEgr(
 
   ctx = (struct chanBlbChnRsecEgrCtx *)v->frmCtx;
   tagSize = ctx->tagSize;
-  hmacSize = ctx->hmacSize;
+  frgHmacSize = ctx->frgHmacSize;
   tableSize = ctx->tableSize;
   dgramMax = ctx->dgramMax;
-  overhead = tagSize + hmacSize + ctx->hashSize + 6;
+  overhead = tagSize + frgHmacSize + ctx->dtgHmacSize + ctx->dtgHashSize + 6;
   maxShardSize = (dgramMax > overhead) ? dgramMax - overhead : 0;
 
   priv = 0;
   table = 0;
   packBuf = 0;
   packSeen = 0;
+  frgOff = 0;
   shards = 0;
   shardCount = 0;
   shardAlloc = 0;
@@ -428,6 +449,12 @@ chanBlbChnRsecEgr(
 
   /* same-message avoidance: one byte per table entry */
   if (!(packSeen = (unsigned char *)v->realloc(0, tableSize)))
+    goto error;
+
+  /* packed-fragment tag offsets for the datagram AUTH callback:
+   * at most one fragment per table entry per datagram */
+  if (!(frgOff = (unsigned int *)v->realloc(0,
+        (unsigned long)tableSize * sizeof (unsigned int))))
     goto error;
 
   pthread_cleanup_push((void(*)(void*))v->fin, v);
@@ -509,7 +536,7 @@ chanBlbChnRsecEgr(
 
         frgAdd = 0;
         msgAdd = 0;
-        sent = egrSendPack(v, ctx, table, tableSize, packBuf, packSeen,
+        sent = egrSendPack(v, ctx, table, tableSize, packBuf, packSeen, frgOff,
                            shards, &shardCount, &packMaxD, &frgAdd, &msgAdd);
         if (frgAdd || msgAdd) {
           pthread_mutex_lock(&priv->m);
@@ -624,7 +651,7 @@ chanBlbChnRsecEgr(
 
         /* work slot layout: [addrlen][addr][tag][k-1][m][si][pad(1)][shard_len_vlq][shard_data(msgShardSize)][hmac] */
         headerGap = prefixSize + 4 + shardVlqLen;
-        stride = headerGap + msgShardSize + hmacSize;
+        stride = headerGap + msgShardSize + frgHmacSize;
 
         /* allocate pointer arrays separately from the byte work buffer so
          * the pointer arrays are suitably aligned regardless of stride. */
@@ -703,23 +730,23 @@ chanBlbChnRsecEgr(
 
         /* encrypt each shard (before HMAC: encrypt-then-MAC) */
         /* last data shard (k-1) excludes padding to avoid encrypting known zeros */
-        if (ctx->encrypt) {
+        if (ctx->frgEncrypt) {
           for (i = 0; i < km; ++i)
-            ctx->encrypt(ctx->cryptCtx, work + (unsigned long)i * stride,
+            ctx->frgEncrypt(ctx->frgCryptCtx, work + (unsigned long)i * stride,
               work + (unsigned long)i * stride + headerGap,
               i == k - 1 && padding > 0 ? msgShardSize - padding : msgShardSize);
         }
 
-        /* sign each slot */
+        /* sign each slot (fragment AUTH) */
         for (i = 0; i < km; ++i) {
           unsigned char *s;
           unsigned int wp;
 
           s = work + (unsigned long)i * stride;
           wp = 1 + addrlen;
-          /* HMAC covers wire payload: tag through shard_data */
-          if (hmacSize > 0)
-            ctx->hmacSign(ctx->hmacCtx, s,
+          /* frgHmac covers wire payload: tag through shard_data */
+          if (frgHmacSize > 0)
+            ctx->frgHmacSign(ctx->frgHmacCtx, s,
               s + headerGap + msgShardSize,
               s + wp, headerGap + msgShardSize - wp);
         }
@@ -779,6 +806,7 @@ exit:
       v->free(table[ti].work);
   }
   v->free(shards);
+  v->free(frgOff);
   v->free(packSeen);
   v->free(packBuf);
   v->free(table);
@@ -794,6 +822,8 @@ error:
   v->free(priv);
   v->free(table);
   v->free(packBuf);
+  v->free(packSeen);
+  v->free(frgOff);
   v->fin(v);
   return (0);
 }
@@ -814,11 +844,12 @@ struct igrEntry {
 
 /*
  * Transport buffer (packed), as delivered by v->inp / chanBlbIgrBlb:
- *   [addrlen(1)][addr][frag1][frag2]...[fragN][hash(hashSize)]
+ *   [addrlen(1)][addr][frag1][frag2]...[fragN][dtgHmac(dtgHmacSize)][dtgHash(dtgHashSize)]
  * The [addrlen][addr] prefix is re-derived from recvfrom() by the
- * transport; it is NOT on the wire and NOT under the MAC (the hash
- * covers [frag1]..[fragN]).  Each fragment:
- *   [tag(tagSize)][k-1(1)][m(1)][si(1)][pad(1)][shard_len_vlq(1-2)][shard_data(shard_len)][hmac(hmacSize)]
+ * transport; it is NOT on the wire and NOT under any MAC.  The dtgHash
+ * (GATE) covers [frag1]..[fragN][dtgHmac] and is verified first; the
+ * dtgHmac (AUTH) covers [frag1]..[fragN].  Each fragment:
+ *   [tag(tagSize)][k-1(1)][m(1)][si(1)][pad(1)][shard_len_vlq(1-2)][shard_data(shard_len)][frgHmac(frgHmacSize)]
  * See chanBlbChnRsec.h for the k-1/m/si/pad and VLQ field encodings.
  */
 /*
@@ -841,11 +872,13 @@ chanBlbChnRsecIgr(
   struct igrEntry **table;
   unsigned char *buf;
   unsigned char *hdr;
+  unsigned int *frgOff;
   chanArr_t p[1];
   unsigned int tagSize;
   unsigned int tableSize;
-  unsigned int hmacSize;
-  unsigned int hashSize;
+  unsigned int frgHmacSize;
+  unsigned int dtgHmacSize;
+  unsigned int dtgHashSize;
   unsigned int bufSize;
   unsigned int tableUsed;
   unsigned int age;
@@ -854,13 +887,15 @@ chanBlbChnRsecIgr(
   ctx = (struct chanBlbChnRsecIgrCtx *)v->frmCtx;
   tagSize = ctx->tagSize;
   tableSize = ctx->tableSize;
-  hmacSize = ctx->hmacSize;
-  hashSize = ctx->hashSize;
+  frgHmacSize = ctx->frgHmacSize;
+  dtgHmacSize = ctx->dtgHmacSize;
+  dtgHashSize = ctx->dtgHashSize;
 
   priv = 0;
   table = 0;
   buf = 0;
   hdr = 0;
+  frgOff = 0;
 
   /* private state.  See chanBlbChnRsecEgr for the self lock+unlock
    * rationale. */
@@ -886,8 +921,15 @@ chanBlbChnRsecIgr(
   if (!(buf = (unsigned char *)v->realloc(0, bufSize)))
     goto error;
 
-  /* hdr reconstruction buffer for HMAC/crypto callbacks */
+  /* hdr reconstruction buffer for fragment AUTH/crypto callbacks */
   if (!(hdr = (unsigned char *)v->realloc(0, (unsigned long)(1 + 255) + tagSize + 3)))
+    goto error;
+
+  /* packed-fragment tag offsets for the datagram AUTH callback.  A
+   * minimal fragment is >= 5 bytes (k-1, m, si, pad, 1-byte VLQ), so a
+   * datagram of dgramMax wire bytes holds at most dgramMax/5 + 1. */
+  if (!(frgOff = (unsigned int *)v->realloc(0,
+        ((unsigned long)ctx->dgramMax / 5 + 1) * sizeof (unsigned int))))
     goto error;
 
   pthread_cleanup_push((void(*)(void*))v->fin, v);
@@ -912,22 +954,71 @@ chanBlbChnRsecIgr(
     addrlen = buf[0];
     wp = 1 + addrlen;
 
-    /* need at least addr prefix + one minimal fragment + datagram MAC */
-    if (n < wp + tagSize + 3 + 1 + 1 + hmacSize + hashSize)
+    /* need at least addr prefix + one minimal fragment + both datagram MACs */
+    if (n < wp + tagSize + 3 + 1 + 1 + frgHmacSize + dtgHmacSize + dtgHashSize)
       continue;
 
-    /* validate datagram MAC at end (keyed DoS gate) */
-    if (hashSize > 0
-     && !ctx->hashVrfy(ctx->hashCtx, buf,
-                       buf + n - hashSize, buf + wp, n - wp - hashSize)) {
+    /* validate datagram GATE at end (cheap keyed DoS gate, outermost) */
+    if (dtgHashSize > 0
+     && !ctx->dtgHashVrfy(ctx->dtgHashCtx, buf,
+                       buf + n - dtgHashSize, buf + wp, n - wp - dtgHashSize)) {
       IGR_BUMP(priv->ctrs.hash);
       continue;
     }
-    n -= hashSize; /* strip trailing MAC */
+    n -= dtgHashSize; /* strip trailing GATE */
+
+    /* validate datagram AUTH (keyed, per-datagram) over all fragments.
+     * Pre-scan the VLQ framing to collect each fragment's tag offset
+     * (relative to the first fragment) so the callback can enforce
+     * sender uniformity, then verify the MAC.  Failure (bad MAC or the
+     * app rejecting a mixed-sender datagram) drops the whole datagram. */
+    if (dtgHmacSize > 0) {
+      unsigned int fend;
+      unsigned int sp;
+      unsigned int frgCnt;
+
+      fend = n - dtgHmacSize;
+      sp = wp;
+      frgCnt = 0;
+      while (sp + tagSize + 3 + 1 + 1 + frgHmacSize <= fend) {
+        unsigned int sk;
+        unsigned int ssz;
+        unsigned int svlq;
+        unsigned int vlqOff;
+        unsigned int send;
+
+        sk = (unsigned int)buf[sp + tagSize] + 1;
+        if (sk + (unsigned int)buf[sp + tagSize + 1] > 256)
+          break;
+        vlqOff = sp + tagSize + 4;
+        if (buf[vlqOff] & 0x80) {
+          if (vlqOff + 2 > fend)
+            break;
+          ssz = (unsigned int)(buf[vlqOff] & 0x7f);
+          ssz = ((ssz << 7) | (unsigned int)(buf[vlqOff + 1] & 0x7f)) + 1;
+          svlq = 2;
+        } else {
+          ssz = buf[vlqOff];
+          svlq = 1;
+        }
+        send = sp + tagSize + 4 + svlq + ssz + frgHmacSize;
+        if (send > fend)
+          break;
+        frgOff[frgCnt++] = sp - wp;
+        sp = send;
+      }
+      if (!ctx->dtgHmacVrfy(ctx->dtgHmacCtx, buf,
+                            buf + n - dtgHmacSize, buf + wp, fend - wp,
+                            frgOff, frgCnt)) {
+        IGR_BUMP(priv->ctrs.dhmac);
+        continue;
+      }
+      n = fend; /* strip trailing AUTH */
+    }
 
     /* parse fragments within the datagram */
     pos = wp;
-    while (pos + tagSize + 3 + 1 + 1 + hmacSize <= n) {
+    while (pos + tagSize + 3 + 1 + 1 + frgHmacSize <= n) {
       unsigned int k;
       unsigned int mVal;
       unsigned int shardIdx;
@@ -975,7 +1066,7 @@ chanBlbChnRsecIgr(
       }
 
       headerLen = tagSize + 4 + shardVlqLen;
-      fragEnd = pos + headerLen + fragShardSize + hmacSize;
+      fragEnd = pos + headerLen + fragShardSize + frgHmacSize;
       if (fragEnd > n)
         break; /* fragment extends past datagram */
 
@@ -989,9 +1080,9 @@ chanBlbChnRsecIgr(
       memcpy(hdr, buf, wp); /* addr prefix from datagram */
       memcpy(hdr + wp, buf + pos, tagSize + 3); /* tag + k-1 + m + si */
 
-      /* validate HMAC if enabled */
-      if (hmacSize > 0) {
-        if (!ctx->hmacVrfy(ctx->hmacCtx, hdr,
+      /* validate fragment AUTH if enabled */
+      if (frgHmacSize > 0) {
+        if (!ctx->frgHmacVrfy(ctx->frgHmacCtx, hdr,
                            buf + pos + headerLen + fragShardSize,
                            buf + pos, headerLen + fragShardSize)) {
           IGR_BUMP(priv->ctrs.hmac);
@@ -1000,10 +1091,10 @@ chanBlbChnRsecIgr(
         }
       }
 
-      /* decrypt shard data (after HMAC verify: MAC-then-decrypt) */
+      /* decrypt shard data (after frgHmac verify: MAC-then-decrypt) */
       /* last data shard (k-1) excludes padding to match egress */
-      if (ctx->decrypt)
-        ctx->decrypt(ctx->cryptCtx, hdr, buf + pos + headerLen,
+      if (ctx->frgDecrypt)
+        ctx->frgDecrypt(ctx->frgCryptCtx, hdr, buf + pos + headerLen,
           shardIdx == k - 1 && padding > 0 ? fragShardSize - padding : fragShardSize);
 
       ++age;
@@ -1326,6 +1417,7 @@ done:
       v->free(table[ti]->blob);
     v->free(table[ti]);
   }
+  v->free(frgOff);
   v->free(hdr);
   v->free(buf);
   v->free(table);
@@ -1341,6 +1433,8 @@ error:
   v->free(priv);
   v->free(table);
   v->free(buf);
+  v->free(hdr);
+  v->free(frgOff);
   v->fin(v);
   return (0);
 }

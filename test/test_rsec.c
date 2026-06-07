@@ -165,6 +165,169 @@ hashVrfyCb(
   return (diff == 0);
 }
 
+/*
+ * Datagram-layer AUTH callbacks — RMD128-HMAC over EVERY fragment's bytes,
+ * verified once per datagram.  The verify form is handed the packed
+ * fragment structure (frgOff[i] = fragment i's tag offset within src,
+ * frgCnt = fragment count) so it can enforce sender uniformity (see
+ * dtgHmacUnifVrfyCb).  Reuses struct hmacKeyCtx for the key.
+ */
+static void
+dtgHmacSignCb(
+  void *ctx
+ ,const unsigned char *adr
+ ,unsigned char *dst
+ ,const unsigned char *src
+ ,unsigned int len
+ ,const unsigned int *frgOff
+ ,unsigned int frgCnt
+){
+  struct hmacKeyCtx *k;
+
+  (void)adr;
+  (void)frgOff;
+  (void)frgCnt;
+  k = (struct hmacKeyCtx *)ctx;
+  rmd128hmac(k->key, k->keyLen, src, len, dst);
+}
+
+/* Plain datagram AUTH verify: MAC-only, ignores the fragment structure. */
+static int
+dtgHmacVrfyCb(
+  void *ctx
+ ,const unsigned char *adr
+ ,const unsigned char *mac
+ ,const unsigned char *src
+ ,unsigned int len
+ ,const unsigned int *frgOff
+ ,unsigned int frgCnt
+){
+  struct hmacKeyCtx *k;
+  unsigned char computed[RMD128_SZ];
+  unsigned char diff;
+  unsigned int i;
+
+  (void)adr;
+  (void)frgOff;
+  (void)frgCnt;
+  k = (struct hmacKeyCtx *)ctx;
+  rmd128hmac(k->key, k->keyLen, src, len, computed);
+  diff = 0;
+  for (i = 0; i < RMD128_SZ; ++i)
+    diff |= mac[i] ^ computed[i];
+  return (diff == 0);
+}
+
+/*
+ * Sender-uniformity-enforcing datagram AUTH verify.  After the MAC check,
+ * every packed fragment's "sender" byte (here tag byte 0, located at
+ * src + frgOff[i] without re-parsing the VLQ framing) must equal the first
+ * fragment's.  A Byzantine node that packs fragments claiming different
+ * senders under one (its own) key passes the MAC but is rejected here.
+ */
+static int
+dtgHmacUnifVrfyCb(
+  void *ctx
+ ,const unsigned char *adr
+ ,const unsigned char *mac
+ ,const unsigned char *src
+ ,unsigned int len
+ ,const unsigned int *frgOff
+ ,unsigned int frgCnt
+){
+  struct hmacKeyCtx *k;
+  unsigned char computed[RMD128_SZ];
+  unsigned char diff;
+  unsigned int i;
+
+  (void)adr;
+  k = (struct hmacKeyCtx *)ctx;
+  rmd128hmac(k->key, k->keyLen, src, len, computed);
+  diff = 0;
+  for (i = 0; i < RMD128_SZ; ++i)
+    diff |= mac[i] ^ computed[i];
+  if (diff)
+    return (0);
+  for (i = 1; i < frgCnt; ++i)
+    if (src[frgOff[i]] != src[frgOff[0]])
+      return (0);
+  return (1);
+}
+
+/*
+ * Oracle datagram AUTH verify: after the MAC check, INDEPENDENTLY re-walks
+ * the fragment framing exactly as the library's pre-scan should have, and
+ * requires the library-reported (frgOff, frgCnt) to match offset-for-offset
+ * and count.  Unlike a byte-reading uniformity check (which a buggy offset
+ * can dodge by breaking the parse early into a vacuous pass), this catches
+ * ANY pre-scan offset/count error deterministically -- including a mis-
+ * accounted frgHmacSize when both HMAC tiers are active.  Reused struct
+ * dtgProbeCtx puts {key,keyLen} first so the shared dtgHmacSignCb (which
+ * reads only that prefix) works on the same ctx.
+ */
+struct dtgProbeCtx {
+  const unsigned char *key;
+  unsigned int keyLen;
+  unsigned int tagSize;
+  unsigned int frgHmacSize;
+};
+
+static int
+dtgHmacProbeVrfyCb(
+  void *ctx
+ ,const unsigned char *adr
+ ,const unsigned char *mac
+ ,const unsigned char *src
+ ,unsigned int len
+ ,const unsigned int *frgOff
+ ,unsigned int frgCnt
+){
+  struct dtgProbeCtx *k;
+  unsigned char computed[RMD128_SZ];
+  unsigned char diff;
+  unsigned int sp;
+  unsigned int i;
+
+  (void)adr;
+  k = (struct dtgProbeCtx *)ctx;
+  rmd128hmac(k->key, k->keyLen, src, len, computed);
+  diff = 0;
+  for (i = 0; i < RMD128_SZ; ++i)
+    diff |= mac[i] ^ computed[i];
+  if (diff)
+    return (0);
+  sp = 0;
+  i = 0;
+  while (sp + k->tagSize + 3u + 1u + 1u + k->frgHmacSize <= len) {
+    unsigned int vlqOff;
+    unsigned int ssz;
+    unsigned int svlq;
+    unsigned int send;
+
+    vlqOff = sp + k->tagSize + 4u;
+    if (vlqOff >= len)
+      break;
+    if (src[vlqOff] & 0x80u) {
+      if (vlqOff + 2u > len)
+        break;
+      ssz = (unsigned int)(src[vlqOff] & 0x7fu);
+      ssz = ((ssz << 7) | (unsigned int)(src[vlqOff + 1u] & 0x7fu)) + 1u;
+      svlq = 2u;
+    } else {
+      ssz = src[vlqOff];
+      svlq = 1u;
+    }
+    send = sp + k->tagSize + 4u + svlq + ssz + k->frgHmacSize;
+    if (send > len)
+      break;
+    if (i >= frgCnt || frgOff[i] != sp)
+      return (0);
+    sp = send;
+    ++i;
+  }
+  return (i == frgCnt);
+}
+
 /* Encrypt/Decrypt callbacks (XOR stream cipher for testing) */
 struct cryptKeyCtx {
   const unsigned char *key;
@@ -361,20 +524,27 @@ struct rsecPair {
   unsigned int tagSize;
   unsigned int dgramMax;
   unsigned int tableSize;
-  unsigned int hmacSize;
-  void *hmacCtx;
-  void (*hmacSign)(void *, const unsigned char *, unsigned char *, const unsigned char *, unsigned int);
-  int  (*hmacVrfy)(void *, const unsigned char *, const unsigned char *, const unsigned char *, unsigned int);
-  void *cryptCtx;
-  void (*encrypt)(void *, const unsigned char *, unsigned char *, unsigned int);
-  void (*decrypt)(void *, const unsigned char *, unsigned char *, unsigned int);
-  unsigned int hashSize;
-  void *hashCtx;
-  void (*hashSign)(void *, const unsigned char *, unsigned char *, const unsigned char *, unsigned int);
-  int  (*hashVrfy)(void *, const unsigned char *, const unsigned char *, const unsigned char *, unsigned int);
+  /* fragment AUTH (frgHmac) + fragment ENCRYPT (frgCrypt) */
+  unsigned int frgHmacSize;
+  void *frgHmacCtx;
+  void (*frgHmacSign)(void *, const unsigned char *, unsigned char *, const unsigned char *, unsigned int);
+  int  (*frgHmacVrfy)(void *, const unsigned char *, const unsigned char *, const unsigned char *, unsigned int);
+  void *frgCryptCtx;
+  void (*frgEncrypt)(void *, const unsigned char *, unsigned char *, unsigned int);
+  void (*frgDecrypt)(void *, const unsigned char *, unsigned char *, unsigned int);
+  /* datagram AUTH (dtgHmac) — sign/vrfy take packed-fragment offsets+count */
+  unsigned int dtgHmacSize;
+  void *dtgHmacCtx;
+  void (*dtgHmacSign)(void *, const unsigned char *, unsigned char *, const unsigned char *, unsigned int, const unsigned int *, unsigned int);
+  int  (*dtgHmacVrfy)(void *, const unsigned char *, const unsigned char *, const unsigned char *, unsigned int, const unsigned int *, unsigned int);
+  /* datagram GATE (dtgHash) */
+  unsigned int dtgHashSize;
+  void *dtgHashCtx;
+  void (*dtgHashSign)(void *, const unsigned char *, unsigned char *, const unsigned char *, unsigned int);
+  int  (*dtgHashVrfy)(void *, const unsigned char *, const unsigned char *, const unsigned char *, unsigned int);
   /* counter snapshot — populated by rsecSnap() */
   unsigned int egrMsg, egrFrg, egrFull;
-  unsigned int igrFrg, igrHash, igrHmac, igrDup, igrLate, igrMsg, igrDcd, igrEvict;
+  unsigned int igrFrg, igrHash, igrDhmac, igrHmac, igrDup, igrLate, igrMsg, igrDcd, igrEvict;
   /* private — populated by setup() */
   struct chanBlbChnRsecEgrCtx egr;
   struct chanBlbChnRsecIgrCtx igr;
@@ -394,6 +564,7 @@ rsecSnap(
   p->egrFull = ec.full;
   p->igrFrg = ic.frg;
   p->igrHash = ic.hash;
+  p->igrDhmac = ic.dhmac;
   p->igrHmac = ic.hmac;
   p->igrDup = ic.dup;
   p->igrLate = ic.late;
@@ -414,22 +585,26 @@ setup(
 
   /* copy shared config into split contexts (opaque stays zero — the
    * framer threads allocate / free private state on entry / exit) */
-  rsecCtx->egr.dgramMax  = rsecCtx->igr.dgramMax  = rsecCtx->dgramMax;
-  rsecCtx->egr.tagSize   = rsecCtx->igr.tagSize   = rsecCtx->tagSize;
-  rsecCtx->egr.tableSize = rsecCtx->igr.tableSize = rsecCtx->tableSize;
-  rsecCtx->egr.hmacSize  = rsecCtx->igr.hmacSize  = rsecCtx->hmacSize;
-  rsecCtx->egr.hmacCtx   = rsecCtx->igr.hmacCtx   = rsecCtx->hmacCtx;
-  rsecCtx->egr.hmacSign  = rsecCtx->hmacSign;
-  rsecCtx->igr.hmacVrfy  = rsecCtx->hmacVrfy;
-  rsecCtx->egr.cryptCtx  = rsecCtx->igr.cryptCtx  = rsecCtx->cryptCtx;
-  rsecCtx->egr.encrypt   = rsecCtx->encrypt;
-  rsecCtx->igr.decrypt   = rsecCtx->decrypt;
-  rsecCtx->egr.hashSize  = rsecCtx->igr.hashSize  = rsecCtx->hashSize;
-  rsecCtx->egr.hashCtx   = rsecCtx->igr.hashCtx   = rsecCtx->hashCtx;
-  rsecCtx->egr.hashSign  = rsecCtx->hashSign;
-  rsecCtx->igr.hashVrfy  = rsecCtx->hashVrfy;
-  rsecCtx->egr.opaque    = 0;
-  rsecCtx->igr.opaque    = 0;
+  rsecCtx->egr.dgramMax     = rsecCtx->igr.dgramMax     = rsecCtx->dgramMax;
+  rsecCtx->egr.tagSize      = rsecCtx->igr.tagSize      = rsecCtx->tagSize;
+  rsecCtx->egr.tableSize    = rsecCtx->igr.tableSize    = rsecCtx->tableSize;
+  rsecCtx->egr.frgHmacSize  = rsecCtx->igr.frgHmacSize  = rsecCtx->frgHmacSize;
+  rsecCtx->egr.frgHmacCtx   = rsecCtx->igr.frgHmacCtx   = rsecCtx->frgHmacCtx;
+  rsecCtx->egr.frgHmacSign  = rsecCtx->frgHmacSign;
+  rsecCtx->igr.frgHmacVrfy  = rsecCtx->frgHmacVrfy;
+  rsecCtx->egr.frgCryptCtx  = rsecCtx->igr.frgCryptCtx  = rsecCtx->frgCryptCtx;
+  rsecCtx->egr.frgEncrypt   = rsecCtx->frgEncrypt;
+  rsecCtx->igr.frgDecrypt   = rsecCtx->frgDecrypt;
+  rsecCtx->egr.dtgHmacSize  = rsecCtx->igr.dtgHmacSize  = rsecCtx->dtgHmacSize;
+  rsecCtx->egr.dtgHmacCtx   = rsecCtx->igr.dtgHmacCtx   = rsecCtx->dtgHmacCtx;
+  rsecCtx->egr.dtgHmacSign  = rsecCtx->dtgHmacSign;
+  rsecCtx->igr.dtgHmacVrfy  = rsecCtx->dtgHmacVrfy;
+  rsecCtx->egr.dtgHashSize  = rsecCtx->igr.dtgHashSize  = rsecCtx->dtgHashSize;
+  rsecCtx->egr.dtgHashCtx   = rsecCtx->igr.dtgHashCtx   = rsecCtx->dtgHashCtx;
+  rsecCtx->egr.dtgHashSign  = rsecCtx->dtgHashSign;
+  rsecCtx->igr.dtgHashVrfy  = rsecCtx->dtgHashVrfy;
+  rsecCtx->egr.opaque       = 0;
+  rsecCtx->igr.opaque       = 0;
 
   memset(&env->sa, 0, sizeof (env->sa));
   env->sa.sin_family = AF_INET;
@@ -701,10 +876,10 @@ testHmacMatch(void)
   rsecCtx.tableSize = 64;
   hmacCtx.key = (const unsigned char *)key;
   hmacCtx.keyLen = strlen(key);
-  rsecCtx.hmacSize = RMD128_SZ;
-  rsecCtx.hmacCtx = &hmacCtx;
-  rsecCtx.hmacSign = hmacSignCb;
-  rsecCtx.hmacVrfy = hmacVrfyCb;
+  rsecCtx.frgHmacSize = RMD128_SZ;
+  rsecCtx.frgHmacCtx = &hmacCtx;
+  rsecCtx.frgHmacSign = hmacSignCb;
+  rsecCtx.frgHmacVrfy = hmacVrfyCb;
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
 
@@ -733,10 +908,10 @@ testHmacMultiShard(void)
   rsecCtx.tableSize = 64;
   hmacCtx.key = (const unsigned char *)key;
   hmacCtx.keyLen = strlen(key);
-  rsecCtx.hmacSize = RMD128_SZ;
-  rsecCtx.hmacCtx = &hmacCtx;
-  rsecCtx.hmacSign = hmacSignCb;
-  rsecCtx.hmacVrfy = hmacVrfyCb;
+  rsecCtx.frgHmacSize = RMD128_SZ;
+  rsecCtx.frgHmacCtx = &hmacCtx;
+  rsecCtx.frgHmacSign = hmacSignCb;
+  rsecCtx.frgHmacVrfy = hmacVrfyCb;
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
 
@@ -835,28 +1010,41 @@ testDgramMaxValidation(void)
 
   /* overhead=2+0+0+6=8, max shardSize=16384, max dgramMax=16392 */
   rsecCtx.dgramMax = 16392;
-  check("16392 shard == 16384", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize) == 16384);
-  check("16392 max > 0", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize, 1) > 0);
+  check("16392 shard == 16384", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.frgHmacSize, rsecCtx.dtgHmacSize, rsecCtx.dtgHashSize) == 16384);
+  check("16392 max > 0", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.frgHmacSize, rsecCtx.dtgHmacSize, rsecCtx.dtgHashSize, 1) > 0);
 
   rsecCtx.dgramMax = 16393;
-  check("16393 shard == 0", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize) == 0);
-  check("16393 max == 0", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize, 1) == 0);
+  check("16393 shard == 0", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.frgHmacSize, rsecCtx.dtgHmacSize, rsecCtx.dtgHashSize) == 0);
+  check("16393 max == 0", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.frgHmacSize, rsecCtx.dtgHmacSize, rsecCtx.dtgHashSize, 1) == 0);
 
   /* with HMAC: overhead=2+16+0+6=24, max dgramMax=16408 */
-  rsecCtx.hmacSize = 16;
+  rsecCtx.frgHmacSize = 16;
   rsecCtx.dgramMax = 16408;
-  check("hmac 16408 shard == 16384", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize) == 16384);
+  check("hmac 16408 shard == 16384", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.frgHmacSize, rsecCtx.dtgHmacSize, rsecCtx.dtgHashSize) == 16384);
 
   rsecCtx.dgramMax = 16409;
-  check("hmac 16409 shard == 0", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize) == 0);
+  check("hmac 16409 shard == 0", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.frgHmacSize, rsecCtx.dtgHmacSize, rsecCtx.dtgHashSize) == 0);
 
-  /* with HMAC + datagram MAC: overhead=2+16+16+6=40, max dgramMax=16424 */
-  rsecCtx.hashSize = 16;
+  /* with frgHmac + dtgHash: overhead=2+16+0+16+6=40, max dgramMax=16424 */
+  rsecCtx.dtgHashSize = 16;
   rsecCtx.dgramMax = 16424;
-  check("hash 16424 shard == 16384", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize) == 16384);
+  check("hash 16424 shard == 16384", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.frgHmacSize, rsecCtx.dtgHmacSize, rsecCtx.dtgHashSize) == 16384);
 
   rsecCtx.dgramMax = 16425;
-  check("hash 16425 shard == 0", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize) == 0);
+  check("hash 16425 shard == 0", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.frgHmacSize, rsecCtx.dtgHmacSize, rsecCtx.dtgHashSize) == 0);
+
+  /* all three tiers: overhead=2+16+16+16+6=56, max dgramMax=16440 */
+  rsecCtx.dtgHmacSize = 16;
+  rsecCtx.dgramMax = 16440;
+  check("3tier 16440 shard == 16384", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.frgHmacSize, rsecCtx.dtgHmacSize, rsecCtx.dtgHashSize) == 16384);
+
+  rsecCtx.dgramMax = 16441;
+  check("3tier 16441 shard == 0", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.frgHmacSize, rsecCtx.dtgHmacSize, rsecCtx.dtgHashSize) == 0);
+
+  /* dtgHmac alone (frgHmac=0): overhead=2+0+16+16+6=40 */
+  rsecCtx.frgHmacSize = 0;
+  rsecCtx.dgramMax = 16424;
+  check("dtgHmac-only 16424 shard == 16384", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.frgHmacSize, rsecCtx.dtgHmacSize, rsecCtx.dtgHashSize) == 16384);
 }
 
 static void
@@ -898,16 +1086,22 @@ testMaxApi(void)
   rsecCtx.tagSize = 2;
   rsecCtx.dgramMax = 520; /* overhead=2+0+0+6=8, shardSize=512 */
 
-  check("m=0 => 256*512=131072", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize, 0) == 131072);
-  check("m=1 => 255*512=130560", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize, 1) == 130560);
-  check("m=5 => 251*512=128512", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize, 5) == 128512);
-  check("m=255 => 1*512=512", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize, 255) == 512);
+  check("m=0 => 256*512=131072", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.frgHmacSize, rsecCtx.dtgHmacSize, rsecCtx.dtgHashSize, 0) == 131072);
+  check("m=1 => 255*512=130560", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.frgHmacSize, rsecCtx.dtgHmacSize, rsecCtx.dtgHashSize, 1) == 130560);
+  check("m=5 => 251*512=128512", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.frgHmacSize, rsecCtx.dtgHmacSize, rsecCtx.dtgHashSize, 5) == 128512);
+  check("m=255 => 1*512=512", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.frgHmacSize, rsecCtx.dtgHmacSize, rsecCtx.dtgHashSize, 255) == 512);
 
   rsecCtx.dgramMax = 16; /* overhead=8, shardSize=8 */
-  check("d=16 m=2 => 254*8=2032", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize, 2) == 2032);
+  check("d=16 m=2 => 254*8=2032", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.frgHmacSize, rsecCtx.dtgHmacSize, rsecCtx.dtgHashSize, 2) == 2032);
+
+  /* dtgHmac adds to overhead: 520, overhead=2+0+16+0+6=24, shardSize=496 */
+  rsecCtx.dgramMax = 520;
+  rsecCtx.dtgHmacSize = 16;
+  check("dtgHmac m=0 => 256*496=126976", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.frgHmacSize, rsecCtx.dtgHmacSize, rsecCtx.dtgHashSize, 0) == 126976);
+  rsecCtx.dtgHmacSize = 0;
 
   rsecCtx.dgramMax = 8; /* overhead=8, shardSize=0: too small */
-  check("dgramMax==overhead => 0", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize, 0) == 0);
+  check("dgramMax==overhead => 0", chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.frgHmacSize, rsecCtx.dtgHmacSize, rsecCtx.dtgHashSize, 0) == 0);
 }
 
 static void
@@ -925,7 +1119,7 @@ testMaxBoundary(void)
   rsecCtx.dgramMax = 16;
   rsecCtx.tableSize = 64;
 
-  maxLen = chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize, 1); /* 255 * 8 = 2040 */
+  maxLen = chanBlbChnRsecMax(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.frgHmacSize, rsecCtx.dtgHmacSize, rsecCtx.dtgHashSize, 1); /* 255 * 8 = 2040 */
   check("maxLen == 2040", maxLen == 2040);
 
   payload = (unsigned char *)malloc(maxLen + 1);
@@ -1246,10 +1440,10 @@ testStressMultiShardHmac(void)
   rsecCtx.tableSize = 64;
   hmacCtx.key = (const unsigned char *)key;
   hmacCtx.keyLen = strlen(key);
-  rsecCtx.hmacSize = RMD128_SZ;
-  rsecCtx.hmacCtx = &hmacCtx;
-  rsecCtx.hmacSign = hmacSignCb;
-  rsecCtx.hmacVrfy = hmacVrfyCb;
+  rsecCtx.frgHmacSize = RMD128_SZ;
+  rsecCtx.frgHmacCtx = &hmacCtx;
+  rsecCtx.frgHmacSign = hmacSignCb;
+  rsecCtx.frgHmacVrfy = hmacVrfyCb;
 
   chanBlbTrnFdDatagramDropPct = 15;
   chanBlbTrnFdDatagramDelayMs = 30;
@@ -1390,7 +1584,7 @@ testCountersMultiShard(void)
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
 
   /* k data shards (derived from the API shard size) + m=1 parity */
-  shard = chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize);
+  shard = chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.frgHmacSize, rsecCtx.dtgHmacSize, rsecCtx.dtgHashSize);
   k = (strlen(msg) + shard - 1) / shard;
   m = mkBlob(&env.sa, 2, 1, 1, 0, msg, strlen(msg));
   check("send", sendBlob(env.outChan, m));
@@ -1429,7 +1623,7 @@ testCountersDrop(void)
   if (!setup(&env, &rsecCtx)) { check("setup", 0); chanBlbTrnFdDatagramDropPct = 0; return; }
 
   /* k data shards (derived from the API shard size) + m=8 parity */
-  shard = chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize);
+  shard = chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.frgHmacSize, rsecCtx.dtgHmacSize, rsecCtx.dtgHashSize);
   k = (strlen(msg) + shard - 1) / shard;
   m = mkBlob(&env.sa, 2, 1, 8, 0, msg, strlen(msg));
   check("send", sendBlob(env.outChan, m));
@@ -1501,21 +1695,28 @@ testShardApi(void)
   rsecCtx.tagSize = 2;
   rsecCtx.dgramMax = 520; /* overhead=2+0+0+6=8, shardSize=512 */
 
-  check("shard=512", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize) == 512);
+  check("shard=512", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.frgHmacSize, rsecCtx.dtgHmacSize, rsecCtx.dtgHashSize) == 512);
 
-  rsecCtx.hmacSize = 16; /* overhead=2+16+0+6=24, shardSize=496 */
-  check("shard=496 with hmac", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize) == 496);
+  rsecCtx.frgHmacSize = 16; /* overhead=2+16+0+6=24, shardSize=496 */
+  check("shard=496 with hmac", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.frgHmacSize, rsecCtx.dtgHmacSize, rsecCtx.dtgHashSize) == 496);
 
-  rsecCtx.hashSize = 16; /* overhead=2+16+16+6=40, shardSize=480 */
-  check("shard=480 with hmac+hash", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize) == 480);
+  rsecCtx.dtgHashSize = 16; /* overhead=2+16+0+16+6=40, shardSize=480 */
+  check("shard=480 with frgHmac+dtgHash", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.frgHmacSize, rsecCtx.dtgHmacSize, rsecCtx.dtgHashSize) == 480);
+
+  rsecCtx.dtgHmacSize = 16; /* overhead=2+16+16+16+6=56, shardSize=464 */
+  check("shard=464 all three tiers", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.frgHmacSize, rsecCtx.dtgHmacSize, rsecCtx.dtgHashSize) == 464);
+
+  rsecCtx.frgHmacSize = 0; /* overhead=2+0+16+16+6=40, shardSize=480 */
+  check("shard=480 dtgHmac-only (frgHmac=0)", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.frgHmacSize, rsecCtx.dtgHmacSize, rsecCtx.dtgHashSize) == 480);
 
   rsecCtx.dgramMax = 16;
-  rsecCtx.hmacSize = 0;
-  rsecCtx.hashSize = 0; /* overhead=2+0+0+6=8, shardSize=8 */
-  check("shard=8 small dgram", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize) == 8);
+  rsecCtx.frgHmacSize = 0;
+  rsecCtx.dtgHmacSize = 0;
+  rsecCtx.dtgHashSize = 0; /* overhead=2+0+0+0+6=8, shardSize=8 */
+  check("shard=8 small dgram", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.frgHmacSize, rsecCtx.dtgHmacSize, rsecCtx.dtgHashSize) == 8);
 
   rsecCtx.dgramMax = 8; /* overhead=8, shardSize=0: too small */
-  check("dgramMax==overhead => 0", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize) == 0);
+  check("dgramMax==overhead => 0", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.frgHmacSize, rsecCtx.dtgHmacSize, rsecCtx.dtgHashSize) == 0);
 }
 
 /* ===== ENCRYPT/DECRYPT TESTS ===== */
@@ -1537,9 +1738,9 @@ testEncryptBasic(void)
   rsecCtx.tableSize = 64;
   cryptCtx.key = (const unsigned char *)key;
   cryptCtx.keyLen = strlen(key);
-  rsecCtx.cryptCtx = &cryptCtx;
-  rsecCtx.encrypt = xorCryptCb;
-  rsecCtx.decrypt = xorCryptCb;
+  rsecCtx.frgCryptCtx = &cryptCtx;
+  rsecCtx.frgEncrypt = xorCryptCb;
+  rsecCtx.frgDecrypt = xorCryptCb;
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
 
@@ -1568,9 +1769,9 @@ testEncryptMultiShard(void)
   rsecCtx.tableSize = 64;
   cryptCtx.key = (const unsigned char *)key;
   cryptCtx.keyLen = strlen(key);
-  rsecCtx.cryptCtx = &cryptCtx;
-  rsecCtx.encrypt = xorCryptCb;
-  rsecCtx.decrypt = xorCryptCb;
+  rsecCtx.frgCryptCtx = &cryptCtx;
+  rsecCtx.frgEncrypt = xorCryptCb;
+  rsecCtx.frgDecrypt = xorCryptCb;
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
 
@@ -1601,15 +1802,15 @@ testEncryptHmac(void)
   rsecCtx.tableSize = 64;
   hmacCtx.key = (const unsigned char *)hmacKey;
   hmacCtx.keyLen = strlen(hmacKey);
-  rsecCtx.hmacSize = RMD128_SZ;
-  rsecCtx.hmacCtx = &hmacCtx;
-  rsecCtx.hmacSign = hmacSignCb;
-  rsecCtx.hmacVrfy = hmacVrfyCb;
+  rsecCtx.frgHmacSize = RMD128_SZ;
+  rsecCtx.frgHmacCtx = &hmacCtx;
+  rsecCtx.frgHmacSign = hmacSignCb;
+  rsecCtx.frgHmacVrfy = hmacVrfyCb;
   cryptCtx.key = (const unsigned char *)cryptKey;
   cryptCtx.keyLen = strlen(cryptKey);
-  rsecCtx.cryptCtx = &cryptCtx;
-  rsecCtx.encrypt = xorCryptCb;
-  rsecCtx.decrypt = xorCryptCb;
+  rsecCtx.frgCryptCtx = &cryptCtx;
+  rsecCtx.frgEncrypt = xorCryptCb;
+  rsecCtx.frgDecrypt = xorCryptCb;
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
 
@@ -1638,9 +1839,9 @@ testEncryptDrop(void)
   rsecCtx.tableSize = 64;
   cryptCtx.key = (const unsigned char *)key;
   cryptCtx.keyLen = strlen(key);
-  rsecCtx.cryptCtx = &cryptCtx;
-  rsecCtx.encrypt = xorCryptCb;
-  rsecCtx.decrypt = xorCryptCb;
+  rsecCtx.frgCryptCtx = &cryptCtx;
+  rsecCtx.frgEncrypt = xorCryptCb;
+  rsecCtx.frgDecrypt = xorCryptCb;
 
   chanBlbTrnFdDatagramDropPct = 20;
 
@@ -1676,10 +1877,10 @@ testHmacHdr(void)
   hmacCtx.key = (const unsigned char *)key;
   hmacCtx.keyLen = strlen(key);
   hmacCtx.tagSize = 4;
-  rsecCtx.hmacSize = RMD128_SZ;
-  rsecCtx.hmacCtx = &hmacCtx;
-  rsecCtx.hmacSign = hmacHdrSignCb;
-  rsecCtx.hmacVrfy = hmacHdrVrfyCb;
+  rsecCtx.frgHmacSize = RMD128_SZ;
+  rsecCtx.frgHmacCtx = &hmacCtx;
+  rsecCtx.frgHmacSign = hmacHdrSignCb;
+  rsecCtx.frgHmacVrfy = hmacHdrVrfyCb;
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
 
@@ -1716,10 +1917,10 @@ testHmacHdrMultiTag(void)
   hmacCtx.key = (const unsigned char *)key;
   hmacCtx.keyLen = strlen(key);
   hmacCtx.tagSize = 4;
-  rsecCtx.hmacSize = RMD128_SZ;
-  rsecCtx.hmacCtx = &hmacCtx;
-  rsecCtx.hmacSign = hmacHdrSignCb;
-  rsecCtx.hmacVrfy = hmacHdrVrfyCb;
+  rsecCtx.frgHmacSize = RMD128_SZ;
+  rsecCtx.frgHmacCtx = &hmacCtx;
+  rsecCtx.frgHmacSign = hmacHdrSignCb;
+  rsecCtx.frgHmacVrfy = hmacHdrVrfyCb;
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
 
@@ -1766,9 +1967,9 @@ testEncryptHdr(void)
   cryptCtx.key = (const unsigned char *)key;
   cryptCtx.keyLen = strlen(key);
   cryptCtx.tagSize = 4;
-  rsecCtx.cryptCtx = &cryptCtx;
-  rsecCtx.encrypt = xorHdrCryptCb;
-  rsecCtx.decrypt = xorHdrCryptCb;
+  rsecCtx.frgCryptCtx = &cryptCtx;
+  rsecCtx.frgEncrypt = xorHdrCryptCb;
+  rsecCtx.frgDecrypt = xorHdrCryptCb;
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
 
@@ -1808,16 +2009,16 @@ testEncryptHmacHdrDrop(void)
   hmacCtx.key = (const unsigned char *)hmacKey;
   hmacCtx.keyLen = strlen(hmacKey);
   hmacCtx.tagSize = 4;
-  rsecCtx.hmacSize = RMD128_SZ;
-  rsecCtx.hmacCtx = &hmacCtx;
-  rsecCtx.hmacSign = hmacHdrSignCb;
-  rsecCtx.hmacVrfy = hmacHdrVrfyCb;
+  rsecCtx.frgHmacSize = RMD128_SZ;
+  rsecCtx.frgHmacCtx = &hmacCtx;
+  rsecCtx.frgHmacSign = hmacHdrSignCb;
+  rsecCtx.frgHmacVrfy = hmacHdrVrfyCb;
   cryptCtx.key = (const unsigned char *)cryptKey;
   cryptCtx.keyLen = strlen(cryptKey);
   cryptCtx.tagSize = 4;
-  rsecCtx.cryptCtx = &cryptCtx;
-  rsecCtx.encrypt = xorHdrCryptCb;
-  rsecCtx.decrypt = xorHdrCryptCb;
+  rsecCtx.frgCryptCtx = &cryptCtx;
+  rsecCtx.frgEncrypt = xorHdrCryptCb;
+  rsecCtx.frgDecrypt = xorHdrCryptCb;
 
   chanBlbTrnFdDatagramDropPct = 40;
 
@@ -1974,7 +2175,7 @@ testCountersBackpressure(void)
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
 
   /* blob1: k data shards (from API) + m=2 parity, delayMs=10; blob2: 2 bytes => 1 frag */
-  shard = chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize);
+  shard = chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.frgHmacSize, rsecCtx.dtgHmacSize, rsecCtx.dtgHashSize);
   k = (strlen(msg1) + shard - 1) / shard;
   m = mkBlob(&env.sa, 2, 1, 2, 10, msg1, strlen(msg1));
   check("send1", sendBlob(env.outChan, m));
@@ -2082,7 +2283,7 @@ testMClampIntermediate(void)
   rsecCtx.tableSize = 64;
 
   /* force exactly k=250 data shards; m=10 requested => km=260>256 => m clamped */
-  shard = chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize);
+  shard = chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.frgHmacSize, rsecCtx.dtgHmacSize, rsecCtx.dtgHashSize);
   payloadLen = 250 * shard;
   km = 250 + 10;
   if (km > 256)
@@ -2216,7 +2417,7 @@ testLargeK(void)
 
   /* force exactly k=250 data shards via the API shard size; m=1 => k+1 fragments */
   k = 250;
-  shard = chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.hmacSize, rsecCtx.hashSize);
+  shard = chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.frgHmacSize, rsecCtx.dtgHmacSize, rsecCtx.dtgHashSize);
   payloadLen = k * shard;
   payload = (unsigned char *)malloc(payloadLen);
   if (!payload) { check("malloc", 0); return; }
@@ -2271,15 +2472,15 @@ testEncryptRsDecode(void)
   rsecCtx.tableSize = 64;
   hmacCtx.key = (const unsigned char *)hmacKey;
   hmacCtx.keyLen = strlen(hmacKey);
-  rsecCtx.hmacSize = RMD128_SZ;
-  rsecCtx.hmacCtx = &hmacCtx;
-  rsecCtx.hmacSign = hmacSignCb;
-  rsecCtx.hmacVrfy = hmacVrfyCb;
+  rsecCtx.frgHmacSize = RMD128_SZ;
+  rsecCtx.frgHmacCtx = &hmacCtx;
+  rsecCtx.frgHmacSign = hmacSignCb;
+  rsecCtx.frgHmacVrfy = hmacVrfyCb;
   cryptCtx.key = (const unsigned char *)cryptKey;
   cryptCtx.keyLen = strlen(cryptKey);
-  rsecCtx.cryptCtx = &cryptCtx;
-  rsecCtx.encrypt = xorCryptCb;
-  rsecCtx.decrypt = xorCryptCb;
+  rsecCtx.frgCryptCtx = &cryptCtx;
+  rsecCtx.frgEncrypt = xorCryptCb;
+  rsecCtx.frgDecrypt = xorCryptCb;
 
   chanBlbTrnFdDatagramDropPct = 50;
 
@@ -2502,10 +2703,10 @@ testPackHdr(void)
   hmacCtx.key = (const unsigned char *)key;
   hmacCtx.keyLen = strlen(key);
   hmacCtx.tagSize = 4;
-  rsecCtx.hmacSize = RMD128_SZ;
-  rsecCtx.hmacCtx = &hmacCtx;
-  rsecCtx.hmacSign = hmacHdrSignCb;
-  rsecCtx.hmacVrfy = hmacHdrVrfyCb;
+  rsecCtx.frgHmacSize = RMD128_SZ;
+  rsecCtx.frgHmacCtx = &hmacCtx;
+  rsecCtx.frgHmacSign = hmacHdrSignCb;
+  rsecCtx.frgHmacVrfy = hmacHdrVrfyCb;
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
 
@@ -3019,6 +3220,70 @@ injectFrag(
     dg, pos));
 }
 
+/*
+ * Build a two-fragment datagram [frag0][frag1][dtgHmac] and inject it
+ * (no datagram GATE).  Each fragment is a single shard (k=1, m=0, si=0,
+ * padding=0, 1-byte VLQ) with a 2-byte tag.  The trailing dtgHmac is
+ * RMD128-HMAC over the fragment region with `key`; corruptMac!=0 flips a
+ * MAC byte to force a verify failure.  Used to exercise the ingress
+ * datagram-AUTH path: sender-uniformity rejection (different tag byte 0)
+ * and bad-MAC rejection, neither reachable through the honest egress.
+ */
+static int
+injectDtgHmacPair(
+  int injFd
+ ,const struct sockaddr_in *dst
+ ,const unsigned char *tag0
+ ,const unsigned char *tag1
+ ,const unsigned char *shard0
+ ,const unsigned char *shard1
+ ,unsigned char shardLen
+ ,const unsigned char *key
+ ,unsigned int keyLen
+ ,int corruptMac
+){
+  unsigned char dg[256];
+  unsigned char mac[RMD128_SZ];
+  unsigned int pos;
+  unsigned int i;
+  struct sockaddr_in src;
+
+  (void)injFd;
+  pos = 0;
+  /* frag0 */
+  memcpy(dg + pos, tag0, 2); pos += 2;
+  dg[pos++] = 0;          /* k-1 (k=1) */
+  dg[pos++] = 0;          /* m */
+  dg[pos++] = 0;          /* si */
+  dg[pos++] = 0;          /* padding */
+  dg[pos++] = shardLen;   /* shard_len VLQ (1-byte form, < 128) */
+  memcpy(dg + pos, shard0, shardLen); pos += shardLen;
+  /* frag1 */
+  memcpy(dg + pos, tag1, 2); pos += 2;
+  dg[pos++] = 0;
+  dg[pos++] = 0;
+  dg[pos++] = 0;
+  dg[pos++] = 0;
+  dg[pos++] = shardLen;
+  memcpy(dg + pos, shard1, shardLen); pos += shardLen;
+  /* trailing dtgHmac over the fragment region */
+  rmd128hmac(key, keyLen, dg, pos, mac);
+  if (corruptMac)
+    mac[0] ^= 0xff;
+  for (i = 0; i < RMD128_SZ; ++i)
+    dg[pos + i] = mac[i];
+  pos += RMD128_SZ;
+
+  memset(&src, 0, sizeof (src));
+  src.sin_family = AF_INET;
+  src.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  src.sin_port = htons(1);
+  return (chanBlbTrnFdDatagramInject(
+    (const struct sockaddr *)dst, (socklen_t)sizeof (*dst),
+    (const struct sockaddr *)&src, (socklen_t)sizeof (src),
+    dg, pos));
+}
+
 static void
 testRmUmNoDecode(void)
 {
@@ -3120,10 +3385,10 @@ testIgrHashReject(void)
   /* arbitrary 64-bit key for the test */
   for (i = 0; i < sizeof (hk.key); ++i)
     hk.key[i] = (unsigned char)(0xa5 ^ i);
-  rsecCtx.hashSize = HALFSIPHASH_HSH_SZ;
-  rsecCtx.hashCtx  = &hk;
-  rsecCtx.hashSign = hashSignCb;
-  rsecCtx.hashVrfy = hashVrfyCb;
+  rsecCtx.dtgHashSize = HALFSIPHASH_HSH_SZ;
+  rsecCtx.dtgHashCtx  = &hk;
+  rsecCtx.dtgHashSign = hashSignCb;
+  rsecCtx.dtgHashVrfy = hashVrfyCb;
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
 
@@ -3170,10 +3435,10 @@ testHashMatch(void)
   rsecCtx.tableSize = 64;
   for (i = 0; i < sizeof (hk.key); ++i)
     hk.key[i] = (unsigned char)(0x5a ^ i);
-  rsecCtx.hashSize = HALFSIPHASH_HSH_SZ;
-  rsecCtx.hashCtx  = &hk;
-  rsecCtx.hashSign = hashSignCb;
-  rsecCtx.hashVrfy = hashVrfyCb;
+  rsecCtx.dtgHashSize = HALFSIPHASH_HSH_SZ;
+  rsecCtx.dtgHashCtx  = &hk;
+  rsecCtx.dtgHashSign = hashSignCb;
+  rsecCtx.dtgHashVrfy = hashVrfyCb;
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
 
@@ -3211,25 +3476,25 @@ testAllThreeLayers(void)
   /* datagram MAC layer: halfsiphash, 64-bit key, 4-byte tag */
   for (i = 0; i < sizeof (hashKey.key); ++i)
     hashKey.key[i] = (unsigned char)(0x3c ^ i);
-  rsecCtx.hashSize = HALFSIPHASH_HSH_SZ;
-  rsecCtx.hashCtx  = &hashKey;
-  rsecCtx.hashSign = hashSignCb;
-  rsecCtx.hashVrfy = hashVrfyCb;
+  rsecCtx.dtgHashSize = HALFSIPHASH_HSH_SZ;
+  rsecCtx.dtgHashCtx  = &hashKey;
+  rsecCtx.dtgHashSign = hashSignCb;
+  rsecCtx.dtgHashVrfy = hashVrfyCb;
 
   /* fragment HMAC layer: RMD128-HMAC */
   hmacCtx.key = (const unsigned char *)hmacKey;
   hmacCtx.keyLen = strlen(hmacKey);
-  rsecCtx.hmacSize = RMD128_SZ;
-  rsecCtx.hmacCtx  = &hmacCtx;
-  rsecCtx.hmacSign = hmacSignCb;
-  rsecCtx.hmacVrfy = hmacVrfyCb;
+  rsecCtx.frgHmacSize = RMD128_SZ;
+  rsecCtx.frgHmacCtx  = &hmacCtx;
+  rsecCtx.frgHmacSign = hmacSignCb;
+  rsecCtx.frgHmacVrfy = hmacVrfyCb;
 
   /* fragment encrypt/decrypt layer: XOR stream cipher (test only) */
   cryptCtx.key = (const unsigned char *)cryptKey;
   cryptCtx.keyLen = strlen(cryptKey);
-  rsecCtx.cryptCtx = &cryptCtx;
-  rsecCtx.encrypt  = xorCryptCb;
-  rsecCtx.decrypt  = xorCryptCb;
+  rsecCtx.frgCryptCtx = &cryptCtx;
+  rsecCtx.frgEncrypt  = xorCryptCb;
+  rsecCtx.frgDecrypt  = xorCryptCb;
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
 
@@ -3269,12 +3534,12 @@ testIgrHmacReject(void)
   rsecCtx.tagSize = 2;
   rsecCtx.dgramMax = 520;
   rsecCtx.tableSize = 8;
-  rsecCtx.hmacSize = 16;
+  rsecCtx.frgHmacSize = 16;
   hk.key = key;
   hk.keyLen = sizeof (key) - 1;
-  rsecCtx.hmacCtx = &hk;
-  rsecCtx.hmacSign = hmacSignCb;
-  rsecCtx.hmacVrfy = hmacVrfyCb;
+  rsecCtx.frgHmacCtx = &hk;
+  rsecCtx.frgHmacSign = hmacSignCb;
+  rsecCtx.frgHmacVrfy = hmacVrfyCb;
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
 
@@ -3582,6 +3847,398 @@ testSameTagMOnlyIncomplete(void)
   teardown(&env, &rsecCtx);
 }
 
+/* ===== DATAGRAM AUTH (dtgHmac) TESTS ===== */
+
+/*
+ * Datagram AUTH standalone (frgHmacSize == 0): several small messages to
+ * the same address cluster into packed datagrams, so the egress signs (and
+ * the ingress pre-scans + verifies) datagrams carrying multiple fragments.
+ * Exercises the offset-collection path on both sides.
+ */
+static void
+testDtgHmacPacked(void)
+{
+  struct testEnv env;
+  struct rsecPair rsecCtx;
+  struct hmacKeyCtx dtgKey;
+  chanBlb_t *m;
+  unsigned int i;
+  unsigned int ok;
+  int seen[5];
+  static const unsigned char key[] = "dtg-pack-key";
+  const char *msgs[5];
+
+  msgs[0] = "dtg pack a";
+  msgs[1] = "dtg pack b";
+  msgs[2] = "dtg pack c";
+  msgs[3] = "dtg pack d";
+  msgs[4] = "dtg pack e";
+
+  printf("=== Test: datagram AUTH standalone (frgHmac=0), packed ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 2;
+  rsecCtx.dgramMax = 508;
+  rsecCtx.tableSize = 64;
+  dtgKey.key = key;
+  dtgKey.keyLen = sizeof (key) - 1;
+  rsecCtx.dtgHmacSize = RMD128_SZ;
+  rsecCtx.dtgHmacCtx = &dtgKey;
+  rsecCtx.dtgHmacSign = dtgHmacSignCb;
+  rsecCtx.dtgHmacVrfy = dtgHmacVrfyCb;
+
+  chanBlbTrnFdDatagramObsCnt = 0;
+  chanBlbTrnFdDatagramObsEnable = 1;
+
+  if (!setup(&env, &rsecCtx)) {
+    check("setup", 0);
+    chanBlbTrnFdDatagramObsEnable = 0;
+    return;
+  }
+
+  /* k=1 m=0 each; delayMs=10 clusters them so several pack into one
+   * datagram, exercising the multi-fragment offset path on both sides */
+  for (i = 0; i < 5; ++i) {
+    m = mkBlob(&env.sa, 2, (unsigned short)(i + 1), 0, 10,
+               msgs[i], strlen(msgs[i]));
+    if (!sendBlob(env.outChan, m)) {
+      check("send", 0);
+      chanBlbTrnFdDatagramObsEnable = 0;
+      teardown(&env, &rsecCtx);
+      return;
+    }
+  }
+  ok = 0;
+  memset(seen, 0, sizeof (seen));
+  for (i = 0; i < 5; ++i) {
+    unsigned int j;
+
+    m = recvBlob(env.inChan, 3000000000L);
+    if (!m) continue;
+    for (j = 0; j < 5; ++j) {
+      if (!seen[j] && verifyBlob(m, 2, msgs[j], strlen(msgs[j]))) {
+        seen[j] = 1;
+        ++ok;
+        break;
+      }
+    }
+    free(m);
+  }
+  usleep(100000);
+  chanBlbTrnFdDatagramObsEnable = 0;
+  check("all 5 delivered with datagram AUTH only", ok == 5);
+  rsecSnap(&rsecCtx);
+  check("egrFrg == 5", rsecCtx.egrFrg == 5);
+  check("igrMsg == 5", rsecCtx.igrMsg == 5);
+  check("no datagram AUTH failures", rsecCtx.igrDhmac == 0);
+  check("no fragment AUTH failures", rsecCtx.igrHmac == 0);
+  check("packing occurred (datagrams < fragments)",
+        chanBlbTrnFdDatagramObsCnt < 5);
+  teardown(&env, &rsecCtx);
+}
+
+/*
+ * All four tiers active at once: datagram GATE + datagram AUTH + fragment
+ * AUTH + fragment ENCRYPT, on a multi-shard message.  Confirms the tiers
+ * compose and every failure counter stays clean.
+ */
+static void
+testDtgHmacAllTiers(void)
+{
+  struct testEnv env;
+  struct rsecPair rsecCtx;
+  struct hashKeyCtx hashKey;
+  struct hmacKeyCtx frgKey;
+  struct hmacKeyCtx dtgKey;
+  struct cryptKeyCtx cryptCtx;
+  chanBlb_t *m;
+  const char *msg = "datagram GATE + datagram AUTH + fragment AUTH + encrypt all at once, multi-shard";
+  const char *frgK = "frgAuthKey";
+  const char *dtgK = "dtgAuthKey";
+  const char *crK  = "cryptKeyX";
+  unsigned int i;
+
+  printf("=== Test: all four tiers (gate+dtgAuth+frgAuth+encrypt) multi-shard ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 2;
+  rsecCtx.dgramMax = 80; /* overhead=2+16+16+4+6=44, shard=36 => multi-shard */
+  rsecCtx.tableSize = 64;
+  for (i = 0; i < sizeof (hashKey.key); ++i)
+    hashKey.key[i] = (unsigned char)(0x21 ^ i);
+  rsecCtx.dtgHashSize = HALFSIPHASH_HSH_SZ;
+  rsecCtx.dtgHashCtx = &hashKey;
+  rsecCtx.dtgHashSign = hashSignCb;
+  rsecCtx.dtgHashVrfy = hashVrfyCb;
+  dtgKey.key = (const unsigned char *)dtgK;
+  dtgKey.keyLen = strlen(dtgK);
+  rsecCtx.dtgHmacSize = RMD128_SZ;
+  rsecCtx.dtgHmacCtx = &dtgKey;
+  rsecCtx.dtgHmacSign = dtgHmacSignCb;
+  rsecCtx.dtgHmacVrfy = dtgHmacVrfyCb;
+  frgKey.key = (const unsigned char *)frgK;
+  frgKey.keyLen = strlen(frgK);
+  rsecCtx.frgHmacSize = RMD128_SZ;
+  rsecCtx.frgHmacCtx = &frgKey;
+  rsecCtx.frgHmacSign = hmacSignCb;
+  rsecCtx.frgHmacVrfy = hmacVrfyCb;
+  cryptCtx.key = (const unsigned char *)crK;
+  cryptCtx.keyLen = strlen(crK);
+  rsecCtx.frgCryptCtx = &cryptCtx;
+  rsecCtx.frgEncrypt = xorCryptCb;
+  rsecCtx.frgDecrypt = xorCryptCb;
+
+  if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
+
+  m = mkBlob(&env.sa, 2, 1, 2, 0, msg, strlen(msg));
+  check("send", sendBlob(env.outChan, m));
+  m = recvBlob(env.inChan, 3000000000L);
+  check("received", m != 0);
+  if (m) {
+    check("payload correct (all tiers reversed)", verifyBlob(m, 2, msg, strlen(msg)));
+    free(m);
+  }
+  rsecSnap(&rsecCtx);
+  check("multiple fragments", rsecCtx.egrFrg > 1);
+  check("message delivered", rsecCtx.igrMsg == 1);
+  check("no gate failures", rsecCtx.igrHash == 0);
+  check("no datagram AUTH failures", rsecCtx.igrDhmac == 0);
+  check("no fragment AUTH failures", rsecCtx.igrHmac == 0);
+  teardown(&env, &rsecCtx);
+}
+
+/*
+ * Sender uniformity: the datagram-AUTH verify rejects a datagram whose
+ * packed fragments claim different senders, even though the MAC is valid
+ * (a Byzantine node holding the key crafts it).  A same-sender datagram is
+ * the control and is delivered.
+ */
+static void
+testDtgHmacUniformity(void)
+{
+  struct testEnv env;
+  struct rsecPair rsecCtx;
+  struct hmacKeyCtx dtgKey;
+  chanBlb_t *m;
+  int injFd;
+  int got;
+  int i;
+  unsigned char tag0[2];
+  unsigned char tag1[2];
+  unsigned char s0[3];
+  unsigned char s1[3];
+  static const unsigned char key[] = "dtg-unif-key";
+
+  printf("=== Test: datagram AUTH sender-uniformity rejects mixed-sender packing ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 2;
+  rsecCtx.dgramMax = 520;
+  rsecCtx.tableSize = 8;
+  dtgKey.key = key;
+  dtgKey.keyLen = sizeof (key) - 1;
+  rsecCtx.dtgHmacSize = RMD128_SZ;
+  rsecCtx.dtgHmacCtx = &dtgKey;
+  rsecCtx.dtgHmacSign = dtgHmacSignCb;
+  rsecCtx.dtgHmacVrfy = dtgHmacUnifVrfyCb;
+
+  if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
+
+  injFd = socket(AF_INET, SOCK_DGRAM, 0);
+  check("injector socket", injFd >= 0);
+
+  s0[0] = 'A'; s0[1] = 'B'; s0[2] = 'C';
+  s1[0] = 'D'; s1[1] = 'E'; s1[2] = 'F';
+
+  /* CONTROL: tag byte 0 = sender, both 0x10; different correlation byte.
+   * Valid MAC, uniform sender -> both k=1 messages delivered. */
+  tag0[0] = 0x10; tag0[1] = 0x01;
+  tag1[0] = 0x10; tag1[1] = 0x02;
+  check("inject same-sender pair (valid MAC)",
+    injectDtgHmacPair(injFd, &env.sa, tag0, tag1, s0, s1, 3,
+                      key, sizeof (key) - 1, 0));
+  got = 0;
+  for (i = 0; i < 2; ++i) {
+    m = recvBlob(env.inChan, 1000000000L);
+    if (m) { ++got; free(m); }
+  }
+  check("same-sender pair: both delivered", got == 2);
+
+  /* FORGED: senders 0x10 and 0x20 differ.  Valid MAC (forger holds key)
+   * but mixed sender -> uniformity rejects the whole datagram. */
+  tag0[0] = 0x10; tag0[1] = 0x03;
+  tag1[0] = 0x20; tag1[1] = 0x04;
+  check("inject mixed-sender pair (valid MAC)",
+    injectDtgHmacPair(injFd, &env.sa, tag0, tag1, s0, s1, 3,
+                      key, sizeof (key) - 1, 0));
+  m = recvBlob(env.inChan, 500000000L);
+  check("mixed-sender pair: nothing delivered", m == 0);
+  if (m) free(m);
+
+  usleep(100000);
+  rsecSnap(&rsecCtx);
+  check("igrDhmac >= 1 (mixed-sender rejected)", rsecCtx.igrDhmac >= 1);
+  check("igrMsg == 2 (only the same-sender pair)", rsecCtx.igrMsg == 2);
+
+  close(injFd);
+  teardown(&env, &rsecCtx);
+}
+
+/*
+ * Datagram AUTH rejects a datagram whose trailing dtgHmac is wrong
+ * (igrDhmac increments, nothing delivered).
+ */
+static void
+testDtgHmacReject(void)
+{
+  struct testEnv env;
+  struct rsecPair rsecCtx;
+  struct hmacKeyCtx dtgKey;
+  chanBlb_t *m;
+  int injFd;
+  unsigned char tag0[2];
+  unsigned char tag1[2];
+  unsigned char s0[3];
+  unsigned char s1[3];
+  static const unsigned char key[] = "dtg-reject-key";
+
+  printf("=== Test: igrDhmac increments on bad datagram AUTH MAC ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 2;
+  rsecCtx.dgramMax = 520;
+  rsecCtx.tableSize = 8;
+  dtgKey.key = key;
+  dtgKey.keyLen = sizeof (key) - 1;
+  rsecCtx.dtgHmacSize = RMD128_SZ;
+  rsecCtx.dtgHmacCtx = &dtgKey;
+  rsecCtx.dtgHmacSign = dtgHmacSignCb;
+  rsecCtx.dtgHmacVrfy = dtgHmacVrfyCb;
+
+  if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
+
+  injFd = socket(AF_INET, SOCK_DGRAM, 0);
+  check("injector socket", injFd >= 0);
+
+  tag0[0] = 0x10; tag0[1] = 0x01;
+  tag1[0] = 0x10; tag1[1] = 0x02;
+  s0[0] = 'A'; s0[1] = 'B'; s0[2] = 'C';
+  s1[0] = 'D'; s1[1] = 'E'; s1[2] = 'F';
+  check("inject corrupted-MAC pair",
+    injectDtgHmacPair(injFd, &env.sa, tag0, tag1, s0, s1, 3,
+                      key, sizeof (key) - 1, 1));
+
+  m = recvBlob(env.inChan, 500000000L);
+  check("no delivery on bad datagram AUTH", m == 0);
+  if (m) free(m);
+
+  usleep(100000);
+  rsecSnap(&rsecCtx);
+  check("igrDhmac >= 1", rsecCtx.igrDhmac >= 1);
+  check("igrMsg == 0", rsecCtx.igrMsg == 0);
+
+  close(injFd);
+  teardown(&env, &rsecCtx);
+}
+
+/*
+ * Both HMAC tiers at once, exercising the ONE place they couple: the
+ * ingress datagram-AUTH pre-scan must step OVER each fragment's frgHmac
+ * bytes to locate the next fragment's tag offset (`send = ... + frgHmacSize`).
+ * Several small DIFFERENT messages pack into one datagram (frgCnt > 1).  The
+ * dtgHmac verify is an OFFSET ORACLE (dtgHmacProbeVrfyCb): it re-derives the
+ * fragment offsets independently and rejects the datagram unless the
+ * library's reported (frgOff, frgCnt) match exactly -- so a mis-accounted
+ * frgHmacSize in the pre-scan drops every packed datagram and fails the
+ * delivery assertion deterministically (a byte-reading uniformity check
+ * would let an early-breaking parse slip through as a vacuous pass).
+ */
+static void
+testDtgHmacFrgHmacPacked(void)
+{
+  struct testEnv env;
+  struct rsecPair rsecCtx;
+  struct hmacKeyCtx frgKey;
+  struct dtgProbeCtx dtgKey;
+  chanBlb_t *m;
+  unsigned int i;
+  unsigned int ok;
+  int seen[5];
+  static const unsigned char fk[] = "frg-key-coupling";
+  static const unsigned char dk[] = "dtg-key-coupling";
+  const char *msgs[5];
+
+  msgs[0] = "couple a";
+  msgs[1] = "couple b";
+  msgs[2] = "couple c";
+  msgs[3] = "couple d";
+  msgs[4] = "couple e";
+
+  printf("=== Test: frgHmac + dtgHmac packed -- pre-scan offset oracle ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 2;
+  rsecCtx.dgramMax = 508;
+  rsecCtx.tableSize = 64;
+  frgKey.key = fk;
+  frgKey.keyLen = sizeof (fk) - 1;
+  rsecCtx.frgHmacSize = RMD128_SZ;
+  rsecCtx.frgHmacCtx = &frgKey;
+  rsecCtx.frgHmacSign = hmacSignCb;
+  rsecCtx.frgHmacVrfy = hmacVrfyCb;
+  dtgKey.key = dk;
+  dtgKey.keyLen = sizeof (dk) - 1;
+  dtgKey.tagSize = 2;
+  dtgKey.frgHmacSize = RMD128_SZ;
+  rsecCtx.dtgHmacSize = RMD128_SZ;
+  rsecCtx.dtgHmacCtx = &dtgKey;
+  rsecCtx.dtgHmacSign = dtgHmacSignCb;
+  rsecCtx.dtgHmacVrfy = dtgHmacProbeVrfyCb;
+
+  chanBlbTrnFdDatagramObsCnt = 0;
+  chanBlbTrnFdDatagramObsEnable = 1;
+
+  if (!setup(&env, &rsecCtx)) {
+    check("setup", 0);
+    chanBlbTrnFdDatagramObsEnable = 0;
+    return;
+  }
+
+  /* distinct tags, k=1 m=0; delayMs=10 clusters them so they pack */
+  for (i = 0; i < 5; ++i) {
+    m = mkBlob(&env.sa, 2, (unsigned short)((i + 1) << 8), 0, 10,
+               msgs[i], strlen(msgs[i]));
+    if (!sendBlob(env.outChan, m)) {
+      check("send", 0);
+      chanBlbTrnFdDatagramObsEnable = 0;
+      teardown(&env, &rsecCtx);
+      return;
+    }
+  }
+  ok = 0;
+  memset(seen, 0, sizeof (seen));
+  for (i = 0; i < 5; ++i) {
+    unsigned int j;
+
+    m = recvBlob(env.inChan, 3000000000L);
+    if (!m) continue;
+    for (j = 0; j < 5; ++j) {
+      if (!seen[j] && verifyBlob(m, 2, msgs[j], strlen(msgs[j]))) {
+        seen[j] = 1;
+        ++ok;
+        break;
+      }
+    }
+    free(m);
+  }
+  usleep(100000);
+  chanBlbTrnFdDatagramObsEnable = 0;
+  check("all 5 delivered (oracle: lib offsets match past frgHmac)", ok == 5);
+  rsecSnap(&rsecCtx);
+  check("egrFrg == 5", rsecCtx.egrFrg == 5);
+  check("igrMsg == 5", rsecCtx.igrMsg == 5);
+  check("no datagram AUTH failures", rsecCtx.igrDhmac == 0);
+  check("no fragment AUTH failures", rsecCtx.igrHmac == 0);
+  check("packing occurred (datagrams < fragments)",
+        chanBlbTrnFdDatagramObsCnt < 5);
+  teardown(&env, &rsecCtx);
+}
+
 int
 main(
   void
@@ -3686,6 +4343,13 @@ main(
   testParamMismatchLossNotif();
   testSameTagMOnlyDelivered();
   testSameTagMOnlyIncomplete();
+
+  /* datagram AUTH (dtgHmac) tests */
+  testDtgHmacPacked();
+  testDtgHmacAllTiers();
+  testDtgHmacUniformity();
+  testDtgHmacReject();
+  testDtgHmacFrgHmacPacked();
 
   printf("\n=======================================\n");
   printf("Results: %d passed, %d failed\n", Pass, Fail);

@@ -99,6 +99,115 @@ hmacVrfyCb(
     diff |= mac[i] ^ computed[i];
   return (diff == 0);
 }
+
+/*
+ * Datagram-level HMAC callbacks for chanBlbChnRsec.  Same rmd128hmac, but
+ * keyed ONCE over the whole datagram (every packed fragment) instead of per
+ * fragment.  The verify is additionally handed each packed fragment's tag
+ * offset (frgOff[0..frgCnt-1]); a quorum protocol would walk them to enforce
+ * sender uniformity, but a chat app has no third-party identity to forge, so
+ * this just covers the bytes and ignores the structure.
+ */
+static void
+dtgHmacSignCb(
+  void *ctx
+ ,const unsigned char *adr
+ ,unsigned char *dst
+ ,const unsigned char *src
+ ,unsigned int len
+ ,const unsigned int *frgOff
+ ,unsigned int frgCnt
+){
+  struct hmacKeyCtx *k;
+
+  (void)adr;
+  (void)frgOff;
+  (void)frgCnt;
+  k = (struct hmacKeyCtx *)ctx;
+  rmd128hmac(k->key, k->keyLen, src, len, dst);
+}
+
+static int
+dtgHmacVrfyCb(
+  void *ctx
+ ,const unsigned char *adr
+ ,const unsigned char *mac
+ ,const unsigned char *src
+ ,unsigned int len
+ ,const unsigned int *frgOff
+ ,unsigned int frgCnt
+){
+  struct hmacKeyCtx *k;
+  unsigned char computed[RMD128_SZ];
+  unsigned char diff;
+  unsigned int i;
+
+  (void)adr;
+  (void)frgOff;
+  (void)frgCnt;
+  k = (struct hmacKeyCtx *)ctx;
+  rmd128hmac(k->key, k->keyLen, src, len, computed);
+  diff = 0;
+  for (i = 0; i < RMD128_SZ; ++i)
+    diff |= mac[i] ^ computed[i];
+  return (diff == 0);
+}
+
+/*
+ * Datagram-level GATE callbacks for chanBlbChnRsec.  A deliberately tiny
+ * 1-byte keyed hash (dtgHashSize = 1): a cheap first-line DoS gate checked
+ * once per datagram, before the heavier per-datagram/per-fragment HMAC work
+ * runs, so floods lacking the shared key are dropped at one byte of
+ * overhead and a single pass.  NOT a strong MAC -- just enough to shed
+ * unkeyed noise; the HMAC tiers provide the real authentication.
+ */
+static unsigned char
+gateHash(
+  const unsigned char *key
+ ,unsigned int keyLen
+ ,const unsigned char *src
+ ,unsigned int len
+){
+  unsigned char h;
+  unsigned int kl;
+  unsigned int i;
+
+  kl = keyLen ? keyLen : 1;
+  h = (unsigned char)kl;
+  for (i = 0; i < len; ++i)
+    h = (unsigned char)((h + src[i]) * 31 + key[i % kl]);
+  return (h);
+}
+
+static void
+hashSignCb(
+  void *ctx
+ ,const unsigned char *adr
+ ,unsigned char *dst
+ ,const unsigned char *src
+ ,unsigned int len
+){
+  struct hmacKeyCtx *k;
+
+  (void)adr;
+  k = (struct hmacKeyCtx *)ctx;
+  *dst = gateHash(k->key, k->keyLen, src, len);
+}
+
+static int
+hashVrfyCb(
+  void *ctx
+ ,const unsigned char *adr
+ ,const unsigned char *mac
+ ,const unsigned char *src
+ ,unsigned int len
+){
+  struct hmacKeyCtx *k;
+
+  (void)adr;
+  k = (struct hmacKeyCtx *)ctx;
+  return (*mac == gateHash(k->key, k->keyLen, src, len));
+}
 #endif
 
 /* display thread: read from ingress channel, print [source]: message */
@@ -122,8 +231,8 @@ displayT(
 
     al = m->b[0];
 #ifdef RSEC
-    /* ingress blob: [addrlen(1)][addr(al)][tag(TagSize)][m(1)][payload] */
-    skip = TagSize + 1;
+    /* ingress blob: [addrlen(1)][addr(al)][tag(TagSize)][rm(1)][um(1)][payload] */
+    skip = TagSize + 2;
 #else
     skip = 0;
 #endif
@@ -326,10 +435,37 @@ main(
     if (HmacKey) {
       hmacKeyCtx.key = (const unsigned char *)HmacKey;
       hmacKeyCtx.keyLen = strlen(HmacKey);
-      egrCtx.hmacSize = igrCtx.hmacSize = RMD128_SZ;
-      egrCtx.hmacCtx = igrCtx.hmacCtx = &hmacKeyCtx;
-      egrCtx.hmacSign = hmacSignCb;
-      igrCtx.hmacVrfy = hmacVrfyCb;
+      /*
+       * This example wires up ALL THREE keyed tiers at once to exercise
+       * them; a real deployment keeps the GATE plus only ONE of the two
+       * AUTH tiers:
+       *   - datagram GATE (dtgHash): a tiny 1-byte keyed hash checked once
+       *     per datagram before any heavier work -- a cheap first-line DoS
+       *     filter that sheds unkeyed floods.  Keep it.
+       *   - fragment AUTH (frgHmac): a strong MAC per fragment.  A forged
+       *     or corrupt fragment is dropped individually while its datagram
+       *     siblings survive (fine-grained), at one MAC per fragment.
+       *   - datagram AUTH (dtgHmac): one strong MAC per datagram over every
+       *     packed fragment.  Cheaper on the wire (one MAC, not one per
+       *     packed fragment) but coarse (a bad MAC drops the whole
+       *     datagram).  Its verify is handed the packed-fragment offsets,
+       *     so a quorum protocol could enforce sender uniformity; with it,
+       *     fragment AUTH can be dropped entirely (set frgHmacSize = 0).
+       * One key is reused across all three here only for brevity; each
+       * tier may use independent keys and contexts.
+       */
+      egrCtx.dtgHashSize = igrCtx.dtgHashSize = 1;
+      egrCtx.dtgHashCtx = igrCtx.dtgHashCtx = &hmacKeyCtx;
+      egrCtx.dtgHashSign = hashSignCb;
+      igrCtx.dtgHashVrfy = hashVrfyCb;
+      egrCtx.frgHmacSize = igrCtx.frgHmacSize = RMD128_SZ;
+      egrCtx.frgHmacCtx = igrCtx.frgHmacCtx = &hmacKeyCtx;
+      egrCtx.frgHmacSign = hmacSignCb;
+      igrCtx.frgHmacVrfy = hmacVrfyCb;
+      egrCtx.dtgHmacSize = igrCtx.dtgHmacSize = RMD128_SZ;
+      egrCtx.dtgHmacCtx = igrCtx.dtgHmacCtx = &hmacKeyCtx;
+      egrCtx.dtgHmacSign = dtgHmacSignCb;
+      igrCtx.dtgHmacVrfy = dtgHmacVrfyCb;
     }
     /* opaque[] is zero (file-scope statics) — framer threads init/fini */
     /* start chanBlb with RSEC framing for both directions */
