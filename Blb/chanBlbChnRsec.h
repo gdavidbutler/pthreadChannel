@@ -70,9 +70,8 @@
  *     still processed).  Needed only when fragments of differing trust
  *     can share a datagram; redundant alongside datagram AUTH + uniformity.
  *
- * Plus fragment ENCRYPT (frgEncrypt/frgDecrypt): per-shard encrypt-then-MAC
- * on egress, MAC-then-decrypt on ingress.  All tiers are optional and any
- * mix is legal (e.g. all four active is the defense-in-depth case).
+ * All tiers are optional and any mix is legal (e.g. all three active is
+ * the defense-in-depth case).
  */
 
 struct chanBlbChnRsecEgrCtrs {
@@ -109,9 +108,6 @@ struct chanBlbChnRsecEgrCtx {
   void *frgHmacCtx;
   /* hdr points to fragment header ([addrlen][addr][tag][k-1][m][si]) for key selection */
   void (*frgHmacSign)(void *frgHmacCtx, const unsigned char *hdr, unsigned char *dst, const unsigned char *src, unsigned int len);
-  void *frgCryptCtx;
-  /* hdr as above; len excludes padding on last data shard (OTP safety) */
-  void (*frgEncrypt)(void *frgCryptCtx, const unsigned char *hdr, unsigned char *data, unsigned int len);
   /*
    * Max datagram payload size (transport MTU minus headers).
    * Max shard size
@@ -193,9 +189,6 @@ struct chanBlbChnRsecIgrCtx {
   void *frgHmacCtx;
   /* hdr points to fragment header ([addrlen][addr][tag][k-1][m][si]) for key selection */
   int (*frgHmacVrfy)(void *frgHmacCtx, const unsigned char *hdr, const unsigned char *mac, const unsigned char *src, unsigned int len);
-  void *frgCryptCtx;
-  /* hdr as above; len excludes padding on last data shard (OTP safety) */
-  void (*frgDecrypt)(void *frgCryptCtx, const unsigned char *hdr, unsigned char *data, unsigned int len);
   unsigned int dgramMax;  /* must match the sender's egress dgramMax */
   unsigned int tagSize;   /* must match the sender's egress tagSize */
   /*

@@ -328,28 +328,6 @@ dtgHmacProbeVrfyCb(
   return (i == frgCnt);
 }
 
-/* Encrypt/Decrypt callbacks (XOR stream cipher for testing) */
-struct cryptKeyCtx {
-  const unsigned char *key;
-  unsigned int keyLen;
-};
-
-static void
-xorCryptCb(
-  void *ctx
- ,const unsigned char *hdr
- ,unsigned char *data
- ,unsigned int len
-){
-  struct cryptKeyCtx *k;
-  unsigned int i;
-
-  (void)hdr;
-  k = (struct cryptKeyCtx *)ctx;
-  for (i = 0; i < len; ++i)
-    data[i] ^= k->key[i % k->keyLen];
-}
-
 /* hdr-dependent HMAC callbacks - derive key by XORing with tag from hdr */
 struct hmacHdrCtx {
   const unsigned char *key;
@@ -407,36 +385,6 @@ hmacHdrVrfyCb(
   for (i = 0; i < RMD128_SZ; ++i)
     diff |= mac[i] ^ computed[i];
   return (diff == 0);
-}
-
-/* hdr-dependent encrypt/decrypt - derive key by XORing with tag from hdr */
-struct cryptHdrCtx {
-  const unsigned char *key;
-  unsigned int keyLen;
-  unsigned int tagSize;
-};
-
-static void
-xorHdrCryptCb(
-  void *ctx
- ,const unsigned char *hdr
- ,unsigned char *data
- ,unsigned int len
-){
-  struct cryptHdrCtx *k;
-  unsigned char dk[64];
-  unsigned int tagOff;
-  unsigned int dkLen;
-  unsigned int i;
-
-  k = (struct cryptHdrCtx *)ctx;
-  dkLen = k->keyLen < sizeof (dk) / sizeof (dk[0])
-        ? k->keyLen : (unsigned int)(sizeof (dk) / sizeof (dk[0]));
-  tagOff = 1 + (unsigned int)hdr[0];
-  for (i = 0; i < dkLen; ++i)
-    dk[i] = k->key[i] ^ hdr[tagOff + i % k->tagSize];
-  for (i = 0; i < len; ++i)
-    data[i] ^= dk[i % dkLen];
 }
 
 /*
@@ -524,14 +472,11 @@ struct rsecPair {
   unsigned int tagSize;
   unsigned int dgramMax;
   unsigned int tableSize;
-  /* fragment AUTH (frgHmac) + fragment ENCRYPT (frgCrypt) */
+  /* fragment AUTH (frgHmac) */
   unsigned int frgHmacSize;
   void *frgHmacCtx;
   void (*frgHmacSign)(void *, const unsigned char *, unsigned char *, const unsigned char *, unsigned int);
   int  (*frgHmacVrfy)(void *, const unsigned char *, const unsigned char *, const unsigned char *, unsigned int);
-  void *frgCryptCtx;
-  void (*frgEncrypt)(void *, const unsigned char *, unsigned char *, unsigned int);
-  void (*frgDecrypt)(void *, const unsigned char *, unsigned char *, unsigned int);
   /* datagram AUTH (dtgHmac) — sign/vrfy take packed-fragment offsets+count */
   unsigned int dtgHmacSize;
   void *dtgHmacCtx;
@@ -592,9 +537,6 @@ setup(
   rsecCtx->egr.frgHmacCtx   = rsecCtx->igr.frgHmacCtx   = rsecCtx->frgHmacCtx;
   rsecCtx->egr.frgHmacSign  = rsecCtx->frgHmacSign;
   rsecCtx->igr.frgHmacVrfy  = rsecCtx->frgHmacVrfy;
-  rsecCtx->egr.frgCryptCtx  = rsecCtx->igr.frgCryptCtx  = rsecCtx->frgCryptCtx;
-  rsecCtx->egr.frgEncrypt   = rsecCtx->frgEncrypt;
-  rsecCtx->igr.frgDecrypt   = rsecCtx->frgDecrypt;
   rsecCtx->egr.dtgHmacSize  = rsecCtx->igr.dtgHmacSize  = rsecCtx->dtgHmacSize;
   rsecCtx->egr.dtgHmacCtx   = rsecCtx->igr.dtgHmacCtx   = rsecCtx->dtgHmacCtx;
   rsecCtx->egr.dtgHmacSign  = rsecCtx->dtgHmacSign;
@@ -1719,144 +1661,6 @@ testShardApi(void)
   check("dgramMax==overhead => 0", chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.frgHmacSize, rsecCtx.dtgHmacSize, rsecCtx.dtgHashSize) == 0);
 }
 
-/* ===== ENCRYPT/DECRYPT TESTS ===== */
-
-static void
-testEncryptBasic(void)
-{
-  struct testEnv env;
-  struct rsecPair rsecCtx;
-  struct cryptKeyCtx cryptCtx;
-  chanBlb_t *m;
-  const char *msg = "encrypted hello";
-  const char *key = "cryptkey42";
-
-  printf("=== Test: encrypt basic m=1 ===\n");
-  memset(&rsecCtx, 0, sizeof (rsecCtx));
-  rsecCtx.tagSize = 2;
-  rsecCtx.dgramMax = 520;
-  rsecCtx.tableSize = 64;
-  cryptCtx.key = (const unsigned char *)key;
-  cryptCtx.keyLen = strlen(key);
-  rsecCtx.frgCryptCtx = &cryptCtx;
-  rsecCtx.frgEncrypt = xorCryptCb;
-  rsecCtx.frgDecrypt = xorCryptCb;
-
-  if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
-
-  m = mkBlob(&env.sa, 2, 1, 1, 0, msg, strlen(msg));
-  check("send", sendBlob(env.outChan, m));
-  m = recvBlob(env.inChan, 2000000000L);
-  check("received", m != 0);
-  if (m) { check("payload correct", verifyBlob(m, 2, msg, strlen(msg))); free(m); }
-  teardown(&env, &rsecCtx);
-}
-
-static void
-testEncryptMultiShard(void)
-{
-  struct testEnv env;
-  struct rsecPair rsecCtx;
-  struct cryptKeyCtx cryptCtx;
-  chanBlb_t *m;
-  const char *msg = "encrypted multi shard message requiring several fragments";
-  const char *key = "multishard-key";
-
-  printf("=== Test: encrypt multi-shard dgramMax=16 m=2 ===\n");
-  memset(&rsecCtx, 0, sizeof (rsecCtx));
-  rsecCtx.tagSize = 2;
-  rsecCtx.dgramMax = 16;
-  rsecCtx.tableSize = 64;
-  cryptCtx.key = (const unsigned char *)key;
-  cryptCtx.keyLen = strlen(key);
-  rsecCtx.frgCryptCtx = &cryptCtx;
-  rsecCtx.frgEncrypt = xorCryptCb;
-  rsecCtx.frgDecrypt = xorCryptCb;
-
-  if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
-
-  m = mkBlob(&env.sa, 2, 1, 2, 0, msg, strlen(msg));
-  check("send", sendBlob(env.outChan, m));
-  m = recvBlob(env.inChan, 3000000000L);
-  check("received", m != 0);
-  if (m) { check("payload correct", verifyBlob(m, 2, msg, strlen(msg))); free(m); }
-  teardown(&env, &rsecCtx);
-}
-
-static void
-testEncryptHmac(void)
-{
-  struct testEnv env;
-  struct rsecPair rsecCtx;
-  struct hmacKeyCtx hmacCtx;
-  struct cryptKeyCtx cryptCtx;
-  chanBlb_t *m;
-  const char *msg = "encrypted and hmac authenticated";
-  const char *hmacKey = "hmacSecret";
-  const char *cryptKey = "cryptSecret";
-
-  printf("=== Test: encrypt + HMAC m=1 ===\n");
-  memset(&rsecCtx, 0, sizeof (rsecCtx));
-  rsecCtx.tagSize = 2;
-  rsecCtx.dgramMax = 536;
-  rsecCtx.tableSize = 64;
-  hmacCtx.key = (const unsigned char *)hmacKey;
-  hmacCtx.keyLen = strlen(hmacKey);
-  rsecCtx.frgHmacSize = RMD128_SZ;
-  rsecCtx.frgHmacCtx = &hmacCtx;
-  rsecCtx.frgHmacSign = hmacSignCb;
-  rsecCtx.frgHmacVrfy = hmacVrfyCb;
-  cryptCtx.key = (const unsigned char *)cryptKey;
-  cryptCtx.keyLen = strlen(cryptKey);
-  rsecCtx.frgCryptCtx = &cryptCtx;
-  rsecCtx.frgEncrypt = xorCryptCb;
-  rsecCtx.frgDecrypt = xorCryptCb;
-
-  if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
-
-  m = mkBlob(&env.sa, 2, 1, 1, 0, msg, strlen(msg));
-  check("send", sendBlob(env.outChan, m));
-  m = recvBlob(env.inChan, 2000000000L);
-  check("received", m != 0);
-  if (m) { check("payload correct", verifyBlob(m, 2, msg, strlen(msg))); free(m); }
-  teardown(&env, &rsecCtx);
-}
-
-static void
-testEncryptDrop(void)
-{
-  struct testEnv env;
-  struct rsecPair rsecCtx;
-  struct cryptKeyCtx cryptCtx;
-  chanBlb_t *m;
-  const char *msg = "encrypted drop recovery test!";
-  const char *key = "dropkey";
-
-  printf("=== Test: encrypt + 20%% drop, multi-shard dgramMax=18 m=8 ===\n");
-  memset(&rsecCtx, 0, sizeof (rsecCtx));
-  rsecCtx.tagSize = 2;
-  rsecCtx.dgramMax = 18; /* small dgram => small shards, so the msg spans several */
-  rsecCtx.tableSize = 64;
-  cryptCtx.key = (const unsigned char *)key;
-  cryptCtx.keyLen = strlen(key);
-  rsecCtx.frgCryptCtx = &cryptCtx;
-  rsecCtx.frgEncrypt = xorCryptCb;
-  rsecCtx.frgDecrypt = xorCryptCb;
-
-  chanBlbTrnFdDatagramDropPct = 20;
-
-  if (!setup(&env, &rsecCtx)) { check("setup", 0); chanBlbTrnFdDatagramDropPct = 0; return; }
-
-  m = mkBlob(&env.sa, 2, 1, 8, 0, msg, strlen(msg));
-  check("send", sendBlob(env.outChan, m));
-  m = recvBlob(env.inChan, 5000000000L);
-  check("received after drops", m != 0);
-  if (m) { check("payload correct", verifyBlob(m, 2, msg, strlen(msg))); free(m); }
-
-  chanBlbTrnFdDatagramDropPct = 0;
-  teardown(&env, &rsecCtx);
-}
-
 /* ===== HDR CALLBACK TESTS ===== */
 
 static void
@@ -1946,109 +1750,6 @@ testHmacHdrMultiTag(void)
     free(m);
   }
   check("all 3 hdr-derived key messages correct", ok == 3);
-  teardown(&env, &rsecCtx);
-}
-
-static void
-testEncryptHdr(void)
-{
-  struct testEnv env;
-  struct rsecPair rsecCtx;
-  struct cryptHdrCtx cryptCtx;
-  chanBlb_t *m;
-  const char *msg = "encrypt hdr key derivation";
-  const char *key = "hdrcryptkey1";
-
-  printf("=== Test: encrypt with hdr-dependent key ===\n");
-  memset(&rsecCtx, 0, sizeof (rsecCtx));
-  rsecCtx.tagSize = 4;
-  rsecCtx.dgramMax = 520;
-  rsecCtx.tableSize = 64;
-  cryptCtx.key = (const unsigned char *)key;
-  cryptCtx.keyLen = strlen(key);
-  cryptCtx.tagSize = 4;
-  rsecCtx.frgCryptCtx = &cryptCtx;
-  rsecCtx.frgEncrypt = xorHdrCryptCb;
-  rsecCtx.frgDecrypt = xorHdrCryptCb;
-
-  if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
-
-  m = mkBlob(&env.sa, 4, 0x1234, 1, 0, msg, strlen(msg));
-  check("send", sendBlob(env.outChan, m));
-  m = recvBlob(env.inChan, 2000000000L);
-  check("received", m != 0);
-  if (m) { check("payload correct", verifyBlob(m, 4, msg, strlen(msg))); free(m); }
-  teardown(&env, &rsecCtx);
-}
-
-static void
-testEncryptHmacHdrDrop(void)
-{
-  struct testEnv env;
-  struct rsecPair rsecCtx;
-  struct hmacHdrCtx hmacCtx;
-  struct cryptHdrCtx cryptCtx;
-  chanBlb_t *m;
-  unsigned int i;
-  unsigned int j;
-  unsigned int ok;
-  int seen[3];
-  const char *hmacKey = "hmacHdrDrop!";
-  const char *cryptKey = "cryptHdrDrop";
-  const char *msgs[3];
-
-  msgs[0] = "hdr drop test msg zero!";
-  msgs[1] = "hdr drop test msg one!!";
-  msgs[2] = "hdr drop test msg two!!";
-
-  printf("=== Test: encrypt+HMAC hdr + 40%% drop dgramMax=44 m=13 ===\n");
-  memset(&rsecCtx, 0, sizeof (rsecCtx));
-  rsecCtx.tagSize = 4;
-  rsecCtx.dgramMax = 44;
-  rsecCtx.tableSize = 64;
-  hmacCtx.key = (const unsigned char *)hmacKey;
-  hmacCtx.keyLen = strlen(hmacKey);
-  hmacCtx.tagSize = 4;
-  rsecCtx.frgHmacSize = RMD128_SZ;
-  rsecCtx.frgHmacCtx = &hmacCtx;
-  rsecCtx.frgHmacSign = hmacHdrSignCb;
-  rsecCtx.frgHmacVrfy = hmacHdrVrfyCb;
-  cryptCtx.key = (const unsigned char *)cryptKey;
-  cryptCtx.keyLen = strlen(cryptKey);
-  cryptCtx.tagSize = 4;
-  rsecCtx.frgCryptCtx = &cryptCtx;
-  rsecCtx.frgEncrypt = xorHdrCryptCb;
-  rsecCtx.frgDecrypt = xorHdrCryptCb;
-
-  chanBlbTrnFdDatagramDropPct = 40;
-
-  if (!setup(&env, &rsecCtx)) { check("setup", 0); chanBlbTrnFdDatagramDropPct = 0; return; }
-
-  for (i = 0; i < 3; ++i) {
-    m = mkBlob(&env.sa, 4, (unsigned short)(i + 1), 13, 0,
-               msgs[i], strlen(msgs[i]));
-    if (!sendBlob(env.outChan, m)) { check("send", 0); goto hdrDropDone; }
-  }
-  ok = 0;
-  memset(seen, 0, sizeof (seen));
-  for (i = 0; i < 3; ++i) {
-    m = recvBlob(env.inChan, 5000000000L);
-    if (!m) continue;
-    for (j = 0; j < 3; ++j) {
-      if (!seen[j] && verifyBlob(m, 4, msgs[j], strlen(msgs[j]))) {
-        seen[j] = 1;
-        ++ok;
-        break;
-      }
-    }
-    free(m);
-  }
-  check("all 3 hdr-keyed messages delivered despite drops", ok == 3);
-  rsecSnap(&rsecCtx);
-  printf("    (igrDcd=%u)\n", rsecCtx.igrDcd);
-
-hdrDropDone:
-  chanBlbTrnFdDatagramDropPct = 0;
   teardown(&env, &rsecCtx);
 }
 
@@ -2336,10 +2037,17 @@ testMalformedBlob(void)
   m->b[1] = 0;
   check("send malformed", sendBlob(env.outChan, m));
 
-  /* egress should have exited on protocol violation; no message on ingress */
+  /* egress drops the malformed blob and keeps running */
   m = recvBlob(env.inChan, 1000000000L);
-  check("no message after protocol violation", m == 0);
+  check("no message from malformed blob", m == 0);
   if (m) free(m);
+
+  /* a subsequent valid blob proves the egress survived */
+  m = mkBlob(&env.sa, 2, 1, 1, 0, "ok", 2);
+  check("send valid after malformed", sendBlob(env.outChan, m));
+  m = recvBlob(env.inChan, 2000000000L);
+  check("valid blob delivered (egress still running)", m != 0);
+  if (m) { check("payload correct", verifyBlob(m, 2, "ok", 2)); free(m); }
 
   teardown(&env, &rsecCtx);
 }
@@ -2444,28 +2152,26 @@ testLargeK(void)
 }
 
 static void
-testEncryptRsDecode(void)
+testHmacRsDecode(void)
 {
   struct testEnv env;
   struct rsecPair rsecCtx;
   struct hmacKeyCtx hmacCtx;
-  struct cryptKeyCtx cryptCtx;
   chanBlb_t *m;
   unsigned int i;
   unsigned int j;
   unsigned int ok;
   int seen[5];
   const char *hmacKey = "hmacRsDecode";
-  const char *cryptKey = "cryptRsDecode";
   const char *msgs[5];
 
-  msgs[0] = "encrypt rs decode msg zero!";
-  msgs[1] = "encrypt rs decode msg one!!";
-  msgs[2] = "encrypt rs decode msg two!!";
-  msgs[3] = "encrypt rs decode msg 3!!!";
-  msgs[4] = "encrypt rs decode msg 4!!!";
+  msgs[0] = "hmac rs decode msg zero!";
+  msgs[1] = "hmac rs decode msg one!!";
+  msgs[2] = "hmac rs decode msg two!!";
+  msgs[3] = "hmac rs decode msg 3!!!";
+  msgs[4] = "hmac rs decode msg 4!!!";
 
-  printf("=== Test: encrypt+HMAC+RS decode (50%% drop dgramMax=40 m=20) ===\n");
+  printf("=== Test: HMAC+RS decode (50%% drop dgramMax=40 m=20) ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
   rsecCtx.dgramMax = 40; /* room for hmac */
@@ -2476,11 +2182,6 @@ testEncryptRsDecode(void)
   rsecCtx.frgHmacCtx = &hmacCtx;
   rsecCtx.frgHmacSign = hmacSignCb;
   rsecCtx.frgHmacVrfy = hmacVrfyCb;
-  cryptCtx.key = (const unsigned char *)cryptKey;
-  cryptCtx.keyLen = strlen(cryptKey);
-  rsecCtx.frgCryptCtx = &cryptCtx;
-  rsecCtx.frgEncrypt = xorCryptCb;
-  rsecCtx.frgDecrypt = xorCryptCb;
 
   chanBlbTrnFdDatagramDropPct = 50;
 
@@ -2490,7 +2191,7 @@ testEncryptRsDecode(void)
   for (i = 0; i < 5; ++i) {
     m = mkBlob(&env.sa, 2, (unsigned short)(i + 1), 20, 0,
                msgs[i], strlen(msgs[i]));
-    if (!sendBlob(env.outChan, m)) { check("send", 0); goto encRsDone; }
+    if (!sendBlob(env.outChan, m)) { check("send", 0); goto hmacRsDone; }
   }
   ok = 0;
   memset(seen, 0, sizeof (seen));
@@ -2506,12 +2207,12 @@ testEncryptRsDecode(void)
     }
     free(m);
   }
-  check("all 5 encrypted+HMAC messages delivered", ok == 5);
+  check("all 5 HMAC messages delivered", ok == 5);
   rsecSnap(&rsecCtx);
   printf("    (igrDcd=%u)\n", rsecCtx.igrDcd);
   check("RS decode was used (igrDcd > 0)", rsecCtx.igrDcd > 0);
 
-encRsDone:
+hmacRsDone:
   chanBlbTrnFdDatagramDropPct = 0;
   teardown(&env, &rsecCtx);
 }
@@ -3171,8 +2872,7 @@ chanBlbTrnFdDatagramInject(
  */
 static int
 injectFrag(
-  int injFd
- ,const struct sockaddr_in *dst
+  const struct sockaddr_in *dst
  ,const unsigned char *tagBytes
  ,unsigned int tagSize
  ,unsigned char kMinus1
@@ -3190,7 +2890,6 @@ injectFrag(
   unsigned int pos;
   struct sockaddr_in src;
 
-  (void)injFd;
   pos = 0;
   memcpy(dg + pos, tagBytes, tagSize);
   pos += tagSize;
@@ -3231,8 +2930,7 @@ injectFrag(
  */
 static int
 injectDtgHmacPair(
-  int injFd
- ,const struct sockaddr_in *dst
+  const struct sockaddr_in *dst
  ,const unsigned char *tag0
  ,const unsigned char *tag1
  ,const unsigned char *shard0
@@ -3248,7 +2946,6 @@ injectDtgHmacPair(
   unsigned int i;
   struct sockaddr_in src;
 
-  (void)injFd;
   pos = 0;
   /* frag0 */
   memcpy(dg + pos, tag0, 2); pos += 2;
@@ -3371,7 +3068,6 @@ testIgrHashReject(void)
   struct rsecPair rsecCtx;
   struct hashKeyCtx hk;
   chanBlb_t *m;
-  int injFd;
   unsigned char tag[2];
   unsigned char shard[3];
   unsigned char badHash[HALFSIPHASH_HSH_SZ];
@@ -3392,9 +3088,6 @@ testIgrHashReject(void)
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
 
-  injFd = socket(AF_INET, SOCK_DGRAM, 0);
-  check("injector socket", injFd >= 0);
-
   tag[0] = 0x11; tag[1] = 0x22;
   shard[0] = 'a'; shard[1] = 'b'; shard[2] = 'c';
   /* deliberately wrong trailing MAC: cannot be produced by anyone
@@ -3402,7 +3095,7 @@ testIgrHashReject(void)
   for (i = 0; i < sizeof (badHash); ++i)
     badHash[i] = (unsigned char)(i * 7 + 3);
   check("inject bad-datagram-MAC frag",
-    injectFrag(injFd, &env.sa, tag, 2, 0, 0, 0, 0, shard, 3, 0, 0,
+    injectFrag(&env.sa,tag, 2, 0, 0, 0, 0, shard, 3, 0, 0,
                badHash, sizeof (badHash)));
 
   m = recvBlob(env.inChan, 500000000L);
@@ -3414,7 +3107,6 @@ testIgrHashReject(void)
   check("igrHash >= 1", rsecCtx.igrHash >= 1);
   check("igrMsg == 0", rsecCtx.igrMsg == 0);
 
-  close(injFd);
   teardown(&env, &rsecCtx);
 }
 
@@ -3454,26 +3146,24 @@ testHashMatch(void)
 }
 
 static void
-testAllThreeLayers(void)
+testGateFrgHmac(void)
 {
   struct testEnv env;
   struct rsecPair rsecCtx;
   struct hashKeyCtx hashKey;
   struct hmacKeyCtx hmacCtx;
-  struct cryptKeyCtx cryptCtx;
   chanBlb_t *m;
-  const char *msg = "all three callback layers active: hashSign+hmacSign+encrypt round-trip";
-  const char *hmacKey = "hmacAllThreeKey";
-  const char *cryptKey = "cryptAllThreeKey";
+  const char *msg = "datagram GATE + fragment HMAC defense in depth round-trip";
+  const char *hmacKey = "hmacGateFrgKey";
   unsigned int i;
 
-  printf("=== Test: datagram MAC + fragment HMAC + encrypt (all three layers) ===\n");
+  printf("=== Test: datagram GATE + fragment HMAC (defense in depth) ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
   rsecCtx.dgramMax = 40; /* small to force multi-fragment */
   rsecCtx.tableSize = 64;
 
-  /* datagram MAC layer: halfsiphash, 64-bit key, 4-byte tag */
+  /* datagram GATE layer: halfsiphash, 64-bit key, 4-byte tag */
   for (i = 0; i < sizeof (hashKey.key); ++i)
     hashKey.key[i] = (unsigned char)(0x3c ^ i);
   rsecCtx.dtgHashSize = HALFSIPHASH_HSH_SZ;
@@ -3489,13 +3179,6 @@ testAllThreeLayers(void)
   rsecCtx.frgHmacSign = hmacSignCb;
   rsecCtx.frgHmacVrfy = hmacVrfyCb;
 
-  /* fragment encrypt/decrypt layer: XOR stream cipher (test only) */
-  cryptCtx.key = (const unsigned char *)cryptKey;
-  cryptCtx.keyLen = strlen(cryptKey);
-  rsecCtx.frgCryptCtx = &cryptCtx;
-  rsecCtx.frgEncrypt  = xorCryptCb;
-  rsecCtx.frgDecrypt  = xorCryptCb;
-
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
 
   m = mkBlob(&env.sa, 2, 1, 2, 0, msg, strlen(msg));
@@ -3503,12 +3186,12 @@ testAllThreeLayers(void)
   m = recvBlob(env.inChan, 3000000000L);
   check("received", m != 0);
   if (m) {
-    check("payload correct (all three layers reversed)", verifyBlob(m, 2, msg, strlen(msg)));
+    check("payload correct (both layers verified)", verifyBlob(m, 2, msg, strlen(msg)));
     free(m);
   }
   rsecSnap(&rsecCtx);
   /* clean round-trip: all counters should be zero on the failure side */
-  check("no datagram MAC failures", rsecCtx.igrHash == 0);
+  check("no datagram GATE failures", rsecCtx.igrHash == 0);
   check("no fragment HMAC failures", rsecCtx.igrHmac == 0);
   check("multiple fragments sent", rsecCtx.egrFrg > 1);
   check("message delivered", rsecCtx.igrMsg == 1);
@@ -3526,7 +3209,6 @@ testIgrHmacReject(void)
   unsigned char tag[2];
   unsigned char shard[3];
   chanBlb_t *m;
-  int injFd;
   unsigned int i;
 
   printf("=== Test: igrHmac increments on bad HMAC ===\n");
@@ -3543,15 +3225,12 @@ testIgrHmacReject(void)
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
 
-  injFd = socket(AF_INET, SOCK_DGRAM, 0);
-  check("injector socket", injFd >= 0);
-
   tag[0] = 0x33; tag[1] = 0x44;
   shard[0] = 'x'; shard[1] = 'y'; shard[2] = 'z';
   for (i = 0; i < sizeof (badHmac); ++i)
     badHmac[i] = (unsigned char)(i * 13 + 5);
   check("inject bad-HMAC frag (no datagram MAC layer)",
-    injectFrag(injFd, &env.sa, tag, 2, 0, 0, 0, 0, shard, 3,
+    injectFrag(&env.sa,tag, 2, 0, 0, 0, 0, shard, 3,
                badHmac, sizeof (badHmac), 0, 0));
 
   m = recvBlob(env.inChan, 500000000L);
@@ -3564,7 +3243,6 @@ testIgrHmacReject(void)
   check("igrHash == 0 (no datagram MAC configured)", rsecCtx.igrHash == 0);
   check("igrMsg == 0", rsecCtx.igrMsg == 0);
 
-  close(injFd);
   teardown(&env, &rsecCtx);
 }
 
@@ -3574,7 +3252,6 @@ testIgrDupReject(void)
   struct testEnv env;
   struct rsecPair rsecCtx;
   chanBlb_t *m;
-  int injFd;
   unsigned char tag[2];
   unsigned char s0[3];
   unsigned char s1[3];
@@ -3589,21 +3266,18 @@ testIgrDupReject(void)
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
 
-  injFd = socket(AF_INET, SOCK_DGRAM, 0);
-  check("injector socket", injFd >= 0);
-
   tag[0] = 0x55; tag[1] = 0x66;
   s0[0] = 'A'; s0[1] = 'B'; s0[2] = 'C';
   s1[0] = 'D'; s1[1] = 'E'; s1[2] = 'F';
   /* k=2 (kMinus1=1) m=0: need both shards. Inject si=0 twice, then si=1. */
   check("inject shard 0",
-    injectFrag(injFd, &env.sa, tag, 2, 1, 0, 0, 0, s0, 3, 0, 0, 0, 0));
+    injectFrag(&env.sa,tag, 2, 1, 0, 0, 0, s0, 3, 0, 0, 0, 0));
   usleep(50000);
   check("inject shard 0 duplicate",
-    injectFrag(injFd, &env.sa, tag, 2, 1, 0, 0, 0, s0, 3, 0, 0, 0, 0));
+    injectFrag(&env.sa,tag, 2, 1, 0, 0, 0, s0, 3, 0, 0, 0, 0));
   usleep(50000);
   check("inject shard 1",
-    injectFrag(injFd, &env.sa, tag, 2, 1, 0, 1, 0, s1, 3, 0, 0, 0, 0));
+    injectFrag(&env.sa,tag, 2, 1, 0, 1, 0, s1, 3, 0, 0, 0, 0));
 
   m = recvBlob(env.inChan, 2000000000L);
   check("message delivered despite dup", m != 0);
@@ -3621,7 +3295,6 @@ testIgrDupReject(void)
   check("igrMsg == 1", rsecCtx.igrMsg == 1);
   check("igrEvict == 0", rsecCtx.igrEvict == 0);
 
-  close(injFd);
   teardown(&env, &rsecCtx);
 }
 
@@ -3633,7 +3306,6 @@ testParamMismatchLossNotif(void)
   chanBlb_t *m;
   chanBlb_t *loss;
   chanBlb_t *second;
-  int injFd;
   unsigned char tag[2];
   unsigned char s0a[3];
   unsigned char s0b[4];
@@ -3649,21 +3321,18 @@ testParamMismatchLossNotif(void)
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
 
-  injFd = socket(AF_INET, SOCK_DGRAM, 0);
-  check("injector socket", injFd >= 0);
-
   tag[0] = 0x77; tag[1] = 0x88;
   s0a[0] = 'P'; s0a[1] = 'Q'; s0a[2] = 'R';
   s0b[0] = 'X'; s0b[1] = 'Y'; s0b[2] = 'Z'; s0b[3] = '!';
 
   /* msg1: k=2 (kMinus1=1), m=0, shardSize=3.  Inject only shard 0 -> incomplete. */
   check("inject msg1 shard 0 (incomplete)",
-    injectFrag(injFd, &env.sa, tag, 2, 1, 0, 0, 0, s0a, 3, 0, 0, 0, 0));
+    injectFrag(&env.sa,tag, 2, 1, 0, 0, 0, s0a, 3, 0, 0, 0, 0));
   usleep(80000);
 
   /* msg2: same tag, k=1 (kMinus1=0), m=0, shardSize=4.  Params mismatch. */
   check("inject msg2 shard 0 (param mismatch)",
-    injectFrag(injFd, &env.sa, tag, 2, 0, 0, 0, 0, s0b, 4, 0, 0, 0, 0));
+    injectFrag(&env.sa,tag, 2, 0, 0, 0, 0, s0b, 4, 0, 0, 0, 0));
 
   loss = 0;
   second = 0;
@@ -3698,7 +3367,6 @@ testParamMismatchLossNotif(void)
   check("igrEvict >= 1", rsecCtx.igrEvict >= 1);
   check("igrMsg >= 1 (second message)", rsecCtx.igrMsg >= 1);
 
-  close(injFd);
   teardown(&env, &rsecCtx);
 }
 
@@ -3717,7 +3385,6 @@ testSameTagMOnlyDelivered(void)
   struct rsecPair rsecCtx;
   chanBlb_t *first;
   chanBlb_t *second;
-  int injFd;
   unsigned char tag[2];
   unsigned char shard[3];
   unsigned int al;
@@ -3731,15 +3398,12 @@ testSameTagMOnlyDelivered(void)
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
 
-  injFd = socket(AF_INET, SOCK_DGRAM, 0);
-  check("injector socket", injFd >= 0);
-
   tag[0] = 0x99; tag[1] = 0xAA;
   shard[0] = 'M'; shard[1] = 'N'; shard[2] = 'O';
 
   /* k=1 m=0 shardSize=3 -> completes on arrival */
   check("inject msg with m=0",
-    injectFrag(injFd, &env.sa, tag, 2, 0, 0, 0, 0, shard, 3, 0, 0, 0, 0));
+    injectFrag(&env.sa,tag, 2, 0, 0, 0, 0, shard, 3, 0, 0, 0, 0));
   first = recvBlob(env.inChan, 1000000000L);
   check("first delivery", first != 0);
   if (first) {
@@ -3754,7 +3418,7 @@ testSameTagMOnlyDelivered(void)
    * the shard, k=1 -> redelivered with m=5. */
   usleep(50000);
   check("inject same tag with m=5",
-    injectFrag(injFd, &env.sa, tag, 2, 0, 5, 0, 0, shard, 3, 0, 0, 0, 0));
+    injectFrag(&env.sa,tag, 2, 0, 5, 0, 0, shard, 3, 0, 0, 0, 0));
   second = recvBlob(env.inChan, 1000000000L);
   check("second (duplicate) delivery", second != 0);
   if (second) {
@@ -3770,7 +3434,6 @@ testSameTagMOnlyDelivered(void)
   check("igrEvict == 0 (silent evict for delivered entry)",
         rsecCtx.igrEvict == 0);
 
-  close(injFd);
   teardown(&env, &rsecCtx);
 }
 
@@ -3786,7 +3449,6 @@ testSameTagMOnlyIncomplete(void)
   struct rsecPair rsecCtx;
   chanBlb_t *m;
   chanBlb_t *loss;
-  int injFd;
   unsigned char tag[2];
   unsigned char s0[3];
   unsigned int al;
@@ -3801,22 +3463,19 @@ testSameTagMOnlyIncomplete(void)
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
 
-  injFd = socket(AF_INET, SOCK_DGRAM, 0);
-  check("injector socket", injFd >= 0);
-
   tag[0] = 0xBB; tag[1] = 0xCC;
   s0[0] = 'P'; s0[1] = 'Q'; s0[2] = 'R';
 
   /* k=2 m=3 shardSize=3 -> incomplete after 1 shard */
   check("inject shard 0 (k=2 m=3, incomplete)",
-    injectFrag(injFd, &env.sa, tag, 2, 1, 3, 0, 0, s0, 3, 0, 0, 0, 0));
+    injectFrag(&env.sa,tag, 2, 1, 3, 0, 0, s0, 3, 0, 0, 0, 0));
   usleep(50000);
 
   /* Same tag, same k, same shardSize, different m (7).  m-only mismatch
    * still triggers param-mismatch eviction; the original is incomplete
    * (blob != NULL) so igrEvict++ and a loss notification is delivered. */
   check("inject shard 0 with different m (7)",
-    injectFrag(injFd, &env.sa, tag, 2, 1, 7, 0, 0, s0, 3, 0, 0, 0, 0));
+    injectFrag(&env.sa,tag, 2, 1, 7, 0, 0, s0, 3, 0, 0, 0, 0));
 
   loss = 0;
   for (i = 0; i < 3; ++i) {
@@ -3843,7 +3502,6 @@ testSameTagMOnlyIncomplete(void)
   check("igrEvict >= 1 (m-only change evicts incomplete)",
         rsecCtx.igrEvict >= 1);
 
-  close(injFd);
   teardown(&env, &rsecCtx);
 }
 
@@ -3937,9 +3595,9 @@ testDtgHmacPacked(void)
 }
 
 /*
- * All four tiers active at once: datagram GATE + datagram AUTH + fragment
- * AUTH + fragment ENCRYPT, on a multi-shard message.  Confirms the tiers
- * compose and every failure counter stays clean.
+ * All three tiers active at once: datagram GATE + datagram AUTH + fragment
+ * AUTH, on a multi-shard message.  Confirms the tiers compose and every
+ * failure counter stays clean.
  */
 static void
 testDtgHmacAllTiers(void)
@@ -3949,15 +3607,13 @@ testDtgHmacAllTiers(void)
   struct hashKeyCtx hashKey;
   struct hmacKeyCtx frgKey;
   struct hmacKeyCtx dtgKey;
-  struct cryptKeyCtx cryptCtx;
   chanBlb_t *m;
-  const char *msg = "datagram GATE + datagram AUTH + fragment AUTH + encrypt all at once, multi-shard";
+  const char *msg = "datagram GATE + datagram AUTH + fragment AUTH all at once, multi-shard";
   const char *frgK = "frgAuthKey";
   const char *dtgK = "dtgAuthKey";
-  const char *crK  = "cryptKeyX";
   unsigned int i;
 
-  printf("=== Test: all four tiers (gate+dtgAuth+frgAuth+encrypt) multi-shard ===\n");
+  printf("=== Test: all three tiers (gate+dtgAuth+frgAuth) multi-shard ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
   rsecCtx.dgramMax = 80; /* overhead=2+16+16+4+6=44, shard=36 => multi-shard */
@@ -3980,11 +3636,6 @@ testDtgHmacAllTiers(void)
   rsecCtx.frgHmacCtx = &frgKey;
   rsecCtx.frgHmacSign = hmacSignCb;
   rsecCtx.frgHmacVrfy = hmacVrfyCb;
-  cryptCtx.key = (const unsigned char *)crK;
-  cryptCtx.keyLen = strlen(crK);
-  rsecCtx.frgCryptCtx = &cryptCtx;
-  rsecCtx.frgEncrypt = xorCryptCb;
-  rsecCtx.frgDecrypt = xorCryptCb;
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
 
@@ -3993,7 +3644,7 @@ testDtgHmacAllTiers(void)
   m = recvBlob(env.inChan, 3000000000L);
   check("received", m != 0);
   if (m) {
-    check("payload correct (all tiers reversed)", verifyBlob(m, 2, msg, strlen(msg)));
+    check("payload correct (all tiers verified)", verifyBlob(m, 2, msg, strlen(msg)));
     free(m);
   }
   rsecSnap(&rsecCtx);
@@ -4018,7 +3669,6 @@ testDtgHmacUniformity(void)
   struct rsecPair rsecCtx;
   struct hmacKeyCtx dtgKey;
   chanBlb_t *m;
-  int injFd;
   int got;
   int i;
   unsigned char tag0[2];
@@ -4041,9 +3691,6 @@ testDtgHmacUniformity(void)
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
 
-  injFd = socket(AF_INET, SOCK_DGRAM, 0);
-  check("injector socket", injFd >= 0);
-
   s0[0] = 'A'; s0[1] = 'B'; s0[2] = 'C';
   s1[0] = 'D'; s1[1] = 'E'; s1[2] = 'F';
 
@@ -4052,7 +3699,7 @@ testDtgHmacUniformity(void)
   tag0[0] = 0x10; tag0[1] = 0x01;
   tag1[0] = 0x10; tag1[1] = 0x02;
   check("inject same-sender pair (valid MAC)",
-    injectDtgHmacPair(injFd, &env.sa, tag0, tag1, s0, s1, 3,
+    injectDtgHmacPair(&env.sa,tag0, tag1, s0, s1, 3,
                       key, sizeof (key) - 1, 0));
   got = 0;
   for (i = 0; i < 2; ++i) {
@@ -4066,7 +3713,7 @@ testDtgHmacUniformity(void)
   tag0[0] = 0x10; tag0[1] = 0x03;
   tag1[0] = 0x20; tag1[1] = 0x04;
   check("inject mixed-sender pair (valid MAC)",
-    injectDtgHmacPair(injFd, &env.sa, tag0, tag1, s0, s1, 3,
+    injectDtgHmacPair(&env.sa,tag0, tag1, s0, s1, 3,
                       key, sizeof (key) - 1, 0));
   m = recvBlob(env.inChan, 500000000L);
   check("mixed-sender pair: nothing delivered", m == 0);
@@ -4077,7 +3724,6 @@ testDtgHmacUniformity(void)
   check("igrDhmac >= 1 (mixed-sender rejected)", rsecCtx.igrDhmac >= 1);
   check("igrMsg == 2 (only the same-sender pair)", rsecCtx.igrMsg == 2);
 
-  close(injFd);
   teardown(&env, &rsecCtx);
 }
 
@@ -4092,7 +3738,6 @@ testDtgHmacReject(void)
   struct rsecPair rsecCtx;
   struct hmacKeyCtx dtgKey;
   chanBlb_t *m;
-  int injFd;
   unsigned char tag0[2];
   unsigned char tag1[2];
   unsigned char s0[3];
@@ -4113,15 +3758,12 @@ testDtgHmacReject(void)
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
 
-  injFd = socket(AF_INET, SOCK_DGRAM, 0);
-  check("injector socket", injFd >= 0);
-
   tag0[0] = 0x10; tag0[1] = 0x01;
   tag1[0] = 0x10; tag1[1] = 0x02;
   s0[0] = 'A'; s0[1] = 'B'; s0[2] = 'C';
   s1[0] = 'D'; s1[1] = 'E'; s1[2] = 'F';
   check("inject corrupted-MAC pair",
-    injectDtgHmacPair(injFd, &env.sa, tag0, tag1, s0, s1, 3,
+    injectDtgHmacPair(&env.sa,tag0, tag1, s0, s1, 3,
                       key, sizeof (key) - 1, 1));
 
   m = recvBlob(env.inChan, 500000000L);
@@ -4133,7 +3775,6 @@ testDtgHmacReject(void)
   check("igrDhmac >= 1", rsecCtx.igrDhmac >= 1);
   check("igrMsg == 0", rsecCtx.igrMsg == 0);
 
-  close(injFd);
   teardown(&env, &rsecCtx);
 }
 
@@ -4297,17 +3938,9 @@ main(
   testEgressBackpressure();
   testCountersBackpressure();
 
-  /* encrypt/decrypt tests */
-  testEncryptBasic();
-  testEncryptMultiShard();
-  testEncryptHmac();
-  testEncryptDrop();
-
   /* hdr callback tests */
   testHmacHdr();
   testHmacHdrMultiTag();
-  testEncryptHdr();
-  testEncryptHmacHdrDrop();
 
   /* coverage gap tests */
   testRsDecodeAliasing();
@@ -4316,7 +3949,7 @@ main(
   testEmptyPayloadDrop();
   testTagSizeZero();
   testLargeK();
-  testEncryptRsDecode();
+  testHmacRsDecode();
 
   /* packing tests */
   testPackSmall();
@@ -4337,7 +3970,7 @@ main(
   testRmUmWithDecode();
   testIgrHashReject();
   testHashMatch();
-  testAllThreeLayers();
+  testGateFrgHmac();
   testIgrHmacReject();
   testIgrDupReject();
   testParamMismatchLossNotif();

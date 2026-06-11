@@ -617,9 +617,9 @@ chanBlbChnRsecEgr(
         delayMs = pending->b[prefixSize + 1];
         payloadLen = pending->l - (prefixSize + 2);
 
-        /* compute k using maxShardSize */
-        k = payloadLen > 0 ? (payloadLen + maxShardSize - 1) / maxShardSize : 1;
-        if (k > 256) {
+        /* k bound checked in bytes: the ceiling sum below can wrap
+         * when payloadLen is within maxShardSize of UINT_MAX */
+        if (payloadLen > 256 * maxShardSize) {
           /* payload exceeds chanBlbChnRsecMax(ctx, 0); drop and keep running */
           v->free(pending);
           pending = 0;
@@ -627,6 +627,8 @@ chanBlbChnRsecEgr(
           p[0].o = chanOpGet;
           continue;
         }
+        /* compute k using maxShardSize */
+        k = payloadLen > 0 ? (payloadLen + maxShardSize - 1) / maxShardSize : 1;
         km = k + (unsigned int)mVal;
         if (km > 256) {
           mVal = (unsigned char)(256 - k);
@@ -728,15 +730,6 @@ chanBlbChnRsecEgr(
         /* pointer arrays no longer needed after encode */
         v->free(dataPtrs);
 
-        /* encrypt each shard (before HMAC: encrypt-then-MAC) */
-        /* last data shard (k-1) excludes padding to avoid encrypting known zeros */
-        if (ctx->frgEncrypt) {
-          for (i = 0; i < km; ++i)
-            ctx->frgEncrypt(ctx->frgCryptCtx, work + (unsigned long)i * stride,
-              work + (unsigned long)i * stride + headerGap,
-              i == k - 1 && padding > 0 ? msgShardSize - padding : msgShardSize);
-        }
-
         /* sign each slot (fragment AUTH) */
         for (i = 0; i < km; ++i) {
           unsigned char *s;
@@ -763,9 +756,8 @@ chanBlbChnRsecEgr(
 
         /* grow shard schedule if needed */
         if (shardCount + km > shardAlloc) {
-          shardAlloc = shardCount + km;
           tmp = (struct shardItem *)v->realloc(shards,
-            shardAlloc * sizeof (struct shardItem));
+            (shardCount + km) * sizeof (struct shardItem));
           if (!tmp) {
             /* drop this message and keep running (pending already freed) */
             v->free(table[slot].work);
@@ -775,6 +767,7 @@ chanBlbChnRsecEgr(
             continue;
           }
           shards = tmp;
+          shardAlloc = shardCount + km;
         }
 
         /* insert km shard items into schedule */
@@ -921,7 +914,7 @@ chanBlbChnRsecIgr(
   if (!(buf = (unsigned char *)v->realloc(0, bufSize)))
     goto error;
 
-  /* hdr reconstruction buffer for fragment AUTH/crypto callbacks */
+  /* hdr reconstruction buffer for the fragment AUTH callback */
   if (!(hdr = (unsigned char *)v->realloc(0, (unsigned long)(1 + 255) + tagSize + 3)))
     goto error;
 
@@ -1090,12 +1083,6 @@ chanBlbChnRsecIgr(
           continue;
         }
       }
-
-      /* decrypt shard data (after frgHmac verify: MAC-then-decrypt) */
-      /* last data shard (k-1) excludes padding to match egress */
-      if (ctx->frgDecrypt)
-        ctx->frgDecrypt(ctx->frgCryptCtx, hdr, buf + pos + headerLen,
-          shardIdx == k - 1 && padding > 0 ? fragShardSize - padding : fragShardSize);
 
       ++age;
       /* halve all ages to prevent wraparound on 32-bit */
