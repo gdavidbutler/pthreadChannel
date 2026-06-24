@@ -324,6 +324,28 @@ Parameter contracts, ownership discipline, and configuration details are in the 
 
 ### Examples
 
+The examples below look unrelated — a power-series calculator, a parallel
+shortest-paths solver, socket proxies, a chat client. They are one idea in
+several disguises. Each is the [Agent Discipline](#agent-discipline) above —
+three-part agents, ownership-transferring Channels, a `main()` that is pure
+wiring, shutdown by cascade — differing only in the *topology* that wiring
+describes:
+
+* **Algorithmic / dynamic** (`squint`): the Channel graph is the math
+  expression itself, grown and collapsed at run time by demand and recursion.
+  There is no fixed set of agents to point at.
+* **Master / worker** (`floydWarshall`): a fixed worker pool; collecting N
+  results to match N dispatches *is* the barrier — there is no barrier
+  primitive.
+* **Service / integration** (`sockproxy`, `datagramchat`, `pipeproxy`):
+  byte-oriented I/O bridged to Channel agents through [Blob](#blob);
+  bounded-Store backpressure stands in for explicit flow control.
+
+A correct agent stays correct in any of these topologies because it cannot
+see the topology. That is the takeaway worth more than any single example:
+the shape composes, so the examples are not five tricks to learn but one
+discipline applied five times.
+
 * sockproxy
   * Modeled on tcpproxy.c from [libtask](https://swtch.com/libtask/).
 Connects two chanBlbs back-to-back, with Channels reversed.
