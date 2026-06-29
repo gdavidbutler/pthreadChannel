@@ -69,7 +69,7 @@ chanBlbChnRsecMax(
   if (dgramMax <= overhead
    || dgramMax - overhead > 16384) /* max 2-byte VLQ */
     return (0);
-  return ((256 - (unsigned int)m) * (dgramMax - overhead));
+  return ((256 - m) * (dgramMax - overhead));
 }
 
 /*
@@ -110,8 +110,8 @@ egrFinPriv(
   struct chanBlbChnRsecEgrCtx *ctx;
   struct egrPriv *p;
 
-  ctx = (struct chanBlbChnRsecEgrCtx *)V->frmCtx;
-  p = (struct egrPriv *)ctx->opaque;
+  ctx = V->frmCtx;
+  p = ctx->opaque;
   if (!p)
     return;
   ctx->opaque = 0;
@@ -128,8 +128,8 @@ igrFinPriv(
   struct chanBlbChnRsecIgrCtx *ctx;
   struct igrPriv *p;
 
-  ctx = (struct chanBlbChnRsecIgrCtx *)V->frmCtx;
-  p = (struct igrPriv *)ctx->opaque;
+  ctx = V->frmCtx;
+  p = ctx->opaque;
   if (!p)
     return;
   ctx->opaque = 0;
@@ -145,7 +145,7 @@ chanBlbChnRsecEgrSnap(
 ){
   struct egrPriv *p;
 
-  p = (struct egrPriv *)ctx->opaque;
+  p = ctx->opaque;
   if (!p) {
     memset(out, 0, sizeof (*out));
     return;
@@ -162,7 +162,7 @@ chanBlbChnRsecIgrSnap(
 ){
   struct igrPriv *p;
 
-  p = (struct igrPriv *)ctx->opaque;
+  p = ctx->opaque;
   if (!p) {
     memset(out, 0, sizeof (*out));
     return;
@@ -398,7 +398,7 @@ chanBlbChnRsecEgr(
   unsigned char hasEmit;
   unsigned char pendingFresh;
 
-  ctx = (struct chanBlbChnRsecEgrCtx *)v->frmCtx;
+  ctx = v->frmCtx;
   tagSize = ctx->tagSize;
   frgHmacSize = ctx->frgHmacSize;
   tableSize = ctx->tableSize;
@@ -425,7 +425,7 @@ chanBlbChnRsecEgr(
   /* private state.  The self lock+unlock dance creates a release
    * edge that pairs with any later Snap caller's lock acquire
    * (visibility of mutex_init + counter zero-fill). */
-  if (!(priv = (struct egrPriv *)v->realloc(0, sizeof (*priv))))
+  if (!(priv = v->realloc(0, sizeof (*priv))))
     goto error;
   if (pthread_mutex_init(&priv->m, 0)) {
     v->free(priv);
@@ -437,27 +437,27 @@ chanBlbChnRsecEgr(
   pthread_mutex_unlock(&priv->m);
   ctx->opaque = priv;
 
-  if (!(table = (struct egrEntry *)v->realloc(0,
-        (unsigned long)tableSize * sizeof (struct egrEntry))))
+  if (!(table = v->realloc(0,
+        tableSize * sizeof (struct egrEntry))))
     goto error;
   for (ti = 0; ti < tableSize; ++ti)
     table[ti].work = 0;
 
   /* pack buffer: addr prefix (1+255 max) + wire payload (dgramMax) */
-  if (!(packBuf = (unsigned char *)v->realloc(0, 1 + 255 + dgramMax)))
+  if (!(packBuf = v->realloc(0, 1 + 255 + dgramMax)))
     goto error;
 
   /* same-message avoidance: one byte per table entry */
-  if (!(packSeen = (unsigned char *)v->realloc(0, tableSize)))
+  if (!(packSeen = v->realloc(0, tableSize)))
     goto error;
 
   /* packed-fragment tag offsets for the datagram AUTH callback:
    * at most one fragment per table entry per datagram */
-  if (!(frgOff = (unsigned int *)v->realloc(0,
-        (unsigned long)tableSize * sizeof (unsigned int))))
+  if (!(frgOff = v->realloc(0,
+        tableSize * sizeof (unsigned int))))
     goto error;
 
-  pthread_cleanup_push((void(*)(void*))v->fin, v);
+  pthread_cleanup_push(v->fin, v);
   pthread_cleanup_push(egrFinPriv, v);
   p[0].c = v->chan;
   p[0].v = (void **)&pending;
@@ -629,9 +629,9 @@ chanBlbChnRsecEgr(
         }
         /* compute k using maxShardSize */
         k = payloadLen > 0 ? (payloadLen + maxShardSize - 1) / maxShardSize : 1;
-        km = k + (unsigned int)mVal;
+        km = k + mVal;
         if (km > 256) {
-          mVal = (unsigned char)(256 - k);
+          mVal = (256 - k);
           km = 256;
         }
 
@@ -643,11 +643,11 @@ chanBlbChnRsecEgr(
 
         /* shard_len VLQ encode */
         if (msgShardSize < 128) {
-          shardVlq[0] = (unsigned char)msgShardSize;
+          shardVlq[0] = msgShardSize;
           shardVlqLen = 1;
         } else {
-          shardVlq[0] = (unsigned char)(0x80 | ((msgShardSize - 1) >> 7));
-          shardVlq[1] = (unsigned char)((msgShardSize - 1) & 0x7f);
+          shardVlq[0] = (0x80 | ((msgShardSize - 1) >> 7));
+          shardVlq[1] = ((msgShardSize - 1) & 0x7f);
           shardVlqLen = 2;
         }
 
@@ -657,9 +657,9 @@ chanBlbChnRsecEgr(
 
         /* allocate pointer arrays separately from the byte work buffer so
          * the pointer arrays are suitably aligned regardless of stride. */
-        dataPtrs = (const unsigned char **)v->realloc(0,
-          (unsigned long)k * sizeof (const unsigned char *)
-          + (unsigned long)(unsigned int)mVal * sizeof (unsigned char *));
+        dataPtrs = v->realloc(0,
+          k * sizeof (const unsigned char *)
+          + mVal * sizeof (unsigned char *));
         if (!dataPtrs) {
           /* drop blob and keep running */
           v->free(pending);
@@ -670,7 +670,7 @@ chanBlbChnRsecEgr(
         }
         parityPtrs = (unsigned char **)(dataPtrs + k);
 
-        work = (unsigned char *)v->realloc(0, (unsigned long)km * stride);
+        work = v->realloc(0, (unsigned long)km * stride);
         if (!work) {
           v->free(dataPtrs);
           v->free(pending);
@@ -682,10 +682,10 @@ chanBlbChnRsecEgr(
 
         /* build header template in first slot */
         memcpy(work, pending->b, prefixSize); /* [addrlen][addr][tag] common prefix */
-        work[prefixSize] = (unsigned char)(k - 1);       /* k-1 on wire */
+        work[prefixSize] = (k - 1);       /* k-1 on wire */
         work[prefixSize + 1] = mVal;                     /* m */
         work[prefixSize + 2] = 0;                        /* shard_index placeholder */
-        work[prefixSize + 3] = (unsigned char)padding;   /* padding byte */
+        work[prefixSize + 3] = padding;   /* padding byte */
         memcpy(work + prefixSize + 4, shardVlq, shardVlqLen);
 
         /* replicate header into all slots, set shard_index, copy payload */
@@ -695,7 +695,7 @@ chanBlbChnRsecEgr(
           s = work + (unsigned long)i * stride;
           if (i > 0)
             memcpy(s, work, headerGap);
-          s[prefixSize + 2] = (unsigned char)i;
+          s[prefixSize + 2] = i;
 
           if (i < k) {
             unsigned int off;
@@ -717,7 +717,7 @@ chanBlbChnRsecEgr(
 
         /* encode parity */
         if (mVal > 0 && msgShardSize > 0
-         && rsecEncode(dataPtrs, parityPtrs, msgShardSize, k, (unsigned int)mVal)) {
+         && rsecEncode(dataPtrs, parityPtrs, msgShardSize, k, mVal)) {
           /* unexpected encode failure: drop and keep running */
           v->free(dataPtrs);
           v->free(work);
@@ -756,7 +756,7 @@ chanBlbChnRsecEgr(
 
         /* grow shard schedule if needed */
         if (shardCount + km > shardAlloc) {
-          tmp = (struct shardItem *)v->realloc(shards,
+          tmp = v->realloc(shards,
             (shardCount + km) * sizeof (struct shardItem));
           if (!tmp) {
             /* drop this message and keep running (pending already freed) */
@@ -877,7 +877,7 @@ chanBlbChnRsecIgr(
   unsigned int age;
   unsigned int ti;
 
-  ctx = (struct chanBlbChnRsecIgrCtx *)v->frmCtx;
+  ctx = v->frmCtx;
   tagSize = ctx->tagSize;
   tableSize = ctx->tableSize;
   frgHmacSize = ctx->frgHmacSize;
@@ -892,7 +892,7 @@ chanBlbChnRsecIgr(
 
   /* private state.  See chanBlbChnRsecEgr for the self lock+unlock
    * rationale. */
-  if (!(priv = (struct igrPriv *)v->realloc(0, sizeof (*priv))))
+  if (!(priv = v->realloc(0, sizeof (*priv))))
     goto error;
   if (pthread_mutex_init(&priv->m, 0)) {
     v->free(priv);
@@ -905,27 +905,27 @@ chanBlbChnRsecIgr(
   ctx->opaque = priv;
 
   /* collection table (sorted by tag, compact) */
-  if (!(table = (struct igrEntry **)v->realloc(0,
-        (unsigned long)tableSize * sizeof (struct igrEntry *))))
+  if (!(table = v->realloc(0,
+        tableSize * sizeof (struct igrEntry *))))
     goto error;
 
   /* receive buffer: full address range (addrlen up to 255) */
   bufSize = 1 + 255 + ctx->dgramMax;
-  if (!(buf = (unsigned char *)v->realloc(0, bufSize)))
+  if (!(buf = v->realloc(0, bufSize)))
     goto error;
 
   /* hdr reconstruction buffer for the fragment AUTH callback */
-  if (!(hdr = (unsigned char *)v->realloc(0, (unsigned long)(1 + 255) + tagSize + 3)))
+  if (!(hdr = v->realloc(0, (unsigned long)(1 + 255) + tagSize + 3)))
     goto error;
 
   /* packed-fragment tag offsets for the datagram AUTH callback.  A
    * minimal fragment is >= 5 bytes (k-1, m, si, pad, 1-byte VLQ), so a
    * datagram of dgramMax wire bytes holds at most dgramMax/5 + 1. */
-  if (!(frgOff = (unsigned int *)v->realloc(0,
+  if (!(frgOff = v->realloc(0,
         ((unsigned long)ctx->dgramMax / 5 + 1) * sizeof (unsigned int))))
     goto error;
 
-  pthread_cleanup_push((void(*)(void*))v->fin, v);
+  pthread_cleanup_push(v->fin, v);
   pthread_cleanup_push(igrFinPriv, v);
   p[0].c = v->chan;
   p[0].v = 0;
@@ -980,15 +980,15 @@ chanBlbChnRsecIgr(
         unsigned int vlqOff;
         unsigned int send;
 
-        sk = (unsigned int)buf[sp + tagSize] + 1;
-        if (sk + (unsigned int)buf[sp + tagSize + 1] > 256)
+        sk = buf[sp + tagSize] + 1;
+        if (sk + buf[sp + tagSize + 1] > 256)
           break;
         vlqOff = sp + tagSize + 4;
         if (buf[vlqOff] & 0x80) {
           if (vlqOff + 2 > fend)
             break;
-          ssz = (unsigned int)(buf[vlqOff] & 0x7f);
-          ssz = ((ssz << 7) | (unsigned int)(buf[vlqOff + 1] & 0x7f)) + 1;
+          ssz = (buf[vlqOff] & 0x7f);
+          ssz = ((ssz << 7) | (buf[vlqOff + 1] & 0x7f)) + 1;
           svlq = 2;
         } else {
           ssz = buf[vlqOff];
@@ -1021,14 +1021,14 @@ chanBlbChnRsecIgr(
       unsigned int headerLen;
       unsigned int fragEnd;
       struct igrEntry *ent;
-      int slot;
+      unsigned int slot;
       int decoded;
       int found;
 
       IGR_BUMP(priv->ctrs.frg);
 
       /* parse fragment header */
-      k = (unsigned int)buf[pos + tagSize] + 1;
+      k = buf[pos + tagSize] + 1;
       mVal = buf[pos + tagSize + 1];
       shardIdx = buf[pos + tagSize + 2];
 
@@ -1049,8 +1049,8 @@ chanBlbChnRsecIgr(
         if (buf[vlqOff] & 0x80) {
           if (vlqOff + 2 > n)
             break;
-          fragShardSize = (unsigned int)(buf[vlqOff] & 0x7f);
-          fragShardSize = ((fragShardSize << 7) | (unsigned int)(buf[vlqOff + 1] & 0x7f)) + 1;
+          fragShardSize = (buf[vlqOff] & 0x7f);
+          fragShardSize = ((fragShardSize << 7) | (buf[vlqOff + 1] & 0x7f)) + 1;
           shardVlqLen = 2;
         } else {
           fragShardSize = buf[vlqOff];
@@ -1115,7 +1115,7 @@ chanBlbChnRsecIgr(
             break;
           }
         }
-        slot = (int)lo;
+        slot = lo;
       }
 
       /* handle found entry with parameter mismatch */
@@ -1131,7 +1131,7 @@ chanBlbChnRsecIgr(
             lb->l = table[slot]->prefixSize;
             lb->b[table[slot]->prefixSize - 2] = 0;
             lb->b[table[slot]->prefixSize - 1] =
-              (unsigned char)table[slot]->received;
+              table[slot]->received;
             p[0].v = (void **)&lb;
             if (chanOne(0, sizeof (p) / sizeof (p[0]), p) != 1
              || p[0].s != chanOsPut)
@@ -1139,9 +1139,9 @@ chanBlbChnRsecIgr(
           }
           v->free(table[slot]);
           --tableUsed;
-          if ((unsigned int)slot < tableUsed)
+          if (slot < tableUsed)
             memmove(table + slot, table + slot + 1,
-              (unsigned long)(tableUsed - (unsigned int)slot) * sizeof (*table));
+              (tableUsed - slot) * sizeof (*table));
           found = 0;
           /* slot still holds the correct insert position */
         }
@@ -1151,7 +1151,7 @@ chanBlbChnRsecIgr(
       if (!found) {
         unsigned int insertPos;
 
-        insertPos = (unsigned int)slot;
+        insertPos = slot;
 
         /* evict LRU if table full */
         if (tableUsed >= tableSize) {
@@ -1175,7 +1175,7 @@ chanBlbChnRsecIgr(
             lb->l = table[lruIdx]->prefixSize;
             lb->b[table[lruIdx]->prefixSize - 2] = 0;
             lb->b[table[lruIdx]->prefixSize - 1] =
-              (unsigned char)table[lruIdx]->received;
+              table[lruIdx]->received;
             p[0].v = (void **)&lb;
             if (chanOne(0, sizeof (p) / sizeof (p[0]), p) != 1
              || p[0].s != chanOsPut)
@@ -1185,13 +1185,13 @@ chanBlbChnRsecIgr(
           --tableUsed;
           if (lruIdx < tableUsed)
             memmove(table + lruIdx, table + lruIdx + 1,
-              (unsigned long)(tableUsed - lruIdx) * sizeof (*table));
+              (tableUsed - lruIdx) * sizeof (*table));
           if (lruIdx < insertPos)
             --insertPos;
         }
 
         /* create new entry: struct + parity storage + tag copy */
-        ent = (struct igrEntry *)v->realloc(0,
+        ent = v->realloc(0,
           sizeof (struct igrEntry)
           + (unsigned long)mVal * fragShardSize + tagSize);
         if (!ent)
@@ -1210,7 +1210,7 @@ chanBlbChnRsecIgr(
         memset(ent->present, 0, sizeof (ent->present));
 
         /* allocate output blob */
-        ent->blob = (chanBlb_t *)v->realloc(0,
+        ent->blob = v->realloc(0,
           chanBlb_tSize(ent->prefixSize + k * fragShardSize));
         if (!ent->blob) {
           v->free(ent);
@@ -1225,10 +1225,10 @@ chanBlbChnRsecIgr(
         /* insert at sorted position */
         if (insertPos < tableUsed)
           memmove(table + insertPos + 1, table + insertPos,
-            (unsigned long)(tableUsed - insertPos) * sizeof (*table));
+            (tableUsed - insertPos) * sizeof (*table));
         table[insertPos] = ent;
         ++tableUsed;
-        slot = (int)insertPos;
+        slot = insertPos;
       }
 
       ent = table[slot];
@@ -1294,25 +1294,25 @@ chanBlbChnRsecIgr(
           unsigned int ri;
           unsigned int ci;
 
-          wsSize = (unsigned long)k * sizeof (const unsigned char *)
-                 + (unsigned long)k * sizeof (unsigned char *)
+          wsSize = k * sizeof (const unsigned char *)
+                 + k * sizeof (unsigned char *)
                  + k + RS_WORK_SIZE(k)
                  + (unsigned long)dataPresent * ent->shardSize;
-          workspace = (unsigned char *)v->realloc(0, wsSize);
+          workspace = v->realloc(0, wsSize);
           if (!workspace) {
             v->free(ent->blob);
             v->free(ent);
             --tableUsed;
-            if ((unsigned int)slot < tableUsed)
+            if (slot < tableUsed)
               memmove(table + slot, table + slot + 1,
-                (unsigned long)(tableUsed - (unsigned int)slot) * sizeof (*table));
+                (tableUsed - slot) * sizeof (*table));
             continue;
           }
           recvPtrs = (const unsigned char **)workspace;
           outPtrs = (unsigned char **)((unsigned char *)recvPtrs
-            + (unsigned long)k * sizeof (const unsigned char *));
+            + k * sizeof (const unsigned char *));
           indices = (unsigned char *)outPtrs
-            + (unsigned long)k * sizeof (unsigned char *);
+            + k * sizeof (unsigned char *);
           workArea = indices + k;
           shardCopies = workArea + RS_WORK_SIZE(k);
 
@@ -1328,7 +1328,7 @@ chanBlbChnRsecIgr(
                 ent->shardSize);
               recvPtrs[ri] = shardCopies
                 + (unsigned long)ci * ent->shardSize;
-              indices[ri] = (unsigned char)ti;
+              indices[ri] = ti;
               ++ri;
               ++ci;
             }
@@ -1337,7 +1337,7 @@ chanBlbChnRsecIgr(
             if (ent->present[ti]) {
               recvPtrs[ri] = ent->parity
                 + (unsigned long)(ti - k) * ent->shardSize;
-              indices[ri] = (unsigned char)ti;
+              indices[ri] = ti;
               ++ri;
             }
           }
@@ -1353,9 +1353,9 @@ chanBlbChnRsecIgr(
             v->free(ent->blob);
             v->free(ent);
             --tableUsed;
-            if ((unsigned int)slot < tableUsed)
+            if (slot < tableUsed)
               memmove(table + slot, table + slot + 1,
-                (unsigned long)(tableUsed - (unsigned int)slot) * sizeof (*table));
+                (tableUsed - slot) * sizeof (*table));
             continue;
           }
           v->free(workspace);
@@ -1371,8 +1371,8 @@ chanBlbChnRsecIgr(
         dp = 0;
         for (ti = 0; ti < k; ++ti)
           dp += ent->present[ti] ? 1 : 0;
-        ent->blob->b[ent->prefixSize - 2] = (unsigned char)ent->m;
-        ent->blob->b[ent->prefixSize - 1] = (unsigned char)(ent->k - dp);
+        ent->blob->b[ent->prefixSize - 2] = ent->m;
+        ent->blob->b[ent->prefixSize - 1] = (ent->k - dp);
       }
 
       /* put blob on channel */
@@ -1382,9 +1382,9 @@ chanBlbChnRsecIgr(
         v->free(ent->blob);
         v->free(ent);
         --tableUsed;
-        if ((unsigned int)slot < tableUsed)
+        if (slot < tableUsed)
           memmove(table + slot, table + slot + 1,
-            (unsigned long)(tableUsed - (unsigned int)slot) * sizeof (*table));
+            (tableUsed - slot) * sizeof (*table));
         goto done;
       }
       /* blob ownership transferred; keep entry for de-dup of late fragments */
