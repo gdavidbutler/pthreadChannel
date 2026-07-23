@@ -170,7 +170,7 @@ struct chanBlbChnRsecIgrCtx {
   /*
    * adr points to [addrlen(1)][addr(addrlen)] of the kernel-supplied
    * source address.  This address is attacker-controlled in any
-   * threat model that includes adversarial peers — the callback
+   * threat model that includes adversarial peers -- the callback
    * MUST NOT trust it as a key selector.  Use it as a routing hint,
    * ignore it, or trial-verify across a peer-key set.
    */
@@ -241,8 +241,8 @@ chanBlbChnRsecMax(
  ,unsigned char m
 );
 
-/* Egress blob: [addrlen(1)][addr(addrlen)][tag(tagSize)][m(1)][delay_ms(1)][payload(N)] */
-/* delay_ms: inter-shard pacing delay in milliseconds (0 = send all at once) */
+/* Egress blob: [addrlen(1)][addr(addrlen)][tag(tagSize)][m(1)][delay_us(4)][payload(N)] */
+/* delay_us: inter-shard pacing delay in microseconds, big endian (0 = send all at once) */
 /* v->frmCtx must point to a struct chanBlbChnRsecEgrCtx with opaque zeroed */
 void *
 chanBlbChnRsecEgr(

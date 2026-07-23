@@ -174,10 +174,10 @@ chanBlbChnRsecIgrSnap(
 
 struct egrEntry {
   unsigned char *work;  /* NULL = empty slot */
+  struct timespec delay;/* per-message inter-shard delay */
   unsigned int stride;
   unsigned int km;
   unsigned int sent;    /* shards sent so far */
-  unsigned char delayMs;/* per-message inter-shard delay */
 };
 
 struct shardItem {
@@ -215,8 +215,17 @@ shardInsert(
 /*
  * Pack and send one datagram starting from the head of the shard
  * schedule.  Packs additional due shards from different messages
- * to the same address.  *maxDelayMs (out): largest delay_ms among
- * packed shards.  Returns 0 on output failure.
+ * to the same address.  *packDelay (out): SUM of the packed
+ * shards' delay.  Returns 0 on output failure.
+ *
+ * Sum, not max: delay is a bandwidth pace, and bandwidth is
+ * per-byte, not per-datagram.  Each shard's schedule slot stands
+ * for a delay-wide slice of wire time; packing lets shards
+ * ride early in one datagram, so the wait after it must cover
+ * every slice consumed or packing mints free bandwidth -- a
+ * full-packed datagram under a max rule exceeded the sender's
+ * declared rate by the packing factor.  Sum >= max, so the
+ * per-message inter-shard spacing guarantee is preserved.
  *
  * No locks held: callbacks (dtgHmacSign, dtgHashSign, v->out, v->free) and the
  * slot-free pass run unlocked.  The caller flushes the returned
@@ -234,10 +243,11 @@ egrSendPack(
  ,unsigned int *frgOff
  ,struct shardItem *shards
  ,unsigned long *shardCount
- ,unsigned char *maxDelayMs
+ ,struct timespec *packDelay
  ,unsigned int *frgAdd
  ,unsigned int *msgAdd
 ){
+  static long nsps = 1000000000L;
   unsigned int dgramMax;
   unsigned int dtgHmacSize;
   unsigned int dtgHashSize;
@@ -274,7 +284,7 @@ egrSendPack(
     fragLen);
   packPos += fragLen;
   packSeen[ei] = 1;
-  *maxDelayMs = table[ei].delayMs;
+  *packDelay = table[ei].delay;
 
   /* pop head */
   --(*shardCount);
@@ -309,8 +319,12 @@ egrSendPack(
         fragLen2);
       packPos += fragLen2;
       packSeen[ei2] = 1;
-      if (table[ei2].delayMs > *maxDelayMs)
-        *maxDelayMs = table[ei2].delayMs;
+      packDelay->tv_sec += table[ei2].delay.tv_sec;
+      packDelay->tv_nsec += table[ei2].delay.tv_nsec;
+      if (packDelay->tv_nsec >= nsps) {
+        packDelay->tv_sec++;
+        packDelay->tv_nsec -= nsps;
+      }
       ++frgLocal;
       ++table[ei2].sent;
       /* pop this item */
@@ -375,6 +389,9 @@ void *
 chanBlbChnRsecEgr(
   struct chanBlbEgrCtx *v
 ){
+  static unsigned int egrhdr = 5; /* [m(1)][delay_us(4)] after [addrlen][addr][tag] */
+  static unsigned long usps = 1000000L;
+  static long nsps = 1000000000L;
   struct chanBlbChnRsecEgrCtx *ctx;
   struct egrPriv *priv;
   struct egrEntry *table;
@@ -394,7 +411,7 @@ chanBlbChnRsecEgr(
   unsigned long shardAlloc;
   unsigned int ti;
   struct timespec lastEmit;
-  unsigned char lastMaxD;
+  struct timespec lastPackD;
   unsigned char hasEmit;
   unsigned char pendingFresh;
 
@@ -415,7 +432,8 @@ chanBlbChnRsecEgr(
   shardCount = 0;
   shardAlloc = 0;
   pending = 0;
-  lastMaxD = 0;
+  lastPackD.tv_sec = 0;
+  lastPackD.tv_nsec = 0;
   hasEmit = 0;
   pendingFresh = 0;
 
@@ -469,9 +487,11 @@ chanBlbChnRsecEgr(
     struct timespec target;
 
     /* Emission target: the later of the head shard's scheduled
-     * ts (per-message pacing) and lastEmit + lastMaxD (inter-
-     * packet wire pacing).  target is only valid when shardCount
-     * is non-zero; reused below after chanOne to gate emission. */
+     * ts (per-message pacing) and lastEmit + lastPackD (inter-
+     * packet wire pacing; lastPackD is the SUM of the previous
+     * datagram's packed delays).  target is only valid when
+     * shardCount is non-zero; reused below after chanOne to gate
+     * emission. */
     if (!shardCount) {
       ns = 0; /* block forever */
     } else {
@@ -480,10 +500,11 @@ chanBlbChnRsecEgr(
         struct timespec nextAllowed;
 
         nextAllowed = lastEmit;
-        nextAllowed.tv_nsec += (long)lastMaxD * 1000000L;
-        if (nextAllowed.tv_nsec >= 1000000000L) {
+        nextAllowed.tv_sec += lastPackD.tv_sec;
+        nextAllowed.tv_nsec += lastPackD.tv_nsec;
+        if (nextAllowed.tv_nsec >= nsps) {
           nextAllowed.tv_sec++;
-          nextAllowed.tv_nsec -= 1000000000L;
+          nextAllowed.tv_nsec -= nsps;
         }
         if (nextAllowed.tv_sec > target.tv_sec
          || (nextAllowed.tv_sec == target.tv_sec
@@ -500,9 +521,9 @@ chanBlbChnRsecEgr(
 
         dsec = target.tv_sec - now.tv_sec;
         if (dsec > 1)
-          ns = 1000000000L; /* cap at 1s for ILP32 portability */
+          ns = nsps; /* cap at 1s for ILP32 portability */
         else {
-          ns = dsec * 1000000000L
+          ns = dsec * nsps
              + (target.tv_nsec - now.tv_nsec);
           if (ns <= 0) ns = 1;
         }
@@ -529,7 +550,7 @@ chanBlbChnRsecEgr(
       if (target.tv_sec < now.tv_sec
        || (target.tv_sec == now.tv_sec
         && target.tv_nsec <= now.tv_nsec)) {
-        unsigned char packMaxD;
+        struct timespec packD;
         unsigned int frgAdd;
         unsigned int msgAdd;
         int sent;
@@ -537,7 +558,7 @@ chanBlbChnRsecEgr(
         frgAdd = 0;
         msgAdd = 0;
         sent = egrSendPack(v, ctx, table, tableSize, packBuf, packSeen, frgOff,
-                           shards, &shardCount, &packMaxD, &frgAdd, &msgAdd);
+                           shards, &shardCount, &packD, &frgAdd, &msgAdd);
         if (frgAdd || msgAdd) {
           pthread_mutex_lock(&priv->m);
           priv->ctrs.frg += frgAdd;
@@ -547,7 +568,7 @@ chanBlbChnRsecEgr(
         if (!sent)
           goto exit;
         clock_gettime(CLOCK_MONOTONIC, &lastEmit);
-        lastMaxD = packMaxD;
+        lastPackD = packD;
         hasEmit = 1;
       }
     }
@@ -574,6 +595,7 @@ chanBlbChnRsecEgr(
       }
 
       if (slot < tableSize) {
+        unsigned long delayUs;
         unsigned int addrlen;
         unsigned int prefixSize;
         unsigned int payloadLen;
@@ -586,15 +608,15 @@ chanBlbChnRsecEgr(
         unsigned int stride;
         unsigned int i;
         unsigned char mVal;
-        unsigned char delayMs;
         unsigned char shardVlq[2];
         unsigned char *work;
         const unsigned char **dataPtrs;
         unsigned char **parityPtrs;
+        struct timespec delay;
         struct shardItem item;
         struct shardItem *tmp;
 
-        /* parse blob prefix: [addrlen(1)][addr(addrlen)][tag(tagSize)][m(1)][delay_ms(1)][payload] */
+        /* parse blob prefix: [addrlen(1)][addr(addrlen)][tag(tagSize)][m(1)][delay_us(4)][payload] */
         if (pending->l < 1) {
           /* malformed blob; drop and keep running */
           v->free(pending);
@@ -605,7 +627,7 @@ chanBlbChnRsecEgr(
         }
         addrlen = pending->b[0];
         prefixSize = 1 + addrlen + tagSize;
-        if (pending->l < prefixSize + 2) {
+        if (pending->l < prefixSize + egrhdr) {
           /* malformed blob; drop and keep running */
           v->free(pending);
           pending = 0;
@@ -614,8 +636,13 @@ chanBlbChnRsecEgr(
           continue;
         }
         mVal = pending->b[prefixSize];
-        delayMs = pending->b[prefixSize + 1];
-        payloadLen = pending->l - (prefixSize + 2);
+        delayUs = (unsigned long)pending->b[prefixSize + 1] << 24
+                | (unsigned long)pending->b[prefixSize + 2] << 16
+                | (unsigned long)pending->b[prefixSize + 3] << 8
+                | pending->b[prefixSize + 4];
+        delay.tv_sec = delayUs / usps;
+        delay.tv_nsec = (long)(delayUs % usps) * 1000L;
+        payloadLen = pending->l - (prefixSize + egrhdr);
 
         /* k bound checked in bytes: the ceiling sum below can wrap
          * when payloadLen is within maxShardSize of UINT_MAX */
@@ -706,7 +733,7 @@ chanBlbChnRsecEgr(
             if (len > msgShardSize)
               len = msgShardSize;
             if (len > 0)
-              memcpy(s + headerGap, pending->b + prefixSize + 2 + off, len);
+              memcpy(s + headerGap, pending->b + prefixSize + egrhdr + off, len);
             if (len < msgShardSize)
               memset(s + headerGap + len, 0, msgShardSize - len);
             dataPtrs[i] = s + headerGap;
@@ -752,7 +779,7 @@ chanBlbChnRsecEgr(
         table[slot].stride = stride;
         table[slot].km = km;
         table[slot].sent = 0;
-        table[slot].delayMs = delayMs;
+        table[slot].delay = delay;
 
         /* grow shard schedule if needed */
         if (shardCount + km > shardAlloc) {
@@ -775,10 +802,11 @@ chanBlbChnRsecEgr(
         item.entry = slot;
         item.ts = now;
         for (i = 0; i < km; ++i) {
-          item.ts.tv_nsec += (long)delayMs * 1000000L;
-          if (item.ts.tv_nsec >= 1000000000L) {
+          item.ts.tv_sec += delay.tv_sec;
+          item.ts.tv_nsec += delay.tv_nsec;
+          if (item.ts.tv_nsec >= nsps) {
             item.ts.tv_sec++;
-            item.ts.tv_nsec -= 1000000000L;
+            item.ts.tv_nsec -= nsps;
           }
           item.shard = i;
           shardInsert(shards, shardCount, &item);
@@ -831,7 +859,7 @@ struct igrEntry {
   unsigned int padding;
   unsigned int received;
   unsigned int age;
-  unsigned int prefixSize; /* 1 + addrlen + tagSize + 2 (includes rm + um) */
+  unsigned int prefixSize; /* 1 + addrlen + tagSize + igrhdr (includes rm + um) */
   unsigned char present[256];
 };
 
@@ -860,6 +888,7 @@ void *
 chanBlbChnRsecIgr(
   struct chanBlbIgrCtx *v
 ){
+  static unsigned int igrhdr = 2; /* [rm(1)][um(1)] after [addrlen][addr][tag] */
   struct chanBlbChnRsecIgrCtx *ctx;
   struct igrPriv *priv;
   struct igrEntry **table;
@@ -1122,15 +1151,15 @@ chanBlbChnRsecIgr(
       if (found) {
         if (table[slot]->k != k || table[slot]->m != mVal
          || table[slot]->shardSize != fragShardSize) {
-          /* mismatch: evict — deliver loss notification */
+          /* mismatch: evict -- deliver loss notification */
           if (table[slot]->blob) {
             chanBlb_t *lb;
 
             IGR_BUMP(priv->ctrs.evict);
             lb = table[slot]->blob;
             lb->l = table[slot]->prefixSize;
-            lb->b[table[slot]->prefixSize - 2] = 0;
-            lb->b[table[slot]->prefixSize - 1] =
+            lb->b[table[slot]->prefixSize - igrhdr] = 0;
+            lb->b[table[slot]->prefixSize - igrhdr + 1] =
               table[slot]->received;
             p[0].v = (void **)&lb;
             if (chanOne(0, sizeof (p) / sizeof (p[0]), p) != 1
@@ -1145,6 +1174,39 @@ chanBlbChnRsecIgr(
           found = 0;
           /* slot still holds the correct insert position */
         }
+      }
+
+      /* Completed-entry dedup horizon, derived from the entry's OWN shard
+       * train.  A delivered entry may still legitimately receive the rest
+       * of the transmission that produced it: it completed at k received,
+       * so (k + m) - k more fragments of that train can still be in
+       * flight.  `received` keeps counting them (the late path below), and
+       * once it reaches k + m the train is fully accounted for -- no
+       * straggler of that transmission can remain, so the next same-tag
+       * fragment can only be a NEW transmission (a retry-based sender
+       * re-sends under the same tag).  Drop the entry silently (no data
+       * loss; same class as the LRU eviction of a completed entry) and let
+       * that fragment start a fresh reassembly, so the re-send is
+       * DELIVERED AGAIN rather than eaten forever.
+       *
+       * The bound must be the entry's own traffic, never AMBIENT traffic:
+       * a horizon counted in arrivals-at-this-ingress goes unbounded
+       * exactly when the sender is idle, because then the re-sends are
+       * both the thing being eaten AND the only thing advancing the clock
+       * -- an idle retry was eaten for (k + m) * tableSize consecutive
+       * re-sends before one got through.  A k = 1, m = 0 message (the
+       * common small act) now expires on the FIRST re-send, which is
+       * exactly right: a one-shard message has no possible straggler. */
+      if (found && !table[slot]->blob
+       && table[slot]->received
+        >= (unsigned int)table[slot]->k + table[slot]->m) {
+        v->free(table[slot]);
+        --tableUsed;
+        if (slot < tableUsed)
+          memmove(table + slot, table + slot + 1,
+            (tableUsed - slot) * sizeof (*table));
+        found = 0;
+        /* slot still holds the correct insert position */
       }
 
       /* if not found, create entry and insert at sorted position */
@@ -1166,15 +1228,15 @@ chanBlbChnRsecIgr(
               lruIdx = ti;
             }
           }
-          /* LRU evict — deliver loss notification */
+          /* LRU evict -- deliver loss notification */
           if (table[lruIdx]->blob) {
             chanBlb_t *lb;
 
             IGR_BUMP(priv->ctrs.evict);
             lb = table[lruIdx]->blob;
             lb->l = table[lruIdx]->prefixSize;
-            lb->b[table[lruIdx]->prefixSize - 2] = 0;
-            lb->b[table[lruIdx]->prefixSize - 1] =
+            lb->b[table[lruIdx]->prefixSize - igrhdr] = 0;
+            lb->b[table[lruIdx]->prefixSize - igrhdr + 1] =
               table[lruIdx]->received;
             p[0].v = (void **)&lb;
             if (chanOne(0, sizeof (p) / sizeof (p[0]), p) != 1
@@ -1205,7 +1267,7 @@ chanBlbChnRsecIgr(
         ent->padding = padding;
         ent->received = 0;
         ent->age = age;
-        ent->prefixSize = 1 + addrlen + tagSize + 2;
+        ent->prefixSize = 1 + addrlen + tagSize + igrhdr;
         memcpy(ent->tag, buf + pos, tagSize);
         memset(ent->present, 0, sizeof (ent->present));
 
@@ -1233,9 +1295,14 @@ chanBlbChnRsecIgr(
 
       ent = table[slot];
 
-      /* already delivered: ignore late fragments */
+      /* Already delivered: eat this straggler, and count it against the
+       * transmission's shard train -- when `received` reaches k + m the
+       * train is spent and the expiry above retires the entry, so the
+       * next same-tag fragment (which can only be a re-send) reassembles
+       * afresh. */
       if (!ent->blob) {
         IGR_BUMP(priv->ctrs.late);
+        ++ent->received;
         pos = fragEnd;
         continue;
       }
@@ -1371,8 +1438,8 @@ chanBlbChnRsecIgr(
         dp = 0;
         for (ti = 0; ti < k; ++ti)
           dp += ent->present[ti] ? 1 : 0;
-        ent->blob->b[ent->prefixSize - 2] = ent->m;
-        ent->blob->b[ent->prefixSize - 1] = (ent->k - dp);
+        ent->blob->b[ent->prefixSize - igrhdr] = ent->m;
+        ent->blob->b[ent->prefixSize - igrhdr + 1] = (ent->k - dp);
       }
 
       /* put blob on channel */

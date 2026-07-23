@@ -41,6 +41,13 @@
  * enqueue time.  DelayMs holds the message in a deadline-sorted queue
  * inside the egress ctx before bus delivery.
  *
+ * Shim-only additions: the Part* partition-window rule table (see its
+ * comment below) and chanBlbTrnFdDatagramSrcPort(), which labels an
+ * egress ctx with its owner's port so a rule can match the src side of
+ * a datagram (egress sockets are typically unbound).  Partition drops
+ * apply at enqueue time like the loss knobs; a datagram already in the
+ * DelayMs queue when a window opens still delivers (in-flight).
+ *
  * The egress and ingress halves of a single chanBlb instance may share
  * one ctx (as test_rsec does) or live in two separate ctx objects (as
  * AAB does with its half-duplex instances).  The bus is global so the
@@ -74,6 +81,29 @@ unsigned int chanBlbTrnFdDatagramObsEnable = 0;
 unsigned int chanBlbTrnFdDatagramObsCnt = 0;
 struct chanBlbTrnFdDatagramObsEntry
   chanBlbTrnFdDatagramObs[CHAN_BLB_TRN_FD_DATAGRAM_OBS_MAX];
+
+/* Partition windows.  Each rule is DIRECTIONAL: it drops every datagram
+ * flowing Src -> Dst -- deterministically, not probabilistically -- from
+ * AfterMs for ForMs, measured from the FIRST egress datagram any ctx
+ * attempts (callers that need a common zero start their traffic behind a
+ * barrier, so that first send is it).  A port of 0 is a wildcard:
+ * {A, 0} mutes A (nothing it sends delivers), {0, A} deafens A (nothing
+ * sent to it delivers), both rules together cut A off symmetrically, and
+ * {0, 0} blacks out the whole bus.  Asymmetric partitions are a real
+ * network condition; directionality is the primitive that expresses
+ * them.  The dst side of a datagram is its wire destination port; the
+ * src side is whatever label chanBlbTrnFdDatagramSrcPort() put on the
+ * sending egress ctx -- egress sockets are typically unbound (wildcard
+ * getsockname), so without a label only dst-side rules can match.
+ * This models a real partition where loss knobs (DropPct/Burst) cannot:
+ * those are fair loss, and the RSEC/BPR stack is built to ride fair
+ * loss out. */
+#define CHAN_BLB_TRN_FD_DATAGRAM_PART_MAX 32
+unsigned int chanBlbTrnFdDatagramPartCnt = 0;
+unsigned int chanBlbTrnFdDatagramPartSrc[CHAN_BLB_TRN_FD_DATAGRAM_PART_MAX];
+unsigned int chanBlbTrnFdDatagramPartDst[CHAN_BLB_TRN_FD_DATAGRAM_PART_MAX];
+unsigned long chanBlbTrnFdDatagramPartAfterMs[CHAN_BLB_TRN_FD_DATAGRAM_PART_MAX];
+unsigned long chanBlbTrnFdDatagramPartForMs[CHAN_BLB_TRN_FD_DATAGRAM_PART_MAX];
 
 /* ===== In-memory bus ===== */
 
@@ -115,6 +145,7 @@ struct busEntry {
 struct ctx {
   /* egress state (populated by OutputCtx) */
   int o4, o6;
+  unsigned int srcPort;   /* partition-rule sender label; 0 = unlabeled */
   struct sockaddr_storage src4;
   struct sockaddr_storage src6;
   socklen_t src4Len;
@@ -324,11 +355,11 @@ egrSend(
   family = ((const struct sockaddr *)(wire + 1))->sa_family;
   src = pickSrc(c, family, &srcLen);
   if (!src) {
-    /* no source for this family configured — silent drop */
+    /* no source for this family configured -- silent drop */
     return (wireLen);
   }
   deliverLoopback(wire, wireLen, src, srcLen);
-  /* deliver success/fail both return "sent" — UDP semantics */
+  /* deliver success/fail both return "sent" -- UDP semantics */
   return (wireLen);
 }
 
@@ -761,6 +792,79 @@ bwDrop(
   return (1);
 }
 
+/* Label an egress ctx with its owner's port for the partition rules'
+ * src side.  Shim-only API (the real transport neither has nor needs
+ * it -- receivers there authenticate by tag, never by source address);
+ * call any time after chanBlbTrnFdDatagramCtx(). */
+void
+chanBlbTrnFdDatagramSrcPort(
+  void *v
+ ,unsigned int port
+){
+  V->srcPort = port;
+}
+
+static pthread_mutex_t PartLock = PTHREAD_MUTEX_INITIALIZER;
+static struct timespec PartEpoch;
+static unsigned char PartEpochSet = 0;
+
+/* Returns 1 when a partition rule cuts this datagram's (src, dst) link
+ * right now.  The first call stamps the epoch. */
+static int
+partDrop(
+  struct ctx *c
+ ,const unsigned char *b
+){
+  const struct sockaddr *dst;
+  struct timespec now;
+  unsigned long el;
+  long dsec;
+  long dns;
+  unsigned int dstPort;
+  unsigned int i;
+  int drop;
+
+  dst = (const struct sockaddr *)(b + 1);
+  if (dst->sa_family == AF_INET
+   && b[0] >= sizeof (struct sockaddr_in))
+    dstPort = ntohs(((const struct sockaddr_in *)dst)->sin_port);
+  else if (dst->sa_family == AF_INET6
+   && b[0] >= sizeof (struct sockaddr_in6))
+    dstPort = ntohs(((const struct sockaddr_in6 *)dst)->sin6_port);
+  else
+    return (0);
+  pthread_mutex_lock(&PartLock);
+  clock_gettime(CLOCK_MONOTONIC, &now);
+  if (!PartEpochSet) {
+    PartEpoch = now;
+    PartEpochSet = 1;
+  }
+  pthread_mutex_unlock(&PartLock);
+  dsec = (long)(now.tv_sec - PartEpoch.tv_sec);
+  dns = now.tv_nsec - PartEpoch.tv_nsec;
+  if (dns < 0) {
+    dsec--;
+    dns += 1000000000L;
+  }
+  el = (unsigned long)dsec * 1000UL + (unsigned long)dns / 1000000UL;
+  drop = 0;
+  for (i = 0;
+       i < chanBlbTrnFdDatagramPartCnt
+    && i < CHAN_BLB_TRN_FD_DATAGRAM_PART_MAX
+    && !drop;
+       ++i) {
+    if (el < chanBlbTrnFdDatagramPartAfterMs[i]
+     || el >= chanBlbTrnFdDatagramPartAfterMs[i]
+            + chanBlbTrnFdDatagramPartForMs[i])
+      continue;
+    drop = (!chanBlbTrnFdDatagramPartSrc[i]
+         || chanBlbTrnFdDatagramPartSrc[i] == c->srcPort)
+        && (!chanBlbTrnFdDatagramPartDst[i]
+         || chanBlbTrnFdDatagramPartDst[i] == dstPort);
+  }
+  return (drop);
+}
+
 unsigned int
 chanBlbTrnFdDatagramOutput(
   void *v
@@ -778,6 +882,14 @@ chanBlbTrnFdDatagramOutput(
     e->len = l - 1 - (unsigned int)b[0];
     ++chanBlbTrnFdDatagramObsCnt;
   }
+
+  /* partition first: a cut link drops deterministically, before the
+   * probabilistic loss knobs even roll */
+  if (chanBlbTrnFdDatagramPartCnt > 0
+   && l >= 1
+   && l > 1 + (unsigned int)b[0]
+   && partDrop(V, b))
+    return (l);
 
   if (chanBlbTrnFdDatagramBurstLen > 0) {
     if (burstDrop(V, b))
@@ -812,7 +924,7 @@ chanBlbTrnFdDatagramOutput(
     family = ((const struct sockaddr *)(b + 1))->sa_family;
     src = pickSrc(V, family, &srcLen);
     if (!src)
-      return (l); /* no source for family — drop like egrSend */
+      return (l); /* no source for family -- drop like egrSend */
 
     q = (struct qMsg *)malloc(sizeof (*q) - 1 + l);
     if (!q)

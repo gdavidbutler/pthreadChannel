@@ -53,7 +53,7 @@ static unsigned int TagSize = 2;
 static unsigned int DgramMax = 508;
 static unsigned int TableSize = 64;
 static unsigned int ParityShards = 1;
-static unsigned int DelayMs = 1;
+static unsigned long DelayUs = 100;
 static unsigned short TagCounter;
 static char *HmacKey;
 
@@ -261,14 +261,14 @@ usage(
   fprintf(stderr
   ,"Usage: %s -l port"
 #ifdef RSEC
-   " [-m parity] [-f dgrammax] [-d delayms] [-t tablesize] [-k key]"
+   " [-m parity] [-f dgrammax] [-d delayus] [-t tablesize] [-k key]"
 #endif
    " peer:port [peer:port ...]\n"
    "  Broadcast chat using unbound datagram sockets\n"
 #ifdef RSEC
    "  -m  parity shards (default 1)\n"
    "  -f  max datagram payload size (default 548, IPv4/UDP fragment-free)\n"
-   "  -d  inter-shard delay ms (default 1)\n"
+   "  -d  inter-shard delay (microseconds, default 100)\n"
    "  -t  ingress table size (default 64)\n"
    "  -k  HMAC shared key (enables rmd128 authentication)\n"
 #endif
@@ -311,7 +311,7 @@ main(
     DgramMax = (unsigned int)atoi(optarg);
     break;
   case 'd':
-    DelayMs = (unsigned int)atoi(optarg);
+    DelayUs = (unsigned long)atoi(optarg);
     break;
   case 't':
     TableSize = (unsigned int)atoi(optarg);
@@ -467,7 +467,7 @@ main(
       egrCtx.dtgHmacSign = dtgHmacSignCb;
       igrCtx.dtgHmacVrfy = dtgHmacVrfyCb;
     }
-    /* opaque[] is zero (file-scope statics) — framer threads init/fini */
+    /* opaque[] is zero (file-scope statics) -- framer threads init/fini */
     /* start chanBlb with RSEC framing for both directions */
     if (!chanBlb(realloc, free
         ,OutChan, chanBlbTrnFdDatagramOutputCtx(ctx, &fd4, fd6 >= 0 ? &fd6 : 0, fd4 >= 0 ? 1 : 0, fd6 >= 0 ? 1 : 0), chanBlbTrnFdDatagramOutput, chanBlbTrnFdDatagramOutputClose, &egrCtx, chanBlbChnRsecEgr
@@ -520,8 +520,8 @@ main(
 
         al = Peers[i].len;
 #ifdef RSEC
-        /* egress blob: [addrlen(1)][addr(al)][tag(TagSize)][m(1)][delay_ms(1)][payload] */
-        bl = 1 + al + TagSize + 2 + len;
+        /* egress blob: [addrlen(1)][addr(al)][tag(TagSize)][m(1)][delay_us(4)][payload] */
+        bl = 1 + al + TagSize + 5 + len;
         if (!(m = malloc(chanBlb_tSize(bl)))) {
           perror("malloc");
           break;
@@ -534,8 +534,11 @@ main(
         m->b[off + 1] = (unsigned char)((TagCounter >> 8) & 0xff);
         off += TagSize;
         m->b[off] = (unsigned char)ParityShards;
-        m->b[off + 1] = (unsigned char)DelayMs;
-        memcpy(m->b + off + 2, line, len);
+        m->b[off + 1] = (unsigned char)((DelayUs >> 24) & 0xff);
+        m->b[off + 2] = (unsigned char)((DelayUs >> 16) & 0xff);
+        m->b[off + 3] = (unsigned char)((DelayUs >> 8) & 0xff);
+        m->b[off + 4] = (unsigned char)(DelayUs & 0xff);
+        memcpy(m->b + off + 5, line, len);
 #else
         if (!(m = malloc(chanBlb_tSize(1 + al + len)))) {
           perror("malloc");
@@ -568,8 +571,8 @@ main(
 
       al = Peers[i].len;
 #ifdef RSEC
-      /* egress blob: [addrlen(1)][addr(al)][tag(TagSize)][m(1)][delay_ms(1)] */
-      bl = 1 + al + TagSize + 2;
+      /* egress blob: [addrlen(1)][addr(al)][tag(TagSize)][m(1)][delay_us(4)] */
+      bl = 1 + al + TagSize + 5;
       if (!(m = malloc(chanBlb_tSize(bl)))) {
         perror("malloc");
         break;
@@ -582,7 +585,10 @@ main(
       m->b[off + 1] = (unsigned char)((TagCounter >> 8) & 0xff);
       off += TagSize;
       m->b[off] = (unsigned char)ParityShards;
-      m->b[off + 1] = (unsigned char)DelayMs;
+      m->b[off + 1] = (unsigned char)((DelayUs >> 24) & 0xff);
+      m->b[off + 2] = (unsigned char)((DelayUs >> 16) & 0xff);
+      m->b[off + 3] = (unsigned char)((DelayUs >> 8) & 0xff);
+      m->b[off + 4] = (unsigned char)(DelayUs & 0xff);
 #else
       if (!(m = malloc(chanBlb_tSize(1 + al)))) {
         perror("malloc");

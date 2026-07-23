@@ -35,9 +35,11 @@ extern unsigned int chanBlbTrnFdDatagramObsCnt;
 extern struct chanBlbTrnFdDatagramObsEntry
   chanBlbTrnFdDatagramObs[CHAN_BLB_TRN_FD_DATAGRAM_OBS_MAX];
 
-/* milliseconds between two observed packet timestamps (b - a) */
+/* microseconds between two observed packet timestamps (b - a).
+ * us, not ms: the inter-shard delay unit is 100 us, so a gap of a
+ * few shard-delays is sub-ms; ms granularity would quantize it away. */
 static long
-obsDeltaMs(
+obsDeltaUs(
   unsigned int a
  ,unsigned int b
 ){
@@ -48,7 +50,7 @@ obsDeltaMs(
            - chanBlbTrnFdDatagramObs[a].ts.tv_sec);
   n = chanBlbTrnFdDatagramObs[b].ts.tv_nsec
     - chanBlbTrnFdDatagramObs[a].ts.tv_nsec;
-  return (s * 1000 + n / 1000000);
+  return (s * 1000000 + n / 1000);
 }
 
 static int Pass;
@@ -112,7 +114,7 @@ hmacVrfyCb(
 }
 
 /*
- * Datagram-layer hash callbacks — HalfSipHash-2-4, 64-bit key, 32-bit tag.
+ * Datagram-layer hash callbacks -- HalfSipHash-2-4, 64-bit key, 32-bit tag.
  *
  * Cheap keyed PRF for the chanBlbChnRsec datagram-level DoS gate.  Forgery
  * against this only buys the attacker the right to have the datagram's
@@ -122,7 +124,7 @@ hmacVrfyCb(
  *
  * adr points to [addrlen(1)][addr(addrlen)] of the datagram.  On egress
  * that's the destination address; on ingress it's the kernel-supplied
- * source address (attacker-controlled — these test callbacks ignore it).
+ * source address (attacker-controlled -- these test callbacks ignore it).
  */
 struct hashKeyCtx {
   unsigned char key[HALFSIPHASH_KEY_SZ];
@@ -166,7 +168,7 @@ hashVrfyCb(
 }
 
 /*
- * Datagram-layer AUTH callbacks — RMD128-HMAC over EVERY fragment's bytes,
+ * Datagram-layer AUTH callbacks -- RMD128-HMAC over EVERY fragment's bytes,
  * verified once per datagram.  The verify form is handed the packed
  * fragment structure (frgOff[i] = fragment i's tag offset within src,
  * frgCnt = fragment count) so it can enforce sender uniformity (see
@@ -389,7 +391,7 @@ hmacHdrVrfyCb(
 
 /*
  * Build an RSEC egress blob:
- * [addrlen(1)][addr(addrlen)][tag(tagSize)][m(1)][delay_ms(1)][payload]
+ * [addrlen(1)][addr(addrlen)][tag(tagSize)][m(1)][delay_us(4)][payload]
  */
 static chanBlb_t *
 mkBlob(
@@ -397,7 +399,7 @@ mkBlob(
  ,unsigned int tagSize
  ,unsigned short tag
  ,unsigned char mVal
- ,unsigned char delayMs
+ ,unsigned long delayUs
  ,const void *payload
  ,unsigned int payloadLen
 ){
@@ -408,7 +410,7 @@ mkBlob(
   chanBlb_t *m;
 
   al = (unsigned char)sizeof (*sa);
-  bl = 1 + al + tagSize + 2 + payloadLen;
+  bl = 1 + al + tagSize + 5 + payloadLen;
   m = (chanBlb_t *)malloc(chanBlb_tSize(bl));
   if (!m)
     return (0);
@@ -422,9 +424,12 @@ mkBlob(
     m->b[off + i] = 0;
   off += tagSize;
   m->b[off] = mVal;
-  m->b[off + 1] = delayMs;
+  m->b[off + 1] = (unsigned char)((delayUs >> 24) & 0xff);
+  m->b[off + 2] = (unsigned char)((delayUs >> 16) & 0xff);
+  m->b[off + 3] = (unsigned char)((delayUs >> 8) & 0xff);
+  m->b[off + 4] = (unsigned char)(delayUs & 0xff);
   if (payloadLen > 0)
-    memcpy(m->b + off + 2, payload, payloadLen);
+    memcpy(m->b + off + 5, payload, payloadLen);
   return (m);
 }
 
@@ -468,7 +473,7 @@ struct testEnv {
  * single-rsecCtx style for brevity.
  */
 struct rsecPair {
-  /* config — set by the test before setup() */
+  /* config -- set by the test before setup() */
   unsigned int tagSize;
   unsigned int dgramMax;
   unsigned int tableSize;
@@ -477,7 +482,7 @@ struct rsecPair {
   void *frgHmacCtx;
   void (*frgHmacSign)(void *, const unsigned char *, unsigned char *, const unsigned char *, unsigned int);
   int  (*frgHmacVrfy)(void *, const unsigned char *, const unsigned char *, const unsigned char *, unsigned int);
-  /* datagram AUTH (dtgHmac) — sign/vrfy take packed-fragment offsets+count */
+  /* datagram AUTH (dtgHmac) -- sign/vrfy take packed-fragment offsets+count */
   unsigned int dtgHmacSize;
   void *dtgHmacCtx;
   void (*dtgHmacSign)(void *, const unsigned char *, unsigned char *, const unsigned char *, unsigned int, const unsigned int *, unsigned int);
@@ -487,10 +492,10 @@ struct rsecPair {
   void *dtgHashCtx;
   void (*dtgHashSign)(void *, const unsigned char *, unsigned char *, const unsigned char *, unsigned int);
   int  (*dtgHashVrfy)(void *, const unsigned char *, const unsigned char *, const unsigned char *, unsigned int);
-  /* counter snapshot — populated by rsecSnap() */
+  /* counter snapshot -- populated by rsecSnap() */
   unsigned int egrMsg, egrFrg, egrFull;
   unsigned int igrFrg, igrHash, igrDhmac, igrHmac, igrDup, igrLate, igrMsg, igrDcd, igrEvict;
-  /* private — populated by setup() */
+  /* private -- populated by setup() */
   struct chanBlbChnRsecEgrCtx egr;
   struct chanBlbChnRsecIgrCtx igr;
 };
@@ -528,7 +533,7 @@ setup(
   int one;
   int bufsz;
 
-  /* copy shared config into split contexts (opaque stays zero — the
+  /* copy shared config into split contexts (opaque stays zero -- the
    * framer threads allocate / free private state on entry / exit) */
   rsecCtx->egr.dgramMax     = rsecCtx->igr.dgramMax     = rsecCtx->dgramMax;
   rsecCtx->egr.tagSize      = rsecCtx->igr.tagSize      = rsecCtx->tagSize;
@@ -711,6 +716,84 @@ testDedupM2(void)
   m = recvBlob(env.inChan, 500000000L);
   check("no duplicate", m == 0);
   if (m) free(m);
+  teardown(&env, &rsecCtx);
+}
+
+/* Completed-entry dedup horizon, DERIVED from the RSEC parameters: a
+ * completed entry stops deduping after (k + m) * tableSize further
+ * fragment arrivals -- a whole-message re-send under the SAME tag (the
+ * BPR retry shape) is then reassembled fresh and DELIVERED AGAIN.
+ * Within the horizon it is still eaten (testDedupM2 covers that).
+ * The target message is k=1 m=0 at tableSize 8 => horizon = 8
+ * arrivals; the flood uses multi-shard messages (k derived from
+ * chanBlbChnRsecShard, per the size-derivation discipline) so the
+ * arrival count crosses the horizon while table occupancy stays below
+ * tableSize -- proving EXPIRY, not LRU eviction, is what redelivers. */
+static void
+testDedupExpiry(void)
+{
+  struct testEnv env;
+  struct rsecPair rsecCtx;
+  chanBlb_t *m;
+  char *big;
+  const char *msg = "retry me";
+  unsigned int shard;
+  unsigned int i;
+
+  printf("=== Test: dedup expiry redelivers a re-send ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 2;
+  rsecCtx.dgramMax = 520;
+  rsecCtx.tableSize = 8;
+
+  if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
+
+  /* (1) k=1 m=0 -- the common small act, and the IDLE RETRY case.  Its
+   * train is one fragment, so no straggler is possible and every re-send
+   * must be delivered again IMMEDIATELY, with no ambient traffic needed to
+   * unblock it.  (An ambient-arrival horizon ate exactly this: at idle the
+   * re-sends were both the thing eaten and the only thing advancing the
+   * clock.) */
+  m = mkBlob(&env.sa, 2, 1, 0, 0, msg, strlen(msg));
+  check("send", sendBlob(env.outChan, m));
+  m = recvBlob(env.inChan, 2000000000L);
+  check("received once", m != 0);
+  if (m) { check("payload correct", verifyBlob(m, 2, msg, strlen(msg))); free(m); }
+
+  for (i = 0; i < 3; ++i) {
+    m = mkBlob(&env.sa, 2, 1, 0, 0, msg, strlen(msg));
+    check("idle re-send", sendBlob(env.outChan, m));
+    m = recvBlob(env.inChan, 2000000000L);
+    check("k=1: every re-send DELIVERED (no ambient traffic)", m != 0);
+    if (m) { check("re-send payload correct", verifyBlob(m, 2, msg, strlen(msg))); free(m); }
+  }
+  rsecSnap(&rsecCtx);
+  check("k=1: nothing eaten as late", rsecCtx.igrLate == 0);
+
+  /* (2) k=3 m=2 -- a 5-fragment train.  The entry completes on the 3rd
+   * data shard and absorbs the 2 parity stragglers (counted late); the
+   * train is then spent, so the NEXT same-tag fragment is a re-send and
+   * reassembles afresh. */
+  shard = chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, 0, 0, 0);
+  check("shard size", shard > 0);
+  if (!(big = malloc(3u * shard))) { check("flood alloc", 0); teardown(&env, &rsecCtx); return; }
+  memset(big, 'x', 3u * shard);
+
+  m = mkBlob(&env.sa, 2, 50, 2, 0, big, 3u * shard);
+  check("multi-shard send", sendBlob(env.outChan, m));
+  m = recvBlob(env.inChan, 2000000000L);
+  check("multi-shard received", m != 0);
+  if (m) free(m);
+
+  m = mkBlob(&env.sa, 2, 50, 2, 0, big, 3u * shard);
+  check("multi-shard re-send", sendBlob(env.outChan, m));
+  m = recvBlob(env.inChan, 2000000000L);
+  check("train spent: re-send DELIVERED AGAIN", m != 0);
+  if (m) free(m);
+  free(big);
+
+  rsecSnap(&rsecCtx);
+  check("multi-shard parity stragglers were eaten", rsecCtx.igrLate > 0);
   teardown(&env, &rsecCtx);
 }
 
@@ -1472,7 +1555,7 @@ testCountersEgrFull(void)
   unsigned int i;
   const char *msg = "egrFull trigger";
 
-  /* With tableSize=1 and slot dwell (k+m)*delay_ms ~ 200 ms, three
+  /* With tableSize=1 and slot dwell (k+m)*delay ~ 25 ms, three
    * back-to-back sends must enroll serially: msg 1 enrolls
    * immediately, msgs 2 and 3 each find the slot full when egress
    * picks them up.  Expected egrFull = 2. */
@@ -1485,8 +1568,8 @@ testCountersEgrFull(void)
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
 
   for (i = 0; i < 3; ++i) {
-    /* mVal=4 -> k=1+m=5 shards; delay_ms=50 -> ~250 ms slot dwell */
-    m = mkBlob(&env.sa, 2, (unsigned short)(0x100 + i), 4, 50,
+    /* mVal=4 -> k=1+m=5 shards; delay=5000us -> ~25 ms slot dwell */
+    m = mkBlob(&env.sa, 2, (unsigned short)(0x100 + i), 4, 5000,
                msg, strlen(msg));
     check("send", sendBlob(env.outChan, m));
   }
@@ -1769,7 +1852,7 @@ testEgressInterleave(void)
   msgs[0] = "interleave one";
   msgs[1] = "interleave two";
 
-  printf("=== Test: egress interleave tableSize=2 delayMs=10 ===\n");
+  printf("=== Test: egress interleave tableSize=2 delay=1000us ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
   rsecCtx.dgramMax = 520;
@@ -1777,9 +1860,9 @@ testEgressInterleave(void)
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
 
-  m = mkBlob(&env.sa, 2, 1, 1, 10, msgs[0], strlen(msgs[0]));
+  m = mkBlob(&env.sa, 2, 1, 1, 1000, msgs[0], strlen(msgs[0]));
   check("send1", sendBlob(env.outChan, m));
-  m = mkBlob(&env.sa, 2, 2, 1, 10, msgs[1], strlen(msgs[1]));
+  m = mkBlob(&env.sa, 2, 2, 1, 1000, msgs[1], strlen(msgs[1]));
   check("send2", sendBlob(env.outChan, m));
 
   ok = 0;
@@ -1817,7 +1900,7 @@ testEgressBackpressure(void)
   int seen2;
   unsigned int i;
 
-  printf("=== Test: egress backpressure tableSize=1 delayMs=50 ===\n");
+  printf("=== Test: egress backpressure tableSize=1 delay=5000us ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
   rsecCtx.dgramMax = 520;
@@ -1825,8 +1908,8 @@ testEgressBackpressure(void)
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
 
-  /* blob1: k=1 m=1 km=2, delayMs=50 => paced over 50ms */
-  m = mkBlob(&env.sa, 2, 1, 1, 50, msg1, strlen(msg1));
+  /* blob1: k=1 m=1 km=2, delay=5000us => paced over 5ms */
+  m = mkBlob(&env.sa, 2, 1, 1, 5000, msg1, strlen(msg1));
   check("send1", sendBlob(env.outChan, m));
   /* blob2 blocks until blob1 completes (backpressure) */
   m = mkBlob(&env.sa, 2, 2, 1, 0, msg2, strlen(msg2));
@@ -1875,10 +1958,10 @@ testCountersBackpressure(void)
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
 
-  /* blob1: k data shards (from API) + m=2 parity, delayMs=10; blob2: 2 bytes => 1 frag */
+  /* blob1: k data shards (from API) + m=2 parity, delay=1000us; blob2: 2 bytes => 1 frag */
   shard = chanBlbChnRsecShard(rsecCtx.dgramMax, rsecCtx.tagSize, rsecCtx.frgHmacSize, rsecCtx.dtgHmacSize, rsecCtx.dtgHashSize);
   k = (strlen(msg1) + shard - 1) / shard;
-  m = mkBlob(&env.sa, 2, 1, 2, 10, msg1, strlen(msg1));
+  m = mkBlob(&env.sa, 2, 1, 2, 1000, msg1, strlen(msg1));
   check("send1", sendBlob(env.outChan, m));
   /* blob2 blocks until blob1 completes (backpressure) */
   m = mkBlob(&env.sa, 2, 2, 0, 0, msg2, strlen(msg2));
@@ -2029,7 +2112,7 @@ testMalformedBlob(void)
 
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
 
-  /* blob too short: only 2 bytes, needs at least prefixSize+2 */
+  /* blob too short: only 2 bytes, needs at least prefixSize+egrhdr */
   m = (chanBlb_t *)malloc(chanBlb_tSize(2));
   if (!m) { check("malloc", 0); teardown(&env, &rsecCtx); return; }
   m->l = 2;
@@ -2480,10 +2563,13 @@ testPackCounters(void)
 }
 
 /* ===== PACING TESTS =====
- * Verify that egress packet emission honors the inter-shard delay:
+ * Verify that egress packet emission honors the inter-shard delay.
+ * The delay byte is in 100-microsecond units (see mkBlob), so gaps
+ * are measured in us (obsDeltaUs) and inputs are chosen so the
+ * expected gap sits well above macOS scheduler jitter (tol below).
  *   - Same-message shards never pack together (one packet each).
- *   - After emitting a packet, the next emit waits at least the
- *     largest delayMs among shards actually packed into that packet.
+ *   - After emitting a packet, the next emit waits the SUM of the
+ *     delays of the shards actually packed into that packet.
  * The observation hook in chanBlbTrnFdDatagramStress.c records
  * caller-side send timestamps into chanBlbTrnFdDatagramObs[]. */
 
@@ -2494,18 +2580,19 @@ testPaceSingleMessage(void)
   struct rsecPair rsecCtx;
   chanBlb_t *m;
   const char *msg = "paced single";
-  unsigned char delayMs;
+  unsigned long delayUs;
   unsigned int i;
   unsigned int ok;
   long tol;
 
   /* k=1 m=4 => 5 shards, all from one message.  Same-message shards
    * never pack together, so each shard travels in its own datagram
-   * and consecutive packets must be >= delayMs apart. */
-  delayMs = 30;
-  tol = 3; /* ms tolerance for clock/scheduling jitter */
+   * and consecutive packets must be >= delayUs apart.
+   * delayUs=20000 => 20ms gaps, comfortably above the tolerance. */
+  delayUs = 20000;
+  tol = 3000; /* us tolerance for clock/scheduling jitter */
 
-  printf("=== Test: pace single message k=1 m=4 delayMs=30 ===\n");
+  printf("=== Test: pace single message k=1 m=4 delay=20000us (20ms) ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
   rsecCtx.dgramMax = 520;
@@ -2520,13 +2607,13 @@ testPaceSingleMessage(void)
     return;
   }
 
-  m = mkBlob(&env.sa, 2, 1, 4, delayMs, msg, strlen(msg));
+  m = mkBlob(&env.sa, 2, 1, 4, delayUs, msg, strlen(msg));
   check("send", sendBlob(env.outChan, m));
   m = recvBlob(env.inChan, 3000000000L);
   check("received", m != 0);
   if (m) { check("payload correct", verifyBlob(m, 2, msg, strlen(msg))); free(m); }
 
-  /* wait for all 5 shards to be emitted (total window ~ 5*delayMs) */
+  /* wait for all 5 shards to be emitted (window ~ 5*20ms = 100ms) */
   usleep(300000);
   chanBlbTrnFdDatagramObsEnable = 0;
 
@@ -2537,13 +2624,13 @@ testPaceSingleMessage(void)
   for (i = 1; i < chanBlbTrnFdDatagramObsCnt; ++i) {
     long g;
 
-    g = obsDeltaMs(i - 1, i);
-    if (g < (long)delayMs - tol) {
-      printf("    gap[%u]=%ldms < %dms\n", i, g, delayMs);
+    g = obsDeltaUs(i - 1, i);
+    if (g < (long)delayUs - tol) {
+      printf("    gap[%u]=%ldus < %ldus\n", i, g, (long)delayUs - tol);
       ok = 0;
     }
   }
-  check("all inter-packet gaps >= delayMs", ok);
+  check("all inter-packet gaps >= delay", ok);
 
   teardown(&env, &rsecCtx);
 }
@@ -2566,7 +2653,7 @@ testPacePackingDensity(void)
   msgs[4] = "pack dense e";
 
   /* 5 messages to the same address, k=1 m=0 each.  Shards schedule
-   * within a narrow window — packets emitted after the first should
+   * within a narrow window -- packets emitted after the first should
    * coalesce several shards each. ObsCnt < egrFrg proves packing. */
   printf("=== Test: packing reduces datagram count ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
@@ -2584,7 +2671,7 @@ testPacePackingDensity(void)
   }
 
   for (i = 0; i < 5; ++i) {
-    m = mkBlob(&env.sa, 2, (unsigned short)(i + 1), 0, 10,
+    m = mkBlob(&env.sa, 2, (unsigned short)(i + 1), 0, 1000,
                msgs[i], strlen(msgs[i]));
     if (!sendBlob(env.outChan, m)) {
       check("send", 0);
@@ -2628,30 +2715,33 @@ testPaceMaxDelayMixed(void)
   chanBlb_t *m;
   const char *msgA = "slow";
   const char *msgB = "fast";
-  unsigned char delayA;
-  unsigned char delayB;
+  unsigned long delayA;
+  unsigned long delayB;
   int seenA;
   int seenB;
   unsigned int i;
   unsigned int hasSlowGap;
   unsigned int sawFastGap;
 
-  /* Construct a scenario that exercises "max delayMs in packed packet":
-   *   msg A: k=1 m=1 (2 shards) delayMs=80  — scheduled at +80, +160
-   *   msg B: k=1 m=3 (4 shards) delayMs=20  — scheduled at +20,+40,+60,+80
+  /* Construct a scenario that exercises the packed-packet delay rule
+   * (SUM of packed shards' delays since 2026-07-13; was max).  Delays
+   * are in microseconds; a 2:1 ratio keeps the fast delay (12ms) well
+   * above jitter:
+   *   msg A: k=1 m=1 (2 shards) delay=24000 (24ms) -- scheduled at +24,+48ms
+   *   msg B: k=1 m=3 (4 shards) delay=12000 (12ms) -- scheduled at +12,+24,+36,+48ms
    * Both to the same address, queued back-to-back.  Expected emissions
    * (approximate, dropping insertion jitter):
-   *   P1 @20: B0                       → lastMaxD=20
-   *   P2 @40: B1                       → lastMaxD=20
-   *   P3 @60: B2                       → lastMaxD=20
-   *   P4 @80: A0 + B3 (packed, both due) → lastMaxD=80
-   *   P5 @160 (= P4 + 80): A1          → lastMaxD=80
-   * The critical check is gap(P5,P4) >= 80ms: a bug that used min
-   * rather than max would schedule P5 only 20ms after P4. */
-  delayA = 80;
-  delayB = 20;
+   *   P1 @12ms:  B0                        -> lastPackD=12ms
+   *   P2 @24ms:  A0 + B1 (packed, both due) -> lastPackD=24+12=36ms
+   *   P3 @60ms (= P2 + 36ms): B2 + A1 (both due, gated) -> lastPackD=36ms
+   *   P4 @96ms (= P3 + 36ms): B3                -> lastPackD=12ms
+   * The critical check is a gap >= 24ms (delayA): a bug that used min
+   * (or ignored the slow shard's share of the packed sum) would wait
+   * only 12ms after the A0+B1 pack, so no gap would reach delayA. */
+  delayA = 24000;
+  delayB = 12000;
 
-  printf("=== Test: pace respects max delayMs in packed packet ===\n");
+  printf("=== Test: pace respects packed-packet delay sum ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
   rsecCtx.dgramMax = 520;
@@ -2687,7 +2777,7 @@ testPaceMaxDelayMixed(void)
   check("msgA received", seenA);
   check("msgB received", seenB);
 
-  usleep(400000); /* wait for all shards to be emitted (~160ms + margin) */
+  usleep(400000); /* wait for all shards to be emitted (~96ms + margin) */
   chanBlbTrnFdDatagramObsEnable = 0;
 
   rsecSnap(&rsecCtx);
@@ -2704,12 +2794,12 @@ testPaceMaxDelayMixed(void)
   for (i = 1; i < chanBlbTrnFdDatagramObsCnt; ++i) {
     long g;
 
-    g = obsDeltaMs(i - 1, i);
+    g = obsDeltaUs(i - 1, i);
     /* every gap must at minimum honor the fast delay */
-    if (g >= (long)delayB - 3)
+    if (g >= (long)delayB - 3000)
       ++sawFastGap;
     /* at least one gap must honor the slow delay */
-    if (g >= (long)delayA - 3)
+    if (g >= (long)delayA - 3000)
       hasSlowGap = 1;
   }
   check("every gap >= delayB (fast minimum)",
@@ -2729,21 +2819,21 @@ testPaceNoBlasting(void)
   unsigned int ok;
   int seen[3];
   const char *msgs[3];
-  unsigned char delayMs;
+  unsigned long delayUs;
 
   msgs[0] = "no blast alpha";
   msgs[1] = "no blast bravo";
   msgs[2] = "no blast charlie";
 
   /* Three k=1 m=2 messages (3 shards each = 9 shards total) paced at
-   * delayMs=25.  Maximal packing finishes in 3 datagrams (shards from
-   * all 3 messages coalesced per tick); no packing emits 9.  The
-   * bound we verify regardless of packing: no inter-packet gap may
-   * be smaller than delayMs.  If the pacing logic were bypassed,
-   * the egress would blast shards back-to-back. */
-  delayMs = 25;
+   * delay=20000us (20ms).  Maximal packing finishes in 3
+   * datagrams (shards from all 3 messages coalesced per tick); no
+   * packing emits 9.  The bound we verify regardless of packing: no
+   * inter-packet gap may be smaller than the delay.  If the pacing
+   * logic were bypassed, the egress would blast shards back-to-back. */
+  delayUs = 20000;
 
-  printf("=== Test: pace 3 messages never blast (delayMs=25) ===\n");
+  printf("=== Test: pace 3 messages never blast (delay=20000us, 20ms) ===\n");
   memset(&rsecCtx, 0, sizeof (rsecCtx));
   rsecCtx.tagSize = 2;
   rsecCtx.dgramMax = 520;
@@ -2759,7 +2849,7 @@ testPaceNoBlasting(void)
   }
 
   for (i = 0; i < 3; ++i) {
-    m = mkBlob(&env.sa, 2, (unsigned short)(i + 1), 2, delayMs,
+    m = mkBlob(&env.sa, 2, (unsigned short)(i + 1), 2, delayUs,
                msgs[i], strlen(msgs[i]));
     if (!sendBlob(env.outChan, m)) {
       check("send", 0);
@@ -2799,13 +2889,13 @@ testPaceNoBlasting(void)
   for (i = 1; i < chanBlbTrnFdDatagramObsCnt; ++i) {
     long g;
 
-    g = obsDeltaMs(i - 1, i);
-    if (g < (long)delayMs - 3) {
-      printf("    gap[%u]=%ldms < %dms\n", i, g, delayMs);
+    g = obsDeltaUs(i - 1, i);
+    if (g < (long)delayUs - 3000) {
+      printf("    gap[%u]=%ldus < %ldus\n", i, g, (long)delayUs - 3000);
       ok = 0;
     }
   }
-  check("no gap faster than delayMs", ok);
+  check("no gap faster than delay", ok);
 
   teardown(&env, &rsecCtx);
 }
@@ -3371,7 +3461,7 @@ testParamMismatchLossNotif(void)
 }
 
 /*
- * Same tag, same k, same shardSize — only m differs.
+ * Same tag, same k, same shardSize -- only m differs.
  * Confirms that m alone drives parameter-mismatch eviction.
  * Delivered-entry path (blob==NULL): silent evict, new entry collected,
  * message delivered a SECOND time with the new m.  This is the duplicate-
@@ -3438,7 +3528,7 @@ testSameTagMOnlyDelivered(void)
 }
 
 /*
- * Same tag, same k, same shardSize — only m differs, but the original
+ * Same tag, same k, same shardSize -- only m differs, but the original
  * entry is still incomplete when the mismatched fragment arrives.
  * Fires igrEvict + loss notification (rm=0, um=received).
  */
@@ -3553,10 +3643,10 @@ testDtgHmacPacked(void)
     return;
   }
 
-  /* k=1 m=0 each; delayMs=10 clusters them so several pack into one
-   * datagram, exercising the multi-fragment offset path on both sides */
+  /* k=1 m=0 each; delay=1000us clusters them so several pack
+   * into one datagram, exercising the multi-fragment offset path both sides */
   for (i = 0; i < 5; ++i) {
-    m = mkBlob(&env.sa, 2, (unsigned short)(i + 1), 0, 10,
+    m = mkBlob(&env.sa, 2, (unsigned short)(i + 1), 0, 1000,
                msgs[i], strlen(msgs[i]));
     if (!sendBlob(env.outChan, m)) {
       check("send", 0);
@@ -3840,9 +3930,9 @@ testDtgHmacFrgHmacPacked(void)
     return;
   }
 
-  /* distinct tags, k=1 m=0; delayMs=10 clusters them so they pack */
+  /* distinct tags, k=1 m=0; delay=1000us clusters them so they pack */
   for (i = 0; i < 5; ++i) {
-    m = mkBlob(&env.sa, 2, (unsigned short)((i + 1) << 8), 0, 10,
+    m = mkBlob(&env.sa, 2, (unsigned short)((i + 1) << 8), 0, 1000,
                msgs[i], strlen(msgs[i]));
     if (!sendBlob(env.outChan, m)) {
       check("send", 0);
@@ -3895,6 +3985,7 @@ main(
   testBasicM1();
   testBasicM0();
   testDedupM2();
+  testDedupExpiry();
   testMultiShard();
   testEmptyPayload();
   testSequential();
