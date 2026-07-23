@@ -14,7 +14,7 @@ The problems are well-known:
 
 Worse, these bugs are non-deterministic. Code that passes extensive testing can fail in production under different timing. A bug may manifest once per million runs, or only on certain hardware.
 
-Channels offer a different model: instead of protecting shared data with locks, **transfer ownership of data through Channels**. A Put deposits, a Get takes — there is no sender, no receiver, no direction. A Channel is a shared Store that any number of pthreads can put into and get from. The synchronization is encapsulated within the Channel operations themselves. User code contains no mutexes, no condition variables and no barriers.
+Channels offer a different model: instead of protecting shared data with locks, **transfer ownership of data through Channels**. A Put deposits, a Get takes -- there is no sender, no receiver, no direction. A Channel is a shared Store that any number of pthreads can put into and get from. The synchronization is encapsulated within the Channel operations themselves. User code contains no mutexes, no condition variables and no barriers.
 
 This library provides:
 * **chanOp** - blocking Put or Get on a single Channel
@@ -52,7 +52,7 @@ A Channel is an anonymous, pthread coordinating, [Store](#Store) of pointer (voi
 * Channels, by default, can store a single item.
 (For more, see [Store](#Store).)
 * Any number of pthreads can Put/Get on a Channel.
-  * Awareness of Channel demand is supported: an operation can test whether a counterpart is already waiting, without itself committing to block. This enables [lazy evaluation](https://en.wikipedia.org/wiki/Lazy_evaluation) — a producer skips expensive work when no consumer is asking for it. See [squint](#Examples), whose recursive multiply only spawns sub-agents when its output is demanded; the lazy-evaluation pattern is critical to making that algorithm terminate.
+  * Awareness of Channel demand is supported: an operation can test whether a counterpart is already waiting, without itself committing to block. This enables [lazy evaluation](https://en.wikipedia.org/wiki/Lazy_evaluation) -- a producer skips expensive work when no consumer is asking for it. See [squint](#Examples), whose recursive multiply only spawns sub-agents when its output is demanded; the lazy-evaluation pattern is critical to making that algorithm terminate.
 * A pthread can Put/Get on any number of Channels.
   * Including either one, or all ([atomic broadcast](https://en.wikipedia.org/wiki/Atomic_broadcast)), of an array of operations.
 * The canonical Channel use case is a transfer of a pointer to heap.
@@ -68,26 +68,26 @@ A Channel is an anonymous, pthread coordinating, [Store](#Store) of pointer (voi
     use(m);
     free(m);
     ````
-* A chan_t is itself a pointer, and Channels carry pointers — so Channels can be put through other Channels. Worth pausing on: chan_t lifetime is **not** malloc/free. It follows POSIX file-descriptor semantics for an *anonymous* object — chanCreate is like `creat`+`unlink` (the object exists only as long as some reference is open), chanOpen is like `dup` (add a reference to an existing object — there is no name to look up), chanClose is like `close` (drop a reference; the last one reclaims the object). The reference returned by chanCreate is immediately usable; a bare chanCreate followed by chanClose is valid. chanOpen exists for *additional* references beyond the creator's. A thread that wants to keep its own reference past handing the Channel off must chanOpen first, and the Channel is freed only when every reference has been chanClosed. Once that discipline is clear, Channels can be wired into any topology — request/response (RPC) is one application:
+* A chan_t is itself a pointer, and Channels carry pointers -- so Channels can be put through other Channels. Worth pausing on: chan_t lifetime is **not** malloc/free. It follows POSIX file-descriptor semantics for an *anonymous* object -- chanCreate is like `creat`+`unlink` (the object exists only as long as some reference is open), chanOpen is like `dup` (add a reference to an existing object -- there is no name to look up), chanClose is like `close` (drop a reference; the last one reclaims the object). The reference returned by chanCreate is immediately usable; a bare chanCreate followed by chanClose is valid. chanOpen exists for *additional* references beyond the creator's. A thread that wants to keep its own reference past handing the Channel off must chanOpen first, and the Channel is freed only when every reference has been chanClosed. Once that discipline is clear, Channels can be wired into any topology -- request/response (RPC) is one application:
 
 ````
      Requester                                      Responder
-         │                                              │
-         │  1. chanOpen(responseChan)                   │
-         │                                              │
-         │  2. Put responseChan    ┌─────────────┐      │
-         ├────────────────────────►│ serviceChan │──────┤ 3. Get responseChan
-         │                         └─────────────┘      │
-         │                                              │
-         │                         ┌─────────────┐      │
-         ├◄────────────────────────│ responseChan│◄─────┤ 4. Put response
-         │  5. Get response        └─────────────┘      │
-         │                                              │
-         │                                              │ 6. chanClose(responseChan)
-         ▼                                              ▼    (delegated ownership)
+         |                                              |
+         |  1. chanOpen(responseChan)                   |
+         |                                              |
+         |  2. Put responseChan    +-------------+      |
+         +------------------------>| serviceChan |------+ 3. Get responseChan
+         |                         +-------------+      |
+         |                                              |
+         |                         +-------------+      |
+         +<------------------------| responseChan|<-----+ 4. Put response
+         |  5. Get response        +-------------+      |
+         |                                              |
+         |                                              | 6. chanClose(responseChan)
+         v                                              v    (delegated ownership)
 ````
 
-  The discipline shows in two places: the requester chanOpens the response Channel before passing it (otherwise the responder's chanClose could free the Channel before the requester's Get completes), and the responder chanCloses after Put — ownership of that reference was delegated through the Channel itself.
+  The discipline shows in two places: the requester chanOpens the response Channel before passing it (otherwise the responder's chanClose could free the Channel before the requester's Get completes), and the responder chanCloses after Put -- ownership of that reference was delegated through the Channel itself.
 
   * requesting pthread:
     ````C
@@ -115,44 +115,44 @@ A Channel is an anonymous, pthread coordinating, [Store](#Store) of pointer (voi
 
 ````
                          chanCreate
-                             │
-                             ▼
-                    ┌─────────────────┐
-                    │     Channel     │  openCnt = 0
-                    └────────┬────────┘
-                             │
-         ┌───────────────────┴───────────────────┐
-         │                                       │
-         ▼                                       ▼
+                             |
+                             v
+                    +-----------------+
+                    |     Channel     |  openCnt = 0
+                    +--------+--------+
+                             |
+         +-------------------+-------------------+
+         |                                       |
+         v                                       v
     Give away                               Share (retain reference)
     (pass as-is)                            (chanOpen before pass)
-         │                                       │
-         │                                       ▼
-         │                               ┌───────────────┐
-         │                               │  openCnt > 0  │
-         │                               └───────┬───────┘
-         │                                       │
-         │                    ┌──────────────────┤
-         │                    │                  │
-         │               chanClose          chanClose
-         │              (openCnt--)         (openCnt--)
-         │                    │                  │
-         │                    └──────┬───────────┘
-         │                           │
-         │                           │ when openCnt → 0
-         │                           │
-         ▼                           ▼
-    ┌─────────────────────────────────────┐
-    │  chanClose when openCnt == 0        │
-    │            Deallocates              │
-    └─────────────────────────────────────┘
+         |                                       |
+         |                                       v
+         |                               +---------------+
+         |                               |  openCnt > 0  |
+         |                               +-------+-------+
+         |                                       |
+         |                    +------------------+
+         |                    |                  |
+         |               chanClose          chanClose
+         |              (openCnt--)         (openCnt--)
+         |                    |                  |
+         |                    +------+-----------+
+         |                           |
+         |                           | when openCnt -> 0
+         |                           |
+         v                           v
+    +-------------------------------------+
+    |  chanClose when openCnt == 0        |
+    |            Deallocates              |
+    +-------------------------------------+
 
 
             Orthogonal: chanShut
-   ┌─────────────────────────────────────┐
-   │  Before:  Put/Get block as needed   │
-   │  After:   Put fails, Get nonblocking│
-   └─────────────────────────────────────┘
+   +-------------------------------------+
+   |  Before:  Put/Get block as needed   |
+   |  After:   Put fails, Get nonblocking|
+   +-------------------------------------+
 ````
 
 Find the API in chan.h.
@@ -166,18 +166,18 @@ When rates differ, a larger buffer reduces context switching. The producer can r
 ```
   Default (single item):        With FIFO Store:
 
-  Put ──► [1] ◄── Get           Put ──► [1][2][3]... ◄── Get
-           │                            └──────────┘
+  Put --> [1] <-- Get           Put --> [1][2][3]... <-- Get
+           |                            +----------+
      (second Put blocks              (Puts succeed until
       until Get drains)                 Store is full)
 ```
 
-A bounded Store is what makes **backpressure** work, and backpressure is how Channel-based agents replace traditional rate-matching machinery. When a Store fills, putters block; that block propagates back through the agent topology, slowing upstream producers without explicit flow control, polling, or shared flags. The preallocated maximum size of these Store implementations is what fixes the blocking point — without it, an unbounded queue would absorb pressure that should reach producers.
+A bounded Store is what makes **backpressure** work, and backpressure is how Channel-based agents replace traditional rate-matching machinery. When a Store fills, putters block; that block propagates back through the agent topology, slowing upstream producers without explicit flow control, polling, or shared flags. The preallocated maximum size of these Store implementations is what fixes the blocking point -- without it, an unbounded queue would absorb pressure that should reach producers.
 
 A Store can be provided on a chanCreate call. The trade-off is latency versus throughput: larger Stores reduce context switching but delay the moment backpressure reaches producers.
 (See [queueing theory](https://en.wikipedia.org/wiki/Queueing_theory).)
 
-A maximum sized Channel FIFO Store preserves item order — first put, first got. Use it when items represent a stream that must stay sequenced. (See [pipeproxy](#Examples).)
+A maximum sized Channel FIFO Store preserves item order -- first put, first got. Use it when items represent a stream that must stay sequenced. (See [pipeproxy](#Examples).)
 
 Find the API in Str/chanStrFIFO.h.
 
@@ -200,7 +200,7 @@ This achieves self-tuning latency/throughput balance without external configurat
 
 Find the API in Str/chanStrFLSO.h.
 
-A maximum sized Channel LIFO Store — a stack — is also provided. There is no production use case for it: stack ordering rarely matches what an agent topology wants. It exists to make the framing concrete. A Channel/Store is not a send/receive pipe; it is a Store that pthreads put into and get from, and the ordering policy is the Store's choice. LIFO is a valid Store; stack ordering is a valid policy; the put/get model accommodates it without strain.
+A maximum sized Channel LIFO Store -- a stack -- is also provided. There is no production use case for it: stack ordering rarely matches what an agent topology wants. It exists to make the framing concrete. A Channel/Store is not a send/receive pipe; it is a Store that pthreads put into and get from, and the ordering policy is the Store's choice. LIFO is a valid Store; stack ordering is a valid policy; the put/get model accommodates it without strain.
 
 Find the API in Str/chanStrLIFO.h.
 
@@ -214,20 +214,20 @@ This narrowness is what makes Channel-based code compose. A correct agent stays 
 
 Every agent has three parts:
 
-* **Context struct** — holds the Channels the agent operates on, plus configuration. Set by the launcher once, before `pthread_create`.
-* **Thread function** — the main loop. On any chanOp returning anything other than success, chanShut and chanClose every Channel the agent holds, free the context, return.
-* **Launcher function** — allocates the context, chanOpens every Channel the agent will use, creates the thread, detaches it. Never joins.
+* **Context struct** -- holds the Channels the agent operates on, plus configuration. Set by the launcher once, before `pthread_create`.
+* **Thread function** -- the main loop. On any chanOp returning anything other than success, chanShut and chanClose every Channel the agent holds, free the context, return.
+* **Launcher function** -- allocates the context, chanOpens every Channel the agent will use, creates the thread, detaches it. Never joins.
 
 See `conS` / `multS` / `addS` in [squint](#Examples). Reading any one shows the pattern.
 
-The library defends against `pthread_cancel` with `pthread_cleanup_push` because it cannot know its callers' cancellation policy. Application code that controls its own policy — squint never cancels; a process-monitored daemon exits on uncorrectable error rather than cancelling threads — can omit `pthread_cleanup_push` and place chanShut/chanClose/free at the exit label directly. The rule is `pthread_cancel` reachability, not taste.
+The library defends against `pthread_cancel` with `pthread_cleanup_push` because it cannot know its callers' cancellation policy. Application code that controls its own policy -- squint never cancels; a process-monitored daemon exits on uncorrectable error rather than cancelling threads -- can omit `pthread_cleanup_push` and place chanShut/chanClose/free at the exit label directly. The rule is `pthread_cancel` reachability, not taste.
 
 #### Shutdown is a cascade
 
 There is no quit message, no done Channel, no `pthread_cancel`, no `pthread_join`. Shutdown propagates through chanShut and reference counting:
 
 1. Some agent decides a part of the topology is finished and chanShuts a Channel.
-2. The next chanOp on that Channel — by any agent — returns `chanOsSht`.
+2. The next chanOp on that Channel -- by any agent -- returns `chanOsSht`.
 3. That agent breaks its main loop, runs its exit path (chanShut and chanClose every Channel it holds, free its context, return), and the thread terminates.
 4. Each chanClose drops a reference. Upstream and downstream agents see their own Channels return `chanOsSht` in turn and cascade through the same exit.
 5. The last chanClose on each Channel deallocates it.
@@ -238,7 +238,7 @@ squint's `printS` chanShuts after 12 coefficients. That single call tears down d
 
 Reaching for any of these means the Channel model is not being used as intended:
 
-* **Writing to another agent's state.** If agent A needs agent B's config or key material updated, A puts an update through a Channel; B gets it and updates its own local state. Channels are cheap. Direct memory writes — even "atomic" ones — are shared mutable state.
+* **Writing to another agent's state.** If agent A needs agent B's config or key material updated, A puts an update through a Channel; B gets it and updates its own local state. Channels are cheap. Direct memory writes -- even "atomic" ones -- are shared mutable state.
 * **A "done" Channel for signalling termination.** The refcount cascade already handles this. A separate Channel means the refcounting is wrong.
 * **Polling Channels.** chanOp in a loop to "drain" before every operation is shared-memory flag work with extra steps. Block in chanOp; let the Channel start and stop you.
 * **Mutexes, condition variables, semaphores, atomic flags.** Channels encapsulate all synchronization. If a design requires explicit synchronization, the agent decomposition is wrong.
@@ -251,64 +251,64 @@ Channel-based agents are confident inside a program. They become useful only whe
 
 Integration is hard enough to need substantial library support: framing variable-length messages on a stream, owning operating-system resources across the lifetime of a bridge, propagating failure back into Channel state so agents see it, handling half-duplex and full-duplex shapes, packing fragments for lossy transports. `Blb/` is twice the size of `chan.[hc]` because integration is the size of the problem.
 
-#### chanBlb — the bridge agent
+#### chanBlb -- the bridge agent
 
-A `chanBlb_t` is a length-prefixed octet buffer: the canonical shape for a Channel item destined for or arriving from an external byte interface. `chanBlb()` spawns a bridge — up to two threads — that moves `chanBlb_t *` items between a Channel and application-supplied byte-I/O callbacks. The shape is not obvious from the code:
+A `chanBlb_t` is a length-prefixed octet buffer: the canonical shape for a Channel item destined for or arriving from an external byte interface. `chanBlb()` spawns a bridge -- up to two threads -- that moves `chanBlb_t *` items between a Channel and application-supplied byte-I/O callbacks. The shape is not obvious from the code:
 
 ````
                               chanBlb Instance
-    ┌──────────────────────────────────────────────────────────────────┐
-    │                                                                  │
-    │     Egress Thread                         Ingress Thread         │
-    │    ┌─────────────┐                       ┌─────────────┐         │
-    │    │  chanOpGet  │                       │  chanOpPut  │         │
-    │    │   egress    │                       │   ingress   │         │
-    │    │   chan_t    │                       │   chan_t    │         │
-    │    └──────┬──────┘                       └──────▲──────┘         │
-    │           │                                     │                │
-    │           ▼                                     │                │
-    │    ┌─────────────┐                       ┌─────────────┐         │
-    │    │     Chn     │  Optional Framer      │     Chn     │         │
-    │    │   Framer    │  (Netstring, HTTP,    │   Framer    │         │
-    │    │  Callback   │   FastCGI, etc.)      │  Callback   │         │
-    │    └──────┬──────┘                       └──────┬──────┘         │
-    │           │                                     │                │
-    │           ▼                                     │                │
-    │    ╔═════════════╗                       ╔═════════════╗         │
-    │    ║     Trn     ║                       ║     Trn     ║         │
-    │    ║  output()   ║                       ║   input()   ║         │
-    │    ╚══════╤══════╝                       ╚══════╤══════╝         │
-    │           │                                     │                │
-    └───────────┼─────────────────────────────────────┼────────────────┘
-                │                                     │
-                │              Trn Context            │
-                │   ┌───────────────────────────────┐ │
-                │   │  Simple: FdStream             │ │
-                │   │    write(fd)    read(fd)      │ │
-                │   │                               │ │
-                │   │  Complex: KCP                 │ │
-                │   │  ┌─────────────────────────┐  │ │
-                │   │  │   KCP Protocol State    │  │ │
-                │   │  │  ┌───────────────────┐  │  │ │
-                │   │  │  │  poll Thread      │  │  │ │
-                │   │  │  │  UDP recv/send    │  │  │ │
-                │   │  │  │  ikcp_update      │  │  │ │
-                │   │  │  └───────────────────┘  │  │ │
-                │   │  └─────────────────────────┘  │ │
-                │   └───────────────────────────────┘ │
-                │                                     │
-                ▼           Transport Layer           │
-           ═══════════════════════════════════════════════
+    +------------------------------------------------------------------+
+    |                                                                  |
+    |     Egress Thread                         Ingress Thread         |
+    |    +-------------+                       +-------------+         |
+    |    |  chanOpGet  |                       |  chanOpPut  |         |
+    |    |   egress    |                       |   ingress   |         |
+    |    |   chan_t    |                       |   chan_t    |         |
+    |    +------+------+                       +------^------+         |
+    |           |                                     |                |
+    |           v                                     |                |
+    |    +-------------+                       +-------------+         |
+    |    |     Chn     |  Optional Framer      |     Chn     |         |
+    |    |   Framer    |  (Netstring, HTTP,    |   Framer    |         |
+    |    |  Callback   |   FastCGI, etc.)      |  Callback   |         |
+    |    +------+------+                       +------+------+         |
+    |           |                                     |                |
+    |           v                                     |                |
+    |    +=============+                       +=============+         |
+    |    |     Trn     |                       |     Trn     |         |
+    |    |  output()   |                       |   input()   |         |
+    |    +======+======+                       +======+======+         |
+    |           |                                     |                |
+    +-----------+-------------------------------------+----------------+
+                |                                     |
+                |              Trn Context            |
+                |   +-------------------------------+ |
+                |   |  Simple: FdStream             | |
+                |   |    write(fd)    read(fd)      | |
+                |   |                               | |
+                |   |  Complex: KCP                 | |
+                |   |  +-------------------------+  | |
+                |   |  |   KCP Protocol State    |  | |
+                |   |  |  +-------------------+  |  | |
+                |   |  |  |  poll Thread      |  |  | |
+                |   |  |  |  UDP recv/send    |  |  | |
+                |   |  |  |  ikcp_update      |  |  | |
+                |   |  |  +-------------------+  |  | |
+                |   |  +-------------------------+  | |
+                |   +-------------------------------+ |
+                |                                     |
+                v           Transport Layer           |
+           ===============================================
                           (pipe, socket, etc.)
 ````
 
-Two threads, not one and not four. One pthread can't simultaneously wait in `pthread_cond_wait` (Channel side) and `poll`/`select` (transport side), so each direction needs its own. Beyond those two, the framer (Chn) and transport (Trn) callbacks let that thread pair do wire framing and byte-I/O inline — no separate framer thread, no separate buffer-shuffler thread. That's the discipline that keeps integration cheap.
+Two threads, not one and not four. One pthread can't simultaneously wait in `pthread_cond_wait` (Channel side) and `poll`/`select` (transport side), so each direction needs its own. Beyond those two, the framer (Chn) and transport (Trn) callbacks let that thread pair do wire framing and byte-I/O inline -- no separate framer thread, no separate buffer-shuffler thread. That's the discipline that keeps integration cheap.
 
-#### Chn — wire framing for streams
+#### Chn -- wire framing for streams
 
 Stream transports don't preserve message boundaries; the bridge needs to know how to chop a byte stream into `chanBlb_t` items. A Chn framer fully replaces the thread body for its direction. Built-in framers cover [Variable-Length-Quantity](https://en.wikipedia.org/wiki/Variable-length_quantity) prefixing, [Netstring](https://en.wikipedia.org/wiki/Netstring), [FastCGI](https://en.wikipedia.org/wiki/FastCGI), [NETCONF](https://en.wikipedia.org/wiki/NETCONF) 1.0 and 1.1, [HTTP/1.x](https://en.wikipedia.org/wiki/Hypertext_Transfer_Protocol), and Reed-Solomon erasure coding over datagrams. Custom framers plug in through the same interface.
 
-#### Trn — byte-I/O surfaces
+#### Trn -- byte-I/O surfaces
 
 Trn callbacks present a byte-oriented external resource to the bridge. Built-in implementations cover full-duplex stream fds (TCP sockets, stream socketpairs), half-duplex fds (pipes, bound datagram sockets), unbound datagram sockets with dual-stack IPv4/IPv6, and [KCP](https://github.com/skywind3000/kcp)-over-UDP. Application Trn implementations plug in through the same interface.
 
@@ -316,26 +316,26 @@ Trn callbacks present a byte-oriented external resource to the bridge. Built-in 
 
 The integration case where "external" is a lossy datagram path (UDP under realistic loss). [Forward error correction](https://en.wikipedia.org/wiki/Reed-Solomon_error_correction) absorbs routine loss with zero retransmit round-trips: each message is split into k data shards and m parity shards, any k of which reconstruct the original. Most messages survive without retransmission; integration with UDP becomes practical at loss rates where TCP's head-of-line blocking would dominate latency.
 
-#### chanBlbStrSQL — substrate integration
+#### chanBlbStrSQL -- substrate integration
 
-When "outside the program" is persistent storage rather than another process or a network, the integration shape is a Store with an external substrate. `chanBlbStrSQL` is an example Store whose substrate is SQLite — items survive process restart. The `chanBlb*` prefix marks Stores whose application contract assumes their items are `chanBlb_t`-shaped.
+When "outside the program" is persistent storage rather than another process or a network, the integration shape is a Store with an external substrate. `chanBlbStrSQL` is an example Store whose substrate is SQLite -- items survive process restart. The `chanBlb*` prefix marks Stores whose application contract assumes their items are `chanBlb_t`-shaped.
 
 Parameter contracts, ownership discipline, and configuration details are in the headers (`Blb/chanBlb.h`, `Blb/chanBlbChn*.h`, `Blb/chanBlbTrn*.h`).
 
 ### Examples
 
-The examples below look unrelated — a power-series calculator, a parallel
+The examples below look unrelated -- a power-series calculator, a parallel
 shortest-paths solver, socket proxies, a chat client. They are one idea in
-several disguises. Each is the [Agent Discipline](#agent-discipline) above —
+several disguises. Each is the [Agent Discipline](#agent-discipline) above --
 three-part agents, ownership-transferring Channels, a `main()` that is pure
-wiring, shutdown by cascade — differing only in the *topology* that wiring
+wiring, shutdown by cascade -- differing only in the *topology* that wiring
 describes:
 
 * **Algorithmic / dynamic** (`squint`): the Channel graph is the math
   expression itself, grown and collapsed at run time by demand and recursion.
   There is no fixed set of agents to point at.
 * **Master / worker** (`floydWarshall`): a fixed worker pool; collecting N
-  results to match N dispatches *is* the barrier — there is no barrier
+  results to match N dispatches *is* the barrier -- there is no barrier
   primitive.
 * **Service / integration** (`sockproxy`, `datagramchat`, `pipeproxy`):
   byte-oriented I/O bridged to Channel agents through [Blob](#blob);
@@ -369,13 +369,13 @@ Connects two chanBlbs back-to-back, with Channels reversed.
 * pipeproxy
   * Copy stdin to stdout through chanBlb pipe file descriptors using a FIFO Store and preserving read boundaries using VLQ framing.
 * chanBlbStrSQL
-  * Example Store whose substrate is SQLite — items survive process restart.
+  * Example Store whose substrate is SQLite -- items survive process restart.
 * chanBlbTrnKcp
   * Demonstrate a [KCP](https://github.com/skywind3000/kcp) UDP transport integration.
 * squint
   * Implementation of [M. Douglas McIlroy's "Squinting at Power Series"](https://swtch.com/~rsc/thread/squint.pdf).
 * floydWarshall
-  * Use a Channel coordinating dynamic thread pool to parallelize the [Floyd-Warshall](https://en.wikipedia.org/wiki/Floyd–Warshall_algorithm) all shortest paths algorithm using [blocking](https://github.com/moorejs/APSP-in-parallel) techniques extended to optionally save all equal next hops.
+  * Use a Channel coordinating dynamic thread pool to parallelize the [Floyd-Warshall](https://en.wikipedia.org/wiki/Floyd-Warshall_algorithm) all shortest paths algorithm using [blocking](https://github.com/moorejs/APSP-in-parallel) techniques extended to optionally save all equal next hops.
 
 ### Formal Verification with SPIN
 

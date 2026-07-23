@@ -18,7 +18,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-/* https://en.wikipedia.org/wiki/Floyd–Warshall_algorithm */
+/* https://en.wikipedia.org/wiki/Floyd-Warshall_algorithm */
 /* https://moorejs.github.io/APSP-in-parallel/ */
 
 /* FWCST signed type to use for cost */
