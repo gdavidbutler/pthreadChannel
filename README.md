@@ -54,7 +54,7 @@ A Channel is an anonymous, pthread coordinating, [Store](#Store) of pointer (voi
 * Any number of pthreads can Put/Get on a Channel.
   * Awareness of Channel demand is supported: an operation can test whether a counterpart is already waiting, without itself committing to block. This enables [lazy evaluation](https://en.wikipedia.org/wiki/Lazy_evaluation) -- a producer skips expensive work when no consumer is asking for it. See [squint](#Examples), whose recursive multiply only spawns sub-agents when its output is demanded; the lazy-evaluation pattern is critical to making that algorithm terminate.
 * A pthread can Put/Get on any number of Channels.
-  * Including either one, or all ([atomic broadcast](https://en.wikipedia.org/wiki/Atomic_broadcast)), of an array of operations.
+  * Including either one, or all of an array of operations. chanAll is all-or-none across a set of operations, which may mix Puts and Gets on different Channels -- a transaction, not a delivery pattern. In the special case where every operation is a Put of one value, that transaction is an atomic broadcast, but within a process: the order is observed rather than produced, because the lock ladder is the single serialization point. Producing that order across address spaces is a different problem.
 * The canonical Channel use case is a transfer of a pointer to heap.
   * Putting pthread:
     ````C
