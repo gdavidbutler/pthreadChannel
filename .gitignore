@@ -52,12 +52,13 @@ Mkfile.old
 dkms.conf
 
 # Local Executables
-primes
-sockproxy
+test_chanOne
+test_chanAll
+squint
 pipeproxy
+sockproxy
+floydWarshall
 datagramchat
 datagramchat-rsec
-squint
-floydWarshall
-chanBlbStrSQLtest
 test_rsec
+chanBlbStrSQLtest

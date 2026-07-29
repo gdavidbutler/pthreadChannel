@@ -11,7 +11,34 @@
  *   2. Exactly-one: only ONE operation executes per chanOne call
  *   3. Lock ladder: no deadlock when acquiring locks
  *   4. Progress: if any operation can complete, one will
+ *   5. Blocking: a caller with nothing satisfiable registers as a waiter on
+ *      every Channel, is woken, and scans again -- deciding nothing on the
+ *      strength of the wake itself
+ *
+ * Scenarios, selected at spin time:
+ *   (default)             TEST_FIRSTMATCH, one caller, one producer
+ *   -DTEST_COMPETE        two callers with opposing operations
+ *   -DTEST_LADDER         two callers, identical operations
+ *   -DTEST_BLOCKING       two callers that MUST wait, then are supplied
+ *   -DTEST_BLOCKING_SHUT  ... that are shut instead of supplied
+ *
+ * Note on coverage: TEST_LADDER does NOT exercise lock_ladder_3. Both of
+ * its callers resolve on the fast path, which takes one lock at a time.
+ * The ladder is reached only when nothing is satisfiable, so TEST_BLOCKING
+ * -- where two callers are inside the ladder at once and retry on trylock
+ * failure -- is what actually covers it.
+ *
+ * Not modelled: waiters are woken as a set rather than in arrival order, so
+ * nothing here verifies the FIFO fairness of the waiter queues.
  */
+
+/* TEST_BLOCKING_SHUT is TEST_BLOCKING with the Channels shut instead of
+ * supplied. This MUST be resolved before chanOne_3ops is preprocessed. */
+#ifdef TEST_BLOCKING_SHUT
+#ifndef TEST_BLOCKING
+#define TEST_BLOCKING
+#endif
+#endif
 
 /* Channel states (simplified - single item store) */
 #define ST_EMPTY     0  /* can Put, cannot Get */
@@ -61,10 +88,54 @@ byte t2_status;
 byte t1_ops_completed;
 byte t2_ops_completed;
 
-/* For first-match verification: track what t1 saw at decision time */
+/* For first-match verification: track what each thread saw at decision time */
 byte t1_s0;  /* state of ch0 when t1 decided */
 byte t1_s1;  /* state of ch1 when t1 decided */
 byte t1_s2;  /* state of ch2 when t1 decided */
+byte t2_s0;
+byte t2_s1;
+byte t2_s2;
+
+/* How a chanOne behaves when nothing is satisfiable, i.e. nsTimeout */
+#define MODE_NB     0  /* nsTimeout < 0: report timeout, operate nothing */
+#define MODE_BLOCK  1  /* nsTimeout == 0: wait to be woken, then scan again */
+#define MODE_TIMED  2  /* nsTimeout > 0: as above, but the wait may expire */
+
+#ifdef TEST_BLOCKING
+/*
+ * Waiter bookkeeping for the blocking paths.
+ *
+ * waiting[ch * NPROC + p] is p queued on ch; signalled[p] is the condition
+ * variable p sleeps on. Registration happens while the lock ladder is still
+ * held, which is what makes a wakeup impossible to miss.
+ *
+ * Waiters are woken as a set, not in arrival order, so nothing here says
+ * anything about the FIFO fairness the implementation provides.
+ */
+#define NPROC 2
+bool waiting[NCHANS * NPROC];
+bool signalled[NPROC];
+byte wk_p;                    /* scratch, only touched inside atomic */
+
+inline wake_waiters(ch) {
+  atomic {
+    wk_p = 0;
+    do
+    :: wk_p < NPROC ->
+       if
+       :: waiting[ch * NPROC + wk_p] -> signalled[wk_p] = true
+       :: else -> skip
+       fi;
+       wk_p++
+    :: wk_p >= NPROC -> break
+    od
+  }
+}
+#else
+inline wake_waiters(ch) {
+  skip
+}
+#endif
 
 /*
  * Lock primitives
@@ -133,7 +204,7 @@ inline lock_ladder_3(success) {
  *
  * Returns: 0 = none, 1-N = index+1 of completed operation
  */
-inline chanOne_3ops(op0, ch0, op1, ch1, op2, ch2, result, status, ops_done, s0, s1, s2) {
+inline chanOne_3ops(op0, ch0, op1, ch1, op2, ch2, result, status, ops_done, s0, s1, s2, me, mode) {
   byte co_i;
   byte co_found;
   byte co_success;
@@ -158,29 +229,38 @@ inline chanOne_3ops(op0, ch0, op1, ch1, op2, ch2, result, status, ops_done, s0, 
            status = OS_SHT;
            unlock_chan(ch0);
            result = 1;
-           ops_done = 1;
+           ops_done++;
            co_fast_done = true
         :: op0 == OP_GET && channels[ch0].state == ST_HAS_ITEM ->
            channels[ch0].state = ST_EMPTY;
+           wake_waiters(ch0);
            status = OS_GET;
            unlock_chan(ch0);
            result = 1;
-           ops_done = 1;
+           ops_done++;
+           co_fast_done = true
+        :: op0 == OP_GET && channels[ch0].state == ST_SHUTDOWN ->
+           status = OS_SHT;
+           unlock_chan(ch0);
+           result = 1;
+           ops_done++;
            co_fast_done = true
         :: op0 == OP_PUT && channels[ch0].state == ST_EMPTY ->
            channels[ch0].state = ST_HAS_ITEM;
+           wake_waiters(ch0);
            status = OS_PUT;
            unlock_chan(ch0);
            result = 1;
-           ops_done = 1;
+           ops_done++;
            co_fast_done = true
         :: op0 == OP_PUT && channels[ch0].state == ST_SHUTDOWN ->
            status = OS_SHT;
            unlock_chan(ch0);
            result = 1;
-           ops_done = 1;
+           ops_done++;
            co_fast_done = true
         :: else ->
+           s0 = channels[ch0].state;
            unlock_chan(ch0)
         fi
      :: op0 == OP_NOP -> skip
@@ -195,29 +275,38 @@ inline chanOne_3ops(op0, ch0, op1, ch1, op2, ch2, result, status, ops_done, s0, 
            status = OS_SHT;
            unlock_chan(ch1);
            result = 2;
-           ops_done = 1;
+           ops_done++;
            co_fast_done = true
         :: op1 == OP_GET && channels[ch1].state == ST_HAS_ITEM ->
            channels[ch1].state = ST_EMPTY;
+           wake_waiters(ch1);
            status = OS_GET;
            unlock_chan(ch1);
            result = 2;
-           ops_done = 1;
+           ops_done++;
+           co_fast_done = true
+        :: op1 == OP_GET && channels[ch1].state == ST_SHUTDOWN ->
+           status = OS_SHT;
+           unlock_chan(ch1);
+           result = 2;
+           ops_done++;
            co_fast_done = true
         :: op1 == OP_PUT && channels[ch1].state == ST_EMPTY ->
            channels[ch1].state = ST_HAS_ITEM;
+           wake_waiters(ch1);
            status = OS_PUT;
            unlock_chan(ch1);
            result = 2;
-           ops_done = 1;
+           ops_done++;
            co_fast_done = true
         :: op1 == OP_PUT && channels[ch1].state == ST_SHUTDOWN ->
            status = OS_SHT;
            unlock_chan(ch1);
            result = 2;
-           ops_done = 1;
+           ops_done++;
            co_fast_done = true
         :: else ->
+           s1 = channels[ch1].state;
            unlock_chan(ch1)
         fi
      :: op1 == OP_NOP -> skip
@@ -232,29 +321,38 @@ inline chanOne_3ops(op0, ch0, op1, ch1, op2, ch2, result, status, ops_done, s0, 
            status = OS_SHT;
            unlock_chan(ch2);
            result = 3;
-           ops_done = 1;
+           ops_done++;
            co_fast_done = true
         :: op2 == OP_GET && channels[ch2].state == ST_HAS_ITEM ->
            channels[ch2].state = ST_EMPTY;
+           wake_waiters(ch2);
            status = OS_GET;
            unlock_chan(ch2);
            result = 3;
-           ops_done = 1;
+           ops_done++;
+           co_fast_done = true
+        :: op2 == OP_GET && channels[ch2].state == ST_SHUTDOWN ->
+           status = OS_SHT;
+           unlock_chan(ch2);
+           result = 3;
+           ops_done++;
            co_fast_done = true
         :: op2 == OP_PUT && channels[ch2].state == ST_EMPTY ->
            channels[ch2].state = ST_HAS_ITEM;
+           wake_waiters(ch2);
            status = OS_PUT;
            unlock_chan(ch2);
            result = 3;
-           ops_done = 1;
+           ops_done++;
            co_fast_done = true
         :: op2 == OP_PUT && channels[ch2].state == ST_SHUTDOWN ->
            status = OS_SHT;
            unlock_chan(ch2);
            result = 3;
-           ops_done = 1;
+           ops_done++;
            co_fast_done = true
         :: else ->
+           s2 = channels[ch2].state;
            unlock_chan(ch2)
         fi
      :: op2 == OP_NOP -> skip
@@ -290,6 +388,8 @@ inline chanOne_3ops(op0, ch0, op1, ch1, op2, ch2, result, status, ops_done, s0, 
               co_found = 0
            :: op0 == OP_GET && channels[ch0].state == ST_HAS_ITEM ->
               co_found = 0
+           :: op0 == OP_GET && channels[ch0].state == ST_SHUTDOWN ->
+              co_found = 0
            :: op0 == OP_PUT && channels[ch0].state == ST_EMPTY ->
               co_found = 0
            :: op0 == OP_PUT && channels[ch0].state == ST_SHUTDOWN ->
@@ -304,6 +404,8 @@ inline chanOne_3ops(op0, ch0, op1, ch1, op2, ch2, result, status, ops_done, s0, 
            :: op1 == OP_SHT && channels[ch1].state == ST_SHUTDOWN ->
               co_found = 1
            :: op1 == OP_GET && channels[ch1].state == ST_HAS_ITEM ->
+              co_found = 1
+           :: op1 == OP_GET && channels[ch1].state == ST_SHUTDOWN ->
               co_found = 1
            :: op1 == OP_PUT && channels[ch1].state == ST_EMPTY ->
               co_found = 1
@@ -320,6 +422,8 @@ inline chanOne_3ops(op0, ch0, op1, ch1, op2, ch2, result, status, ops_done, s0, 
               co_found = 2
            :: op2 == OP_GET && channels[ch2].state == ST_HAS_ITEM ->
               co_found = 2
+           :: op2 == OP_GET && channels[ch2].state == ST_SHUTDOWN ->
+              co_found = 2
            :: op2 == OP_PUT && channels[ch2].state == ST_EMPTY ->
               co_found = 2
            :: op2 == OP_PUT && channels[ch2].state == ST_SHUTDOWN ->
@@ -331,13 +435,46 @@ inline chanOne_3ops(op0, ch0, op1, ch1, op2, ch2, result, status, ops_done, s0, 
 
         if
         :: co_found == 255 ->
-           /* Nothing satisfiable - would block (model as timeout) */
+           /* Nothing satisfiable. What happens now is the nsTimeout. */
+#ifdef TEST_BLOCKING
+           if
+           :: mode == MODE_NB ->
+              unlock_chan(2);
+              unlock_chan(1);
+              unlock_chan(0);
+              status = OS_TMO;
+              result = 0;
+              co_need_retry = false
+           :: mode != MODE_NB ->
+              /* Register on every Channel BEFORE releasing any lock, so a
+               * state change cannot slip in between deciding to wait and
+               * being visible as a waiter. */
+              waiting[ch0 * NPROC + me] = true;
+              waiting[ch1 * NPROC + me] = true;
+              waiting[ch2 * NPROC + me] = true;
+              signalled[me] = false;
+              unlock_chan(2);
+              unlock_chan(1);
+              unlock_chan(0);
+              if
+              :: mode == MODE_TIMED ->
+                 status = OS_TMO;
+                 result = 0;
+                 co_need_retry = false
+              :: signalled[me] ->
+                 /* Woken. This decides NOTHING by itself: go around and
+                  * scan again under a fresh ladder. */
+                 co_need_retry = true
+              fi
+           fi
+#else
            unlock_chan(2);
            unlock_chan(1);
            unlock_chan(0);
            status = OS_TMO;
            result = 0;
            co_need_retry = false
+#endif
         :: co_found != 255 ->
            /* Found one - unlock earlier channels, execute */
            if
@@ -349,20 +486,24 @@ inline chanOne_3ops(op0, ch0, op1, ch1, op2, ch2, result, status, ops_done, s0, 
                 if
                 :: op0 == OP_SHT ->
                    status = OS_SHT
-                :: op0 == OP_GET ->
+                :: op0 == OP_GET && channels[ch0].state == ST_HAS_ITEM ->
                    channels[ch0].state = ST_EMPTY;
+                   wake_waiters(ch0);
                    status = OS_GET
+                :: op0 == OP_GET && channels[ch0].state == ST_SHUTDOWN ->
+                   status = OS_SHT
                 :: op0 == OP_PUT && channels[ch0].state == ST_EMPTY ->
                    channels[ch0].state = ST_HAS_ITEM;
+                   wake_waiters(ch0);
                    status = OS_PUT
                 :: op0 == OP_PUT && channels[ch0].state == ST_SHUTDOWN ->
                    status = OS_SHT
-                :: else -> skip
+                :: else -> assert(false)
                 fi
               };
               unlock_chan(0);
               result = 1;
-              ops_done = 1
+              ops_done++
            :: co_found == 1 ->
               unlock_chan(2);
               unlock_chan(0);
@@ -371,20 +512,24 @@ inline chanOne_3ops(op0, ch0, op1, ch1, op2, ch2, result, status, ops_done, s0, 
                 if
                 :: op1 == OP_SHT ->
                    status = OS_SHT
-                :: op1 == OP_GET ->
+                :: op1 == OP_GET && channels[ch1].state == ST_HAS_ITEM ->
                    channels[ch1].state = ST_EMPTY;
+                   wake_waiters(ch1);
                    status = OS_GET
+                :: op1 == OP_GET && channels[ch1].state == ST_SHUTDOWN ->
+                   status = OS_SHT
                 :: op1 == OP_PUT && channels[ch1].state == ST_EMPTY ->
                    channels[ch1].state = ST_HAS_ITEM;
+                   wake_waiters(ch1);
                    status = OS_PUT
                 :: op1 == OP_PUT && channels[ch1].state == ST_SHUTDOWN ->
                    status = OS_SHT
-                :: else -> skip
+                :: else -> assert(false)
                 fi
               };
               unlock_chan(1);
               result = 2;
-              ops_done = 1
+              ops_done++
            :: co_found == 2 ->
               unlock_chan(1);
               unlock_chan(0);
@@ -393,25 +538,36 @@ inline chanOne_3ops(op0, ch0, op1, ch1, op2, ch2, result, status, ops_done, s0, 
                 if
                 :: op2 == OP_SHT ->
                    status = OS_SHT
-                :: op2 == OP_GET ->
+                :: op2 == OP_GET && channels[ch2].state == ST_HAS_ITEM ->
                    channels[ch2].state = ST_EMPTY;
+                   wake_waiters(ch2);
                    status = OS_GET
+                :: op2 == OP_GET && channels[ch2].state == ST_SHUTDOWN ->
+                   status = OS_SHT
                 :: op2 == OP_PUT && channels[ch2].state == ST_EMPTY ->
                    channels[ch2].state = ST_HAS_ITEM;
+                   wake_waiters(ch2);
                    status = OS_PUT
                 :: op2 == OP_PUT && channels[ch2].state == ST_SHUTDOWN ->
                    status = OS_SHT
-                :: else -> skip
+                :: else -> assert(false)
                 fi
               };
               unlock_chan(2);
               result = 3;
-              ops_done = 1
+              ops_done++
            fi;
            co_need_retry = false
         fi
      :: co_need_retry == false -> break
-     od
+     od;
+#ifdef TEST_BLOCKING
+     atomic {
+       waiting[ch0 * NPROC + me] = false;
+       waiting[ch1 * NPROC + me] = false;
+       waiting[ch2 * NPROC + me] = false
+     }
+#endif
   fi
 }
 
@@ -427,7 +583,7 @@ proctype thread1_firstmatch() {
   /* Try GET from all 3 channels */
   chanOne_3ops(OP_GET, 0, OP_GET, 1, OP_GET, 2,
                t1_result, t1_status, t1_ops_completed,
-               t1_s0, t1_s1, t1_s2);
+               t1_s0, t1_s1, t1_s2, 0, MODE_NB);
   t1_done = true
 }
 
@@ -437,38 +593,48 @@ proctype thread2_producer() {
   :: /* Put to ch0 only */
      lock_chan(0);
      channels[0].state = ST_HAS_ITEM;
+     wake_waiters(0);
      unlock_chan(0)
   :: /* Put to ch1 only */
      lock_chan(1);
      channels[1].state = ST_HAS_ITEM;
+     wake_waiters(1);
      unlock_chan(1)
   :: /* Put to ch2 only */
      lock_chan(2);
      channels[2].state = ST_HAS_ITEM;
+     wake_waiters(2);
      unlock_chan(2)
   :: /* Put to ch0 and ch1 */
      lock_chan(0);
      channels[0].state = ST_HAS_ITEM;
+     wake_waiters(0);
      unlock_chan(0);
      lock_chan(1);
      channels[1].state = ST_HAS_ITEM;
+     wake_waiters(1);
      unlock_chan(1)
   :: /* Put to ch1 and ch2 */
      lock_chan(1);
      channels[1].state = ST_HAS_ITEM;
+     wake_waiters(1);
      unlock_chan(1);
      lock_chan(2);
      channels[2].state = ST_HAS_ITEM;
+     wake_waiters(2);
      unlock_chan(2)
   :: /* Put to all three */
      lock_chan(0);
      channels[0].state = ST_HAS_ITEM;
+     wake_waiters(0);
      unlock_chan(0);
      lock_chan(1);
      channels[1].state = ST_HAS_ITEM;
+     wake_waiters(1);
      unlock_chan(1);
      lock_chan(2);
      channels[2].state = ST_HAS_ITEM;
+     wake_waiters(2);
      unlock_chan(2)
   fi;
   t2_done = true
@@ -485,7 +651,7 @@ proctype thread1_compete() {
   /* GET from ch0, PUT to ch1 */
   chanOne_3ops(OP_GET, 0, OP_PUT, 1, OP_NOP, 2,
                t1_result, t1_status, t1_ops_completed,
-               t1_s0, t1_s1, t1_s2);
+               t1_s0, t1_s1, t1_s2, 0, MODE_NB);
   t1_done = true
 }
 
@@ -493,7 +659,7 @@ proctype thread2_compete() {
   /* GET from ch1, PUT to ch0 */
   chanOne_3ops(OP_GET, 1, OP_PUT, 0, OP_NOP, 2,
                t2_result, t2_status, t2_ops_completed,
-               t1_s0, t1_s1, t1_s2);  /* reuse t1_s* since we don't need t2's */
+               t2_s0, t2_s1, t2_s2, 1, MODE_NB);
   t2_done = true
 }
 
@@ -506,14 +672,14 @@ proctype thread2_compete() {
 proctype thread1_ladder() {
   chanOne_3ops(OP_PUT, 0, OP_PUT, 1, OP_PUT, 2,
                t1_result, t1_status, t1_ops_completed,
-               t1_s0, t1_s1, t1_s2);
+               t1_s0, t1_s1, t1_s2, 0, MODE_NB);
   t1_done = true
 }
 
 proctype thread2_ladder() {
   chanOne_3ops(OP_PUT, 0, OP_PUT, 1, OP_PUT, 2,
                t2_result, t2_status, t2_ops_completed,
-               t1_s0, t1_s1, t1_s2);
+               t2_s0, t2_s1, t2_s2, 1, MODE_NB);
   t2_done = true
 }
 
@@ -525,8 +691,68 @@ proctype thread2_ladder() {
  */
 #ifndef TEST_COMPETE
 #ifndef TEST_LADDER
+#ifndef TEST_BLOCKING
 #define TEST_FIRSTMATCH
 #endif
+#endif
+#endif
+
+#ifdef TEST_BLOCKING
+/*
+ * Test scenario 4: the blocking paths (nsTimeout >= 0)
+ *
+ * Two threads each chanOne(GET ch0, GET ch1, GET ch2) with every Channel
+ * empty, so NEITHER can resolve on the fast path and both must take the
+ * lock ladder and then wait. That makes this the only scenario in which two
+ * threads are inside the ladder at once -- TEST_LADDER never reaches it.
+ *
+ * Default: a filler supplies two items, so both waiters are woken and each
+ * takes one. With -DTEST_BLOCKING_SHUT the Channels are shut instead, and
+ * both waiters must wake and report OS_SHT rather than waiting forever.
+ */
+bool t3_done;
+
+proctype thread1_blocking() {
+  chanOne_3ops(OP_GET, 0, OP_GET, 1, OP_GET, 2,
+               t1_result, t1_status, t1_ops_completed,
+               t1_s0, t1_s1, t1_s2, 0, MODE_BLOCK);
+  t1_done = true
+}
+
+proctype thread2_blocking() {
+  chanOne_3ops(OP_GET, 0, OP_GET, 1, OP_GET, 2,
+               t2_result, t2_status, t2_ops_completed,
+               t2_s0, t2_s1, t2_s2, 1, MODE_BLOCK);
+  t2_done = true
+}
+
+proctype thread3_supplier() {
+#ifdef TEST_BLOCKING_SHUT
+  lock_chan(0);
+  channels[0].state = ST_SHUTDOWN;
+  wake_waiters(0);
+  unlock_chan(0);
+  lock_chan(1);
+  channels[1].state = ST_SHUTDOWN;
+  wake_waiters(1);
+  unlock_chan(1);
+  lock_chan(2);
+  channels[2].state = ST_SHUTDOWN;
+  wake_waiters(2);
+  unlock_chan(2)
+#else
+  lock_chan(0);
+  channels[0].state = ST_HAS_ITEM;
+  wake_waiters(0);
+  unlock_chan(0);
+  lock_chan(1);
+  channels[1].state = ST_HAS_ITEM;
+  wake_waiters(1);
+  unlock_chan(1)
+#endif
+  ;
+  t3_done = true
+}
 #endif
 
 init {
@@ -564,6 +790,12 @@ init {
 #ifdef TEST_LADDER
   run thread1_ladder();
   run thread2_ladder()
+#endif
+#ifdef TEST_BLOCKING
+  t3_done = false;
+  run thread1_blocking();
+  run thread2_blocking();
+  run thread3_supplier()
 #endif
 }
 
@@ -614,4 +846,32 @@ ltl ladder_progress { <> (t1_done && t2_done) }
  * (This is checked implicitly via state assertions)
  */
 ltl ladder_both_done { [] ((t1_done && t2_done) ->
-                           (t1_ops_completed + t2_ops_completed <= 3)) }
+                           (t1_ops_completed + t2_ops_completed <= 2)) }
+
+#ifdef TEST_BLOCKING
+/*
+ * Properties for TEST_BLOCKING:
+ * A waiting chanOne is eventually woken and resolves. This is the claim
+ * that fails if registration ever moves after the ladder is released.
+ */
+ltl blocked_progress { <> (t1_done && t2_done && t3_done) }
+
+/* MODE_BLOCK has no expiry, so neither waiter may report a timeout. */
+ltl blocked_never_times_out { [] ((t1_done -> t1_status != OS_TMO)
+                                  && (t2_done -> t2_status != OS_TMO)) }
+
+/*
+ * Waking decides nothing by itself: a resolved call reports exactly one
+ * operation, and reports Get only if it really took an item.
+ */
+ltl blocked_exactly_one { [] (((t1_done && t1_result != 0) -> (t1_ops_completed == 1))
+                              && ((t2_done && t2_result != 0) -> (t2_ops_completed == 1))) }
+
+#ifdef TEST_BLOCKING_SHUT
+/* With every Channel shut, a blocked Get reports Sht, never a Get. In the
+ * supplying scenario the waiters legitimately do report Get, so this claim
+ * belongs to the shut scenario alone. */
+ltl shut_wakes_blocked { [] ((t1_done -> t1_status != OS_GET)
+                             && (t2_done -> t2_status != OS_GET)) }
+#endif
+#endif

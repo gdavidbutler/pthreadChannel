@@ -216,12 +216,13 @@ typedef struct chanArr {
 } chanArr_t;
 
 /*
- * Operate on one (first capable) Channal of a Channal array based on nsTimeout:
+ * Operate on one (first capable) Channel of a Channel array based on nsTimeout:
  *  >0 timeout in nanoseconds
  *   0 block
  *  -1 non-blocking
- * Return 0 on error (memory allocation failure).
+ * Return 0 on error (memory allocation failure or no operable entry).
  * Otherwise the offset into the list is one less than the return value.
+ * A timeout is not an error, it is reported on the first operable entry.
  */
 unsigned int
 chanOne(
@@ -232,17 +233,19 @@ chanOne(
 
 /* chanAll status */
 typedef enum chanAl {
-  chanAlErr = 0 /* memory allocation failure */
+  chanAlErr = 0 /* memory allocation failure or no operable entry */
  ,chanAlEvt     /* Event - check chanOs_t */
  ,chanAlOp      /* Operation - check chanOs_t */
- ,chanAlTmo     /* timeout */
+ ,chanAlTmo     /* timeout, nothing was operated */
 } chanAl_t;
 
 /*
- * Operate on all Channals of a Channal array based on nsTimeout:
+ * Operate on all Channels of a Channel array based on nsTimeout:
  *  >0 timeout in nanoseconds
  *   0 block
  *  -1 non-blocking
+ * All entries are operated or none are, at every nsTimeout.
+ * Only chanAlEvt and chanAlOp set chanOs_t, the others operate nothing.
  */
 chanAl_t
 chanAll(

@@ -215,7 +215,7 @@ This narrowness is what makes Channel-based code compose. A correct agent stays 
 Every agent has three parts:
 
 * **Context struct** -- holds the Channels the agent operates on, plus configuration. Set by the launcher once, before `pthread_create`.
-* **Thread function** -- the main loop. On any chanOp returning anything other than success, chanShut and chanClose every Channel the agent holds, free the context, return.
+* **Thread function** -- the main loop. On any chanOp returning anything other than success, chanClose every Channel the agent holds, free the context, return. Whether it also chanShuts is a property of the topology, not of the exit. Shutting is how a cascade is *started*, so the agents that shut are the ones entitled to decide a region is finished: squint's agents shut because each of its Channels has a single authoritative party, while floydWarshall's workers close without shutting -- their work Channel has competing consumers, and one worker shutting it on the way out would collapse the pool.
 * **Launcher function** -- allocates the context, chanOpens every Channel the agent will use, creates the thread, detaches it. Never joins.
 
 See `conS` / `multS` / `addS` in [squint](#Examples). Reading any one shows the pattern.
@@ -386,8 +386,8 @@ Promela models verify different aspects of the implementation:
 | Model | Purpose | Key Properties Verified |
 |-------|---------|------------------------|
 | `chan.pml` | General Channel operations | Safety, conservation, deadlock freedom |
-| `chanOne.pml` | Select-style first-available | First-match semantics, exactly-one completion |
-| `chanAll.pml` | Atomic multi-Channel operations | All-or-nothing atomicity, lock ladder correctness |
+| `chanOne.pml` | Select-style first-available | First-match semantics, exactly-one completion, blocking wait/wake |
+| `chanAll.pml` | Atomic multi-Channel operations | All-or-nothing atomicity, lock ladder correctness, blocking wait/wake |
 | `chanStrFIFO.pml` | FIFO Store | FIFO ordering, conservation, capacity bounds |
 | `chanStrFLSO.pml` | Self-tuning FIFO Store | FIFO ordering, size bounds, adaptation safety |
 | `chanBlb.pml` | chanBlb bridge coordination | Shutdown ordering, finalClose timing, message conservation |
@@ -401,82 +401,184 @@ Requires SPIN (`spin` command) and a C compiler. Basic verification:
 spin -a chan.pml
 cc -DSAFETY -o pan pan.c
 
-# Run safety check
-./pan -N atomicity
+# Run the default safety check (no unreachable states, no assertion failures)
+./pan
 
-# For liveness properties (with fairness)
+# Check a named property
+./pan -N conservation
+
+# For liveness properties (with fairness), build without -DSAFETY
 cc -o pan pan.c
-./pan -a -f -N completion
+./pan -a -f -N progress
 ```
+
+Claim names differ per model -- `grep '^ltl' *.pml` lists them. Naming a
+claim a model does not define fails with `cannot find claim`.
+
+Run `./pan` with no `-N` at least once per model. Selecting a claim disables
+invalid-end-state checking (`pan` says so: `invalid end states - (disabled by
+never claim)`), and that check is what catches a thread left blocked at the
+end of a run. A model can pass every named property and still wedge.
 
 Each model supports test scenario selection via preprocessor defines:
 
 ```bash
 # chanOne.pml scenarios
-spin -a chanOne.pml                    # default: first-match test
-spin -DTEST_COMPETE -a chanOne.pml     # competing threads
-spin -DTEST_LADDER -a chanOne.pml      # lock ladder deadlock test
+spin -a chanOne.pml                       # default: first-match test
+spin -DTEST_COMPETE -a chanOne.pml        # competing threads
+spin -DTEST_LADDER -a chanOne.pml         # two callers, identical operations
+spin -DTEST_BLOCKING -a chanOne.pml       # callers that must wait, then supplied
+spin -DTEST_BLOCKING_SHUT -a chanOne.pml  # ... shut instead of supplied
 
 # chanAll.pml scenarios
-spin -a chanAll.pml                    # default: competing threads
-spin -DTEST_PRODUCER_CONSUMER -a chanAll.pml
+spin -a chanAll.pml                      # default: competing threads, nothing waits
+spin -DTEST_BLOCKING -a chanAll.pml      # a chanAll that must wait (nsTimeout == 0)
+spin -DTEST_BLOCKING_TIMED -a chanAll.pml # ... whose wait may expire (nsTimeout > 0)
+spin -DTEST_FAIRNESS -a chanAll.pml      # arrival order and its escape
 ```
+
+The default `chanAll.pml` scenario resolves every operation in a single
+pass, which is the `nsTimeout < 0` shape. The two blocking scenarios add
+what that cannot reach: a Channel array that cannot be satisfied yet, so
+the caller registers as a waiter on every Channel, releases the lock
+ladder, waits, and scans again from scratch when woken.
 
 #### Verification Results
 
-**chan.pml** - General operations (1,498 states with reduced parameters):
+**chan.pml** - General operations (166-1,496 states across scenarios):
 
-| Property | Result | Description |
-|----------|--------|-------------|
-| `safety` | PASSED | No race conditions or invalid states |
-| `conservation` | PASSED | Items neither created nor destroyed |
+| Property | Scenario | Result | Description |
+|----------|----------|--------|-------------|
+| safety (default run, no `-N`) | all | PASSED | No deadlock, no assertion failure |
+| `conservation` | all | PASSED | A Get requires a prior Put |
+| `progress` | default | PASSED | Every operation the workers set out to do completes |
+| `termination` | default | PASSED | Both workers finish (with fairness) |
 
-**chanOne.pml** - Select-style operations (472-2,583 states):
+`chan.pml` also carries scenario defines:
 
-| Property | Result | Description |
-|----------|--------|-------------|
-| `exactly_one` | PASSED | Each chanOne completes 0 or 1 operations |
-| `first_match` | PASSED | Returns first completable operation in array order |
-| `progress` | PASSED | Both threads complete (with fairness) |
-| `ladder_progress` | PASSED | No deadlock from lock ladder |
+```bash
+spin -a chan.pml                 # default: two workers, Put then Get
+spin -DTEST_ONE -a chan.pml      # a producer and one chan_one call
+spin -DTEST_ALL -a chan.pml      # a producer and one chan_all call
+spin -DTEST_SHUT -a chan.pml     # producer, consumer and shutter
+```
 
-**chanAll.pml** - Atomic multi-Channel operations (319-626 states):
+`TEST_SHUT` is the only scenario in which a Channel is ever shut, so it is
+what covers the shutdown branches.
 
-| Property | Result | Description |
-|----------|--------|-------------|
-| `atomicity` | PASSED | All operations complete atomically or none do |
-| `completion` | PASSED | Both threads eventually complete (with fairness) |
-| `state_consistency` | PASSED | Channel states remain consistent |
+**chanOne.pml** - Select-style operations (503-2,951 states, 45,457-94,251 blocking):
 
-**chanStrFIFO.pml** - Fixed-size FIFO Store (1,238 states):
+| Property | Scenario | Result | Description |
+|----------|----------|--------|-------------|
+| `exactly_one` | all | PASSED | Each chanOne completes 0 or 1 operations |
+| `first_match` | all | PASSED | Returns first completable operation in array order |
+| `first_match_ch2` | default | PASSED | Reaching the third entry means neither earlier one was ready |
+| `progress` | default, compete | PASSED | Both threads complete (with fairness) |
+| `ladder_both_done` | ladder | PASSED | Two callers complete at most one operation each |
+| `ladder_progress` | ladder | PASSED | No deadlock from lock ladder |
+| `blocked_progress` | blocking | PASSED | A waiting caller is woken and resolves (with fairness) |
+| `blocked_never_times_out` | blocking | PASSED | An indefinite wait reports no timeout |
+| `blocked_exactly_one` | blocking | PASSED | Waking decides nothing by itself |
+| `shut_wakes_blocked` | blocking-shut | PASSED | Shutting a Channel releases a blocked Get, which reports Sht |
+
+The blocking properties are checked by mutation: moving waiter registration
+after the lock ladder is released breaks `blocked_progress` (the missed
+wakeup), dropping Get-on-shutdown leaves a blocked Get waiting forever on a
+shut Channel, and completing two operations in one call breaks
+`exactly_one`.
+
+Worth knowing when reading these: `TEST_LADDER` does **not** exercise the
+lock ladder. Both of its callers resolve on the fast path, which takes one
+lock at a time; the ladder is reached only when nothing is satisfiable. The
+blocking scenarios are what cover it, with two callers inside the ladder at
+once retrying on trylock failure.
+
+**chanAll.pml** - Atomic multi-Channel operations (489-495 states default, 1,286-1,292 blocking, 2,561-2,613 timed):
+
+| Property | Scenario | Result | Description |
+|----------|----------|--------|-------------|
+| `atomicity` | all | PASSED | A status claims a completed Get or Put only on a committed transaction, and a commit claims every operation asked for |
+| `completion` | default | PASSED | Both threads eventually complete (with fairness) |
+| `state_consistency` | default | PASSED | Channel states remain consistent |
+| `blocked_completes` | blocking | PASSED | A waiting chanAll is eventually woken and finishes (with fairness) |
+| `blocked_commits_all` | blocking | PASSED | Waiting never weakens all-or-none |
+| `no_commit_on_partial_wake` | blocking | PASSED | One satisfiable Channel is never enough to commit |
+| `timed_expiry_takes_nothing` | timed | PASSED | An expired wait performed nothing |
+
+The blocking properties are checked by mutation rather than asserted: moving
+waiter registration after the lock ladder is released breaks
+`blocked_completes` (the missed wakeup), and committing on the strength of a
+wake without scanning again breaks `no_commit_on_partial_wake`. The second
+mutant passes `atomicity` and `blocked_commits_all` -- its statuses look
+entirely consistent -- which is why the model counts the Puts that actually
+landed rather than trusting the reported result.
+
+`TEST_FAIRNESS` models the waiter queues properly -- ordered, and woken one
+at a time from the front rather than broadcast -- which is what makes the
+opportunistic completion above reachable. Two results fall out of it:
+
+* Removing the opportunistic completion entirely leaves the Channel live.
+  It is a throughput optimization, as described above, not a correctness
+  requirement.
+* What *is* load-bearing is that the arrival-order test is **not** re-applied
+  after a thread is woken. A woken thread takes the item on Store state
+  alone. Re-applying the test there deadlocks the Channel: the woken thread
+  queues behind waiters that were not woken, and the item it was handed is
+  never taken. Mutating that one condition is the difference between all
+  waiters completing and none of them completing.
+
+The other blocking scenarios still wake as a set, so they say nothing about
+arrival order; only `TEST_FAIRNESS` does.
+
+**chanStrFIFO.pml** - Fixed-size FIFO Store (1,226-1,250 states):
 
 | Property | Result | Description |
 |----------|--------|-------------|
 | `fifo_order` | PASSED | Items retrieved in order stored |
 | `conservation` | PASSED | No items lost or duplicated |
 | `bounds` | PASSED | Count never exceeds Store size |
+| `complete_transfer` | PASSED | Every item is transferred |
 | `progress` | PASSED | Producer/consumer complete (with fairness) |
 
-**chanStrFLSO.pml** - Self-tuning FIFO Store (160,010 states):
+**chanStrFLSO.pml** - Self-tuning FIFO Store (156,822-166,902 states):
 
 | Property | Result | Description |
 |----------|--------|-------------|
 | `fifo_order` | PASSED | FIFO ordering preserved despite resizing |
 | `size_bounds` | PASSED | Size stays within min/max bounds |
 | `conservation` | PASSED | No items lost during resize |
-| `adapts_safely` | PASSED | Resizing respects bounds |
+| `adapts_safely` | PASSED | Resizing respects bounds (not independent of `size_bounds`) |
+| `complete_transfer` | PASSED | Every item is transferred |
 | `progress` | PASSED | Producer/consumer complete (with fairness) |
 
-**chanBlb.pml** - chanBlb bridge coordination (8,727 states):
+Both Store models state `complete_transfer` as a liveness claim. Written as
+an implication guarded by the producer's and consumer's done flags it cannot
+fail, because those flags are only set once the counts already hold -- a
+producer mutated to emit one item fewer left the old form satisfied.
+
+**chanBlb.pml** - chanBlb bridge coordination (4,453-10,591 states):
 
 | Property | Result | Description |
 |----------|--------|-------------|
 | `final_close` | PASSED | finalClose is eventually called |
 | `channels_shut` | PASSED | Both Channels eventually shut |
 | `threads_exit` | PASSED | Both threads eventually exit |
-| `egress_conserve` | PASSED | No messages lost on egress path |
-| `ingress_conserve` | PASSED | No messages lost on ingress path |
+| `egress_conserve` | PASSED | No messages duplicated on egress path |
+| `ingress_conserve` | PASSED | No messages duplicated on ingress path |
 | `final_after_shut` | PASSED | finalClose only called after Channels shut |
+| `final_after_exit` | PASSED | finalClose only called after both threads are gone |
+
+`final_after_exit` is the ordering that protects the Trn context: finalClose
+tears it down, so it must not run while either thread could still touch it.
+`monFin` cancels a thread that overran the poll window and then joins it --
+the join is unconditional, because cancelling only makes a thread stop while
+joining is what makes it gone. Removing the join breaks this property and
+nothing else.
+
+The two `conserve` properties bound duplication, not loss: they say a
+receiver never counts more than the sender sent. Neither asserts that
+everything sent is eventually received, which a shutdown may legitimately
+cut short.
 
 The models verify that the lock ladder pattern (acquire locks in ascending order, retry on trylock failure) prevents deadlocks, that chanAll's all-or-nothing semantics hold under concurrent interference, that the Store implementations maintain FIFO ordering and data integrity, and that chanBlb properly coordinates shutdown and cleanup across egress/ingress threads.
 

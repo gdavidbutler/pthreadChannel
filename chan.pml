@@ -4,25 +4,37 @@
  * Generated with Claude Code (https://claude.ai/code)
  *
  * Models the core synchronization logic to verify:
- *   - Deadlock freedom
- *   - chanAll atomicity (all-or-nothing)
- *   - chanOne correct selection
- *   - Fairness (no starvation)
- *   - Shutdown propagation
+ *   - Deadlock freedom (the default safety run)
+ *   - Conservation: a Get requires a prior Put
+ *   - Progress and termination of the worker scenario, under fairness
+ *
+ * Scenarios, selected at spin time:
+ *   (default)    two workers, each Put then Get, over two Channels
+ *   -DTEST_ONE   a producer and one chan_one call
+ *   -DTEST_ALL   a producer and one chan_all call
+ *   -DTEST_SHUT  a producer, a consumer, and a shutter -- the only
+ *                scenario in which ST_SHUT occurs at all
+ *
+ * Until these scenarios were wired up, init ran the workers ALONE: the
+ * chan_one, chan_all and chan_shut models below were never executed by any
+ * verification run, and no shutdown branch anywhere was reachable.
+ *
+ * Blocking is a waiter count plus a blocking guard, not a condition
+ * variable. So this model does not represent waking a particular waiter and
+ * says nothing about arrival order or starvation; chanAll.pml
+ * -DTEST_FAIRNESS covers that. Written as a spin instead of a guard, the
+ * wait loop is always enabled and weak fairness admits an infinite
+ * non-productive cycle, which is what made termination unprovable here.
  *
  * Build and run:
- *   spin -a chan.pml
- *   cc -DSAFETY -DXUSAFE -O2 -o pan pan.c
- *   ./pan
+ *   spin [-DTEST_ONE|-DTEST_ALL|-DTEST_SHUT] -a chan.pml
+ *   cc -DSAFETY -O2 -o pan pan.c
+ *   ./pan               # safety: deadlock freedom, assertions
+ *   ./pan -N conservation
  *
- * For liveness/fairness checks:
+ * For liveness (default scenario, needs fairness and no -DSAFETY):
  *   cc -O2 -o pan pan.c
- *   ./pan -a -f
- *
- * For specific LTL property:
- *   spin -a -N no_deadlock chan.pml
- *   cc -O2 -o pan pan.c
- *   ./pan -a
+ *   ./pan -a -f -N termination
  */
 
 /* Configuration - keep small for tractable state space */
@@ -60,7 +72,8 @@
  */
 typedef Channel {
   byte state;        /* ST_EMPTY, ST_HAS_ITEM, ST_SHUT */
-  byte open_count;   /* reference count */
+  byte open_count;   /* chanOpen not yet chanClose (chan.c c->c) */
+  bool freed;        /* the deallocating chanClose has run */
   byte get_waiters;  /* count of threads waiting to get */
   byte put_waiters;  /* count of threads waiting to put */
   byte lock;         /* 0 = unlocked, N = locked by process N */
@@ -68,8 +81,43 @@ typedef Channel {
 
 Channel channels[NCHANS];
 
-/* Per-process signaling (models cpr_t simplified) */
-chan wake[NPROCS] = [1] of { byte };  /* signal channel per process */
+/* Channels deallocated so far */
+byte total_freed = 0;
+
+/*
+ * chanOpen / chanClose.
+ *
+ * open_count models chan.c's c->c, which counts references BEYOND the
+ * creator's: chanCreate leaves it 0 with one holder, chanOpen increments,
+ * and chanClose decrements while non-zero. The chanClose that finds it 0 is
+ * the last holder's, and that one deallocates (chan.c:366-402).
+ */
+inline chan_open(ch) {
+  atomic {
+    assert(!channels[ch].freed);      /* no reference to a freed Channel */
+    channels[ch].open_count++
+  }
+}
+
+inline chan_close(ch) {
+  atomic {
+    assert(!channels[ch].freed);      /* no double close */
+    if
+    :: channels[ch].open_count > 0 ->
+       channels[ch].open_count--
+    :: else ->
+       /* Last holder. chan.c wakes every waiter queue and spins until all
+        * five have drained before it frees. A thread blocked on a Channel
+        * necessarily holds a reference of its own, so reaching this point
+        * with a waiter queued means someone operated on a Channel they had
+        * not opened. */
+       assert(channels[ch].get_waiters == 0);
+       assert(channels[ch].put_waiters == 0);
+       channels[ch].freed = true;
+       total_freed++
+    fi
+  }
+}
 
 /* Statistics for verification */
 byte total_gets = 0;
@@ -192,6 +240,7 @@ inline wake_putters(ch) {
  * Models blocking Get or Put
  */
 inline chan_op(ch, op, status) {
+  assert(!channels[ch].freed);        /* no use after free */
   lock_chan(ch);
 
   if
@@ -217,9 +266,14 @@ inline chan_op(ch, op, status) {
      /* Must wait */
      channels[ch].get_waiters++;
      unlock_chan(ch);
-     /* Block until signaled or state changes */
+     /* Block until the Channel can serve us. This guard is the model of
+      * pthread_cond_wait: it is NOT enabled while the Store is empty, so
+      * the waiter contributes no states while it waits. Written as a spin
+      * (do :: true -> lock; recheck; unlock od) the loop is always enabled,
+      * and weak fairness then admits an infinite non-productive cycle --
+      * which is why liveness could not be stated here before. */
      do
-     :: true ->
+     :: (channels[ch].state != ST_EMPTY) ->
         lock_chan(ch);
         if
         :: channels[ch].state == ST_SHUT ->
@@ -245,8 +299,9 @@ inline chan_op(ch, op, status) {
      /* Must wait */
      channels[ch].put_waiters++;
      unlock_chan(ch);
+     /* see the Get side above: a blocking guard, not a spin */
      do
-     :: true ->
+     :: (channels[ch].state != ST_HAS_ITEM) ->
         lock_chan(ch);
         if
         :: channels[ch].state == ST_SHUT ->
@@ -456,9 +511,11 @@ inline chan_all(n, arr, ops, result) {
      unlock_ladder(n, arr)
 
   :: ca_can_do == false && ca_has_event == false ->
-     /* Cannot proceed, must wait (simplified: just fail for non-blocking) */
-     /* In real impl, would register waiters and block */
-     result = AL_EVT;  /* Treat as event for simplicity */
+     /* Nothing waits here, so this is the nsTimeout < 0 call: it reports a
+      * timeout having operated nothing. AL_EVT would claim an event
+      * occurred, which is a different report (chan.h chanAlEvt vs
+      * chanAlTmo) and would hide a would-block behind a shutdown. */
+     result = AL_TMO;
      unlock_ladder(n, arr)
 
   :: ca_can_do == true ->
@@ -509,7 +566,8 @@ init {
     do
     :: i < NCHANS ->
        channels[i].state = ST_EMPTY;
-       channels[i].open_count = 1;
+       channels[i].open_count = 0;   /* created: one holder, no extra refs */
+       channels[i].freed = false;
        channels[i].get_waiters = 0;
        channels[i].put_waiters = 0;
        channels[i].lock = 0;
@@ -526,11 +584,32 @@ init {
     od
   };
 
-  /* Start worker processes */
+  /* Start the scenario */
   atomic {
+#ifdef TEST_ONE
+    run producer(0);
+    run test_chan_one()
+#elif defined(TEST_ALL)
+    run producer(0);
+    run test_chan_all()
+#elif defined(TEST_SHUT)
+    run producer(0);
+    run consumer(0);
+    run shutter(0)
+#else
     run worker(0);
     run worker(1)
-  }
+#endif
+  };
+
+#if !defined(TEST_ONE) && !defined(TEST_ALL) && !defined(TEST_SHUT)
+  /* The creator drops its own reference once the workers are done. Every
+   * worker reference is gone by then, so these are the deallocating
+   * chanCloses. */
+  all_done;
+  chan_close(0);
+  chan_close(1)
+#endif
 }
 
 /*
@@ -548,6 +627,10 @@ proctype worker(byte id) {
   /* Worker 1 puts to channel 1, gets from channel 0 */
   my_ch = id;
   other_ch = 1 - id;
+
+  /* hold a reference for as long as this thread touches them */
+  chan_open(my_ch);
+  chan_open(other_ch);
 
   do
   :: op_count < NOPS ->
@@ -570,6 +653,9 @@ proctype worker(byte id) {
 
   :: op_count >= NOPS -> break
   od;
+
+  chan_close(other_ch);
+  chan_close(my_ch);
 
   proc_done[id] = true;
 
@@ -607,31 +693,21 @@ proctype test_chan_all() {
   byte arr[2];
   byte ops[2];
   byte result;
-  byte old_state_0;
-  byte old_state_1;
 
   arr[0] = 0;
   arr[1] = 1;
   ops[0] = OP_GET;
   ops[1] = OP_PUT;
 
-  /* Record states before */
-  old_state_0 = channels[0].state;
-  old_state_1 = channels[1].state;
-
   chan_all(2, arr, ops, result);
 
-  /* Verify atomicity: either both changed or neither */
-  if
-  :: result == AL_OP ->
-     /* Both operations succeeded */
-     assert(old_state_0 == ST_HAS_ITEM);  /* was gettable */
-     assert(old_state_1 == ST_EMPTY);     /* was puttable */
-  :: result == AL_EVT ->
-     /* Neither operation occurred (states unchanged by us) */
-     skip
-  :: else -> skip
-  fi
+  /* Atomicity is asserted INSIDE chan_all, under the lock ladder, where the
+   * preconditions are stable. It cannot be restated from out here: a state
+   * sampled without the lock can change before chan_all takes the ladder.
+   * This proctype used to record channels[0..1].state beforehand and assert
+   * against it, and reported a false violation the moment the proctype was
+   * actually run -- it had never been run. */
+  assert(result == AL_OP || result == AL_EVT || result == AL_TMO)
 }
 
 /*
@@ -693,23 +769,45 @@ proctype shutter(byte ch) {
 /* No deadlock - SPIN checks this automatically */
 /* Run with: ./pan -DSAFETY */
 
-/* Progress: operations eventually complete */
+/* Progress: every operation the workers set out to do completes. The two
+ * workers each do NOPS rounds of Put-then-Get, so 4 * NOPS in all. The
+ * previous form, [] (total_ops < 255 -> <> (total_ops > 0)), asked only
+ * that SOME operation ever complete, and stayed true forever after the
+ * first one. */
+/* total_ops is counted by the worker proctype, so this claim -- like
+ * termination -- belongs to the scenario that runs workers. The other
+ * scenarios are covered by conservation, the default safety run, and the
+ * assertions inside chan_all / test_chan_one. */
+#if !defined(TEST_ONE) && !defined(TEST_ALL) && !defined(TEST_SHUT)
 ltl progress {
-  [] (total_ops < 255 -> <> (total_ops > 0))
+  <> (total_ops == 4 * NOPS)
 }
+#endif
 
 /* Fairness: if a process is trying, it eventually succeeds */
 /* (weak fairness - checked with ./pan -a -f) */
 
 /* chanAll atomicity assertion is inline in chan_all */
 
-/* Eventually all processes complete (under fairness) */
+/* Eventually all workers complete (under fairness). all_done is set by the
+ * worker proctype, so this claim belongs to the scenarios that run one. */
+#if !defined(TEST_ONE) && !defined(TEST_ALL) && !defined(TEST_SHUT)
 ltl termination {
   <> all_done
 }
+#endif
 
-/* Conservation: gets <= puts (can't get what wasn't put) */
-/* Note: with initial empty channels, this should hold */
+/* Conservation: a Get requires a prior Put, so this is the tight bound.
+ * It was written with +NCHANS of slack, which no defect could exceed until
+ * it had duplicated NCHANS items. */
 ltl conservation {
-  [] (total_gets <= total_puts + NCHANS)
+  [] (total_gets <= total_puts)
 }
+
+#if !defined(TEST_ONE) && !defined(TEST_ALL) && !defined(TEST_SHUT)
+/* Reference counting: every Channel is deallocated, and exactly once. The
+ * assertions in chan_open / chan_close / chan_op carry the rest -- no use
+ * after free, no close of a freed Channel, and no deallocation while a
+ * thread is still queued on it. */
+ltl refcount_freed { <> (total_freed == NCHANS) }
+#endif

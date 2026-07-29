@@ -310,12 +310,22 @@ ltl size_bounds { [] (!bounds_violation) }
 /* Conservation */
 ltl conservation { [] (total_get <= total_put) }
 
-/* Complete transfer */
-ltl complete_transfer { [] ((producer_done && consumer_done) ->
-                            (total_get == 6)) }
+/* Every item is transferred.
+ *
+ * This was written as [] ((producer_done && consumer_done) -> total_get ==
+ * 6). That form cannot fail: the consumer only sets its flag once it has
+ * got them all, so the antecedent already implies the consequent. As a
+ * liveness claim it has to observe the counts actually arriving. The 6 was
+ * also a literal where NUM_ITEMS was meant. */
+ltl complete_transfer { <> (total_put == NUM_ITEMS && total_get == NUM_ITEMS) }
 
 /*
  * Adaptation is conditional - size changes only under specific load conditions.
  * This property verifies that if size changed, bounds are still respected.
+ *
+ * Note this is size_bounds with a weaker guard: the monitor already flags any
+ * size outside [MIN_SIZE, MAX_SIZE] whether or not an adjustment has happened.
+ * Kept because it names the adaptation contract directly, but it is not an
+ * independent check -- a defect that trips this trips size_bounds first.
  */
 ltl adapts_safely { [] ((size_changes > 0) -> (size >= MIN_SIZE && size <= MAX_SIZE)) }

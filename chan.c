@@ -1139,6 +1139,8 @@ unlock1:
     sched_yield();
     goto lock1;
   }
+  if (!k)
+    return (chanAlErr);
   if (j & 2) {
     for (i = 0; i < t; ++i) switch ((a + i)->o) {
 
@@ -1187,7 +1189,7 @@ unlock1:
     }
     return (chanAlEvt);
   }
-  if (!j || w < 0) {
+  if (!j) {
     for (i = 0; i < t; ++i) switch ((a + i)->o) {
 
     case chanOpNop:
@@ -1259,6 +1261,22 @@ put1:
       break;
     }
     return (chanAlOp);
+  }
+  if (w < 0) {
+    for (i = 0; i < t; ++i) switch ((a + i)->o) {
+
+    case chanOpNop:
+      break;
+
+    case chanOpSht:
+    case chanOpGet:
+    case chanOpPut:
+      if (!(c = (a + i)->c))
+        break;
+      pthread_mutex_unlock(&c->m);
+      break;
+    }
+    return (chanAlTmo);
   }
   for (i = 0; i < t; ++i) switch ((a + i)->o) {
 

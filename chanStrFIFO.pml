@@ -165,6 +165,13 @@ ltl conservation { [] (total_get <= total_put) }
 /* Bounds: count never exceeds STORE_SIZE */
 ltl bounds { [] (count <= STORE_SIZE) }
 
-/* Final state: all items transferred */
-ltl complete_transfer { [] ((producer_done && consumer_done) ->
-                            (total_put == NUM_ITEMS && total_get == NUM_ITEMS)) }
+/* Every item is transferred.
+ *
+ * This was written as [] ((producer_done && consumer_done) -> counts are
+ * NUM_ITEMS). That form cannot fail: the producer only sets its flag after
+ * putting all NUM_ITEMS and the consumer only after getting them, so the
+ * antecedent already implies the consequent. Mutating the producer to put
+ * one item fewer left it satisfied -- an incomplete transfer that the
+ * complete-transfer property did not notice. As a liveness claim it has to
+ * observe the counts actually arriving. */
+ltl complete_transfer { <> (total_put == NUM_ITEMS && total_get == NUM_ITEMS) }

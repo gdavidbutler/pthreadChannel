@@ -47,6 +47,9 @@ byte msgRecvIngress = 0;
 bool inputEOF = false;
 bool outputFailed = false;
 
+/* pthread_cancel issued by monFin when a thread overruns the poll window */
+bool cancelled = false;
+
 /*
  * Egress thread (nfE in chanBlb.c)
  * Gets blobs from egress channel, calls output callback
@@ -57,15 +60,18 @@ proctype egressThread() {
 
   do
   :: eShut -> break
+  :: cancelled -> break
   :: !eShut ->
      if
      :: nempty(eChan) ->
         eChan ? msg;
         msgRecvEgress++;
-        /* Simulate output callback */
+        /* Output callback. It may fail, which is the egress thread's other
+         * exit reason; outputFailed was a constant false, so this branch
+         * could not be taken. */
         if
-        :: outputFailed -> break
-        :: !outputFailed -> skip
+        :: outputFailed = true; break
+        :: skip
         fi
      :: empty(eChan) && eShut -> break
      :: empty(eChan) && !eShut ->
@@ -74,8 +80,8 @@ proctype egressThread() {
         :: eChan ? msg ->
            msgRecvEgress++;
            if
-           :: outputFailed -> break
-           :: !outputFailed -> skip
+           :: outputFailed = true; break
+           :: skip
            fi
         :: eShut -> break
         fi
@@ -98,6 +104,7 @@ proctype ingressThread() {
 
   do
   :: iShut -> break
+  :: cancelled -> break
   :: inputEOF -> break
   :: !iShut && !inputEOF && count < NMSG ->
      /* Simulate input callback returning data */
@@ -138,13 +145,18 @@ proctype monitorThread() {
   byte polls = 0;
   do
   :: egressExited && ingressExited -> break
-  :: polls >= 5 -> break  /* timeout */
+  :: polls >= 5 ->
+     cancelled = true;     /* pthread_cancel, chanBlb.c:210 and :216 */
+     break
   :: !(egressExited && ingressExited) && polls < 5 -> polls++
   od;
 
-  /* Phase 3: monFin - cleanup */
-  /* Join threads (they've exited or will be cancelled) */
-  /* Call finalClose */
+  /* Phase 3: monFin. The join is UNCONDITIONAL (chanBlb.c:211 and :217) --
+   * cancelling only makes a thread stop, joining is what makes it gone.
+   * finalClose tears down the Trn context, so it must not run while either
+   * thread could still touch it. Breaking out of the poll loop straight to
+   * finalClose, as this model did, allowed exactly that. */
+  (egressExited && ingressExited);
   finalCloseCalled = true
 }
 
@@ -241,4 +253,10 @@ ltl ingress_conserve {
 /* finalClose only after both channels shut */
 ltl final_after_shut {
   [] (finalCloseCalled -> (eShut && iShut))
+}
+
+/* finalClose only after both threads are gone. monFin joins unconditionally
+ * before calling it, because finalClose tears down state the threads use. */
+ltl final_after_exit {
+  [] (finalCloseCalled -> (egressExited && ingressExited))
 }
