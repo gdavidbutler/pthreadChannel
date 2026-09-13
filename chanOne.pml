@@ -1,6 +1,7 @@
 /*
  * Promela model of pthreadChannel chanOne() - Multi-Channel Operations
  * Copyright (C) 2026 G. David Butler <gdb@dbSystems.com>
+ *
  * Generated with Claude Code (https://claude.ai/code)
  *
  * This models the chanOne() function from chan.c which provides

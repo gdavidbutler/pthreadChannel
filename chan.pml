@@ -1,6 +1,7 @@
 /*
  * Promela model of pthreadChannel chan.c
  * Copyright (C) 2026 G. David Butler <gdb@dbSystems.com>
+ *
  * Generated with Claude Code (https://claude.ai/code)
  *
  * Models the core synchronization logic to verify:

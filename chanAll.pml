@@ -1,6 +1,7 @@
 /*
  * Promela model of pthreadChannel chanAll() - Atomic Multi-Channel Operations
  * Copyright (C) 2026 G. David Butler <gdb@dbSystems.com>
+ *
  * Generated with Claude Code (https://claude.ai/code)
  *
  * This model focuses specifically on verifying chanAll semantics:

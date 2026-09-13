@@ -1,6 +1,7 @@
 /*
  * chanStrFLSO.pml - Promela model for self-tuning FIFO Store verification
  * Copyright (C) 2026 G. David Butler <gdb@dbSystems.com>
+ *
  * Generated with Claude Code (https://claude.ai/code)
  *
  * This models the chanStrFLSO (FIFO Latency Sensitive Optimization) Store
