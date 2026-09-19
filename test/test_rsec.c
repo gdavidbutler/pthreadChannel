@@ -2930,6 +2930,79 @@ testPackSameMessage(void)
   teardown(&env, &rsecCtx);
 }
 
+/*
+ * Same TAG, two messages: their shards must not share a datagram.
+ * The never-pack-with-itself rule guards the RS train against
+ * correlated loss, and a retry-based sender re-sends one message
+ * under one tag from a second egress slot, so the rule has to hold
+ * per tag, not per slot.  Two k=1 m=3 blobs under one tag, paced so
+ * both slots dwell and shard i of each is due at the same instant:
+ * 8 datagrams, none carrying two fragments.
+ */
+static void
+testPackSameTag(void)
+{
+  struct testEnv env;
+  struct rsecPair rsecCtx;
+  chanBlb_t *m;
+  const char *msg = "same tag, two trains";
+  unsigned int single;
+  unsigned int i;
+  unsigned int ok;
+
+  printf("=== Test: same-tag shards of two messages NOT packed together ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 2;
+  rsecCtx.dgramMax = 508;
+  rsecCtx.tableSize = 64;
+
+  chanBlbTrnFdDatagramObsCnt = 0;
+  chanBlbTrnFdDatagramObsEnable = 1;
+
+  if (!setup(&env, &rsecCtx)) {
+    check("setup", 0);
+    chanBlbTrnFdDatagramObsEnable = 0;
+    return;
+  }
+
+  m = mkBlob(&env.sa, 2, 0x5a5a, 3, 20000, msg, strlen(msg));
+  check("send first", sendBlob(env.outChan, m));
+  m = mkBlob(&env.sa, 2, 0x5a5a, 3, 20000, msg, strlen(msg));
+  check("send second", sendBlob(env.outChan, m));
+  /* the first completes on its first shard; the second's train is
+   * eaten by the first's k + m horizon until one gets through */
+  m = recvBlob(env.inChan, 3000000000L);
+  check("received", m != 0);
+  if (m) { check("payload correct", verifyBlob(m, 2, msg, strlen(msg))); free(m); }
+  m = recvBlob(env.inChan, 3000000000L);
+  if (m) free(m);
+
+  usleep(400000);
+  chanBlbTrnFdDatagramObsEnable = 0;
+
+  rsecSnap(&rsecCtx);
+  check("egrFrg == 8", rsecCtx.egrFrg == 8);
+  check("8 datagrams emitted", chanBlbTrnFdDatagramObsCnt == 8);
+  if (chanBlbTrnFdDatagramObsCnt != 8) {
+    printf("    %u datagrams:", chanBlbTrnFdDatagramObsCnt);
+    for (i = 0; i < chanBlbTrnFdDatagramObsCnt; ++i)
+      printf(" %u", chanBlbTrnFdDatagramObs[i].len);
+    printf("\n");
+  }
+  /* one fragment per datagram: [tag][k-1][m][si][pad][vlq(1)][shard],
+   * the shard the whole payload at k = 1 */
+  single = 2 + 4 + 1 + (unsigned int)strlen(msg);
+  ok = 1;
+  for (i = 0; i < chanBlbTrnFdDatagramObsCnt; ++i)
+    if (chanBlbTrnFdDatagramObs[i].len != single) {
+      printf("    datagram[%u] len %u != %u\n", i, chanBlbTrnFdDatagramObs[i].len, single);
+      ok = 0;
+    }
+  check("no datagram carries two fragments", ok);
+
+  teardown(&env, &rsecCtx);
+}
+
 /* ===== rm/um + raw-injection coverage ===== */
 
 /*
@@ -3456,6 +3529,89 @@ testParamMismatchLossNotif(void)
   rsecSnap(&rsecCtx);
   check("igrEvict >= 1", rsecCtx.igrEvict >= 1);
   check("igrMsg >= 1 (second message)", rsecCtx.igrMsg >= 1);
+
+  teardown(&env, &rsecCtx);
+}
+
+/*
+ * Same tag, same k, m and shard size -- only the padding differs, so
+ * the two payloads differ in length by fewer than k bytes.  Padding is
+ * a parameter of the reassembly (it sets the delivered length), so a
+ * mismatch must evict like any other: loss notification for the
+ * incomplete first train, the second reassembled on its own.  Mixed,
+ * the ingress would deliver six bytes neither sender sent.
+ */
+static void
+testParamMismatchPadding(void)
+{
+  struct testEnv env;
+  struct rsecPair rsecCtx;
+  chanBlb_t *m;
+  chanBlb_t *loss;
+  chanBlb_t *second;
+  unsigned char tag[2];
+  unsigned char a0[3];
+  unsigned char b0[3];
+  unsigned char b1[3];
+  unsigned int al;
+  unsigned int off;
+  unsigned int i;
+
+  printf("=== Test: padding mismatch evicts, never mixes ===\n");
+  memset(&rsecCtx, 0, sizeof (rsecCtx));
+  rsecCtx.tagSize = 2;
+  rsecCtx.dgramMax = 520;
+  rsecCtx.tableSize = 8;
+
+  if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
+
+  tag[0] = 0x79; tag[1] = 0x8a;
+  a0[0] = 'P'; a0[1] = 'Q'; a0[2] = 'R';
+  b0[0] = 'A'; b0[1] = 'B'; b0[2] = 'C';
+  b1[0] = 'D'; b1[1] = 'E'; b1[2] = 'F';
+
+  /* msg A: k=2, m=0, shardSize=3, padding 0 (6 bytes).  Shard 0 only. */
+  check("inject A shard 0 (incomplete)",
+    injectFrag(&env.sa, tag, 2, 1, 0, 0, 0, a0, 3, 0, 0, 0, 0));
+  usleep(80000);
+  /* msg B: k=2, m=0, shardSize=3, padding 1 (5 bytes).  Shard 1 first:
+   * mixed with A's shard 0 it would complete as "PQRDEF". */
+  check("inject B shard 1 (padding mismatch)",
+    injectFrag(&env.sa, tag, 2, 1, 0, 1, 1, b1, 3, 0, 0, 0, 0));
+  usleep(80000);
+  check("inject B shard 0 (completes B)",
+    injectFrag(&env.sa, tag, 2, 1, 0, 0, 1, b0, 3, 0, 0, 0, 0));
+
+  loss = 0;
+  second = 0;
+  for (i = 0; i < 2; ++i) {
+    m = recvBlob(env.inChan, 2000000000L);
+    if (!m) continue;
+    al = m->b[0];
+    off = 1 + al + 2;
+    if (m->l == off + 2 && m->b[off] == 0)
+      loss = m;
+    else if (m->l == off + 2 + 5 && memcmp(m->b + off + 2, "ABCDE", 5) == 0)
+      second = m;
+    else {
+      printf("    delivered %u payload bytes: neither train's\n", m->l - (off + 2));
+      free(m);
+    }
+  }
+  check("loss notification for A", loss != 0);
+  if (loss) {
+    al = loss->b[0];
+    off = 1 + al + 2;
+    check("loss um == received (1)", loss->b[off + 1] == 1);
+    free(loss);
+  }
+  check("B delivered as ABCDE", second != 0);
+  if (second) free(second);
+
+  usleep(100000);
+  rsecSnap(&rsecCtx);
+  check("igrEvict >= 1", rsecCtx.igrEvict >= 1);
+  check("igrMsg == 1", rsecCtx.igrMsg == 1);
 
   teardown(&env, &rsecCtx);
 }
@@ -4049,6 +4205,7 @@ main(
   testPackHdr();
   testPackCounters();
   testPackSameMessage();
+  testPackSameTag();
 
   /* pacing tests */
   testPaceSingleMessage();
@@ -4065,6 +4222,7 @@ main(
   testIgrHmacReject();
   testIgrDupReject();
   testParamMismatchLossNotif();
+  testParamMismatchPadding();
   testSameTagMOnlyDelivered();
   testSameTagMOnlyIncomplete();
 

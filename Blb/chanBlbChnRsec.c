@@ -304,14 +304,25 @@ egrSendPack(
     unsigned int wp2;
     unsigned int fragLen2;
 
+    unsigned int fi;
+
     ei2 = shards[si2].entry;
     wp2 = 1 + table[ei2].work[0];
     fragLen2 = table[ei2].stride - wp2;
 
-    /* same address, not same message, fits (room for both trailers) */
+    /* same address, not same message, fits (room for both trailers).
+     * "Same message" is the TAG, not the slot: a retry-based sender
+     * re-sends one message under one tag from a second slot, and its
+     * shards feed the one reassembly the first slot's do, so packing
+     * them together would put two shards of one train under one
+     * loss.  Each packed fragment's tag is at packBuf + wp + frgOff. */
+    for (fi = 0; fi < frgLocal; ++fi)
+      if (memcmp(packBuf + wp + frgOff[fi], table[ei2].work + wp2, ctx->tagSize) == 0)
+        break;
     if (wp2 == wp
      && memcmp(table[ei2].work, packBuf, wp) == 0
      && !packSeen[ei2]
+     && fi == frgLocal
      && packPos + fragLen2 + dtgHmacSize + dtgHashSize <= wp + dgramMax) {
       frgOff[frgLocal] = packPos - wp;
       memcpy(packBuf + packPos,
@@ -1147,10 +1158,15 @@ chanBlbChnRsecIgr(
         slot = lo;
       }
 
-      /* handle found entry with parameter mismatch */
+      /* handle found entry with parameter mismatch.  Padding is a
+       * parameter too: it sets the delivered length, and two same-tag
+       * payloads whose lengths differ by fewer than k bytes agree on
+       * k, m and shard size while disagreeing on it -- stored by index
+       * into one entry they would reassemble to bytes neither sent. */
       if (found) {
         if (table[slot]->k != k || table[slot]->m != mVal
-         || table[slot]->shardSize != fragShardSize) {
+         || table[slot]->shardSize != fragShardSize
+         || table[slot]->padding != padding) {
           /* mismatch: evict -- deliver loss notification */
           if (table[slot]->blob) {
             chanBlb_t *lb;

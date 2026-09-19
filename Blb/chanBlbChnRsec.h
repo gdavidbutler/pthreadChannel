@@ -193,7 +193,8 @@ struct chanBlbChnRsecIgrCtx {
   unsigned int tagSize;   /* must match the sender's egress tagSize */
   /*
    * Max in-flight reassemblies.  If a fragment matches an existing
-   * tag entry but with different RS parameters (k, m, shard size),
+   * tag entry but with different RS parameters (k, m, shard size,
+   * padding -- the four that fix the reassembly and its length),
    * the existing entry is evicted (parameter mismatch) and its
    * collected shards are lost.  Callers that resend or re-encode a
    * message with different RS parameters MUST use a distinct tag
