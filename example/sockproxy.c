@@ -41,6 +41,7 @@ streamT(
 ){
   int s[2];        /* server and client sockets */
   void *ctx[2];    /* input and output contexts */
+  int own[2];      /* until chanBlb takes a context, this thread closes it */
   chanArr_t p[2];  /* ingress and egress channels */
 
   s[0] = (int)(long)v;
@@ -49,6 +50,7 @@ streamT(
     close(s[0]);
     return (0);
   }
+  own[0] = 1;
   pthread_cleanup_push(chanBlbTrnFdStreamFinalClose, ctx[0]);
   if ((s[1] = socket(Caddr->ai_family, Caddr->ai_socktype, Caddr->ai_protocol)) < 0) {
     perror("socket");
@@ -59,6 +61,7 @@ streamT(
     close(s[1]);
     goto exit0;
   }
+  own[1] = 1;
   pthread_cleanup_push(chanBlbTrnFdStreamFinalClose, ctx[1]);
   if (connect(s[1], Caddr->ai_addr, Caddr->ai_addrlen)) {
     perror("connect");
@@ -73,31 +76,36 @@ streamT(
     chanClose(p[0].c);
     goto exit1;
   }
+  /* chanBlb owns a context from here, closed or running */
+  own[1] = 0;
   if (!chanBlb(realloc, free
       ,p[0].c, chanBlbTrnFdStreamOutputCtx(ctx[1]), chanBlbTrnFdStreamOutput, chanBlbTrnFdStreamOutputClose, 0, 0
       ,p[1].c, chanBlbTrnFdStreamInputCtx(ctx[1]), chanBlbTrnFdStreamInput, chanBlbTrnFdStreamInputClose, 0, 0, 0
       ,ctx[1], chanBlbTrnFdStreamFinalClose
       ,0)) {
     perror("chanBlb");
-    goto exit0;
+    goto exit2;
   }
+  own[0] = 0;
   if (!chanBlb(realloc, free
       ,p[1].c, chanBlbTrnFdStreamOutputCtx(ctx[0]), chanBlbTrnFdStreamOutput, chanBlbTrnFdStreamOutputClose, 0, 0
       ,p[0].c, chanBlbTrnFdStreamInputCtx(ctx[0]), chanBlbTrnFdStreamInput, chanBlbTrnFdStreamInputClose, 0, 0, 0
       ,ctx[0], chanBlbTrnFdStreamFinalClose
       ,0)) {
     perror("chanBlb");
-    return (0);
+    goto exit2;
   }
   /* wait for either chanShut */
   p[0].v = p[1].v = 0;
   p[0].o = p[1].o = chanOpSht;
   chanOne(0, sizeof (p) / sizeof (p[0]), p);
-  return (0);
+exit2:
+  chanClose(p[1].c);
+  chanClose(p[0].c);
 exit1:
-  pthread_cleanup_pop(1); /* chanBlbTrnFdStreamFinalClose(ctx[1]) */
+  pthread_cleanup_pop(own[1]); /* chanBlbTrnFdStreamFinalClose(ctx[1]) */
 exit0:
-  pthread_cleanup_pop(1); /* chanBlbTrnFdStreamFinalClose(ctx[0]) */
+  pthread_cleanup_pop(own[0]); /* chanBlbTrnFdStreamFinalClose(ctx[0]) */
   return (0);
 }
 
@@ -108,6 +116,7 @@ datagramT(
 ){
   int s[2];        /* server and client sockets */
   void *ctx[2];    /* input and output contexts */
+  int own[2];      /* until chanBlb takes a context, this thread closes it */
   chanArr_t p[2];  /* ingress and egress channels */
 
   s[0] = (int)(long)v;
@@ -116,6 +125,7 @@ datagramT(
     close(s[0]);
     return (0);
   }
+  own[0] = 1;
   pthread_cleanup_push(chanBlbTrnFdFinalClose, ctx[0]);
   if ((s[1] = socket(Caddr->ai_family, Caddr->ai_socktype, Caddr->ai_protocol)) < 0) {
     perror("socket");
@@ -128,6 +138,7 @@ datagramT(
     close(s[0]);
     goto exit0;
   }
+  own[1] = 1;
   pthread_cleanup_push(chanBlbTrnFdFinalClose, ctx[1]);
   if (connect(s[1], Caddr->ai_addr, Caddr->ai_addrlen)) {
     perror("connect");
@@ -148,31 +159,37 @@ datagramT(
     close(s[0]);
     goto exit1;
   }
+  /* chanBlb owns a context, and the socket it holds, from here, closed or running */
+  own[1] = 0;
   if (!chanBlb(realloc, free
       ,p[0].c, chanBlbTrnFdOutputCtx(ctx[1], s[1]), chanBlbTrnFdOutput, chanBlbTrnFdOutputClose, 0, 0
       ,p[1].c, chanBlbTrnFdInputCtx(ctx[1], s[1]), chanBlbTrnFdInput, chanBlbTrnFdInputClose, 0, 0, 0
       ,ctx[1], chanBlbTrnFdFinalClose
       ,0)) {
     perror("chanBlb");
-    goto exit0;
+    close(s[0]);
+    goto exit2;
   }
+  own[0] = 0;
   if (!chanBlb(realloc, free
       ,p[1].c, chanBlbTrnFdOutputCtx(ctx[0], s[0]), chanBlbTrnFdOutput, chanBlbTrnFdOutputClose, 0, 0
       ,p[0].c, chanBlbTrnFdInputCtx(ctx[0], s[0]), chanBlbTrnFdInput, chanBlbTrnFdInputClose, 0, 0, 0
       ,ctx[0], chanBlbTrnFdFinalClose
       ,0)) {
     perror("chanBlb");
-    return (0);
+    goto exit2;
   }
   /* wait for either chanShut */
   p[0].v = p[1].v = 0;
   p[0].o = p[1].o = chanOpSht;
   chanOne(0, sizeof (p) / sizeof (p[0]), p);
-  return (0);
+exit2:
+  chanClose(p[1].c);
+  chanClose(p[0].c);
 exit1:
-  pthread_cleanup_pop(1); /* chanBlbTrnFdStreamFinalClose(ctx[1]) */
+  pthread_cleanup_pop(own[1]); /* chanBlbTrnFdFinalClose(ctx[1]) */
 exit0:
-  pthread_cleanup_pop(1); /* chanBlbTrnFdStreamFinalClose(ctx[0]) */
+  pthread_cleanup_pop(own[0]); /* chanBlbTrnFdFinalClose(ctx[0]) */
   return (0);
 }
 
