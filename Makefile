@@ -21,7 +21,7 @@ clean:
 	rm -f chanBlbTrnFd.o chanBlbTrnFdStream.o chanBlbTrnFdDatagram.o
 	rm -f test_chanOne test_chanAll
 	rm -f squint pipeproxy sockproxy floydWarshall datagramchat datagramchat-rsec
-	rm -f chanBlbChnRsec.o
+	rm -f chanBlbChnRsec.o halfsiphash.o
 	rm -f test_rsec
 	rm -f chanBlbStrSQL.o
 	rm -f chanBlbStrSQLtest
@@ -100,8 +100,11 @@ chanBlbChnRsec.o: Blb/chanBlbChnRsec.c Blb/chanBlbChnRsec.h Blb/chanBlb.h chan.h
 datagramchat-rsec: example/datagramchat.c chan.h Blb/chanBlb.h Blb/chanBlbTrnFdDatagram.h Blb/chanBlbChnRsec.h chan.o chanBlb.o chanBlbTrnFdDatagram.o chanBlbChnRsec.o
 	$(CC) $(CFLAGS) -I$(RSEC) -I$(RMD128) -DRSEC -o datagramchat-rsec example/datagramchat.c chan.o chanBlb.o chanBlbTrnFdDatagram.o chanBlbChnRsec.o $(RSEC)/rsec.o $(RMD128)/rmd128.o -lpthread
 
-test_rsec: test/test_rsec.c test/chanBlbTrnFdDatagramStress.c test/halfsiphash.c test/halfsiphash.h chan.h Blb/chanBlb.h Blb/chanBlbTrnFdDatagram.h Blb/chanBlbChnRsec.h chan.o chanBlb.o chanBlbChnRsec.o
-	$(CC) $(CFLAGS) -I$(RSEC) -I$(RMD128) -Itest -o test_rsec test/test_rsec.c test/chanBlbTrnFdDatagramStress.c test/halfsiphash.c chan.o chanBlb.o chanBlbChnRsec.o $(RSEC)/rsec.o $(RMD128)/rmd128.o -lpthread
+halfsiphash.o: example/halfsiphash.c example/halfsiphash.h Blb/chanBlb.h chan.h $(RSEC)/rsec.h
+	$(CC) $(CFLAGS) -I$(RSEC) -c example/halfsiphash.c
+
+test_rsec: test/test_rsec.c test/chanBlbTrnFdDatagramStress.c example/halfsiphash.h chan.h Blb/chanBlb.h Blb/chanBlbTrnFdDatagram.h Blb/chanBlbChnRsec.h halfsiphash.o chan.o chanBlb.o chanBlbChnRsec.o
+	$(CC) $(CFLAGS) -I$(RSEC) -I$(RMD128) -Iexample -o test_rsec test/test_rsec.c test/chanBlbTrnFdDatagramStress.c halfsiphash.o chan.o chanBlb.o chanBlbChnRsec.o $(RSEC)/rsec.o $(RMD128)/rmd128.o -lpthread
 
 chanBlbStrSQL.o: example/chanBlbStrSQL.c example/chanBlbStrSQL.h chan.h Str/chanStrFIFO.h Blb/chanBlb.h
 	$(CC) $(SQLITE_CFLAGS) -Iexample -c example/chanBlbStrSQL.c

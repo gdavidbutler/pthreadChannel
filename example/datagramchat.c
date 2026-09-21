@@ -288,6 +288,8 @@ main(
   int i;
   int fd4, fd6;
   void *ctx;
+  void *oc;
+  void *ic;
   pthread_t dt;
 
   ProgName = argv[0];
@@ -423,6 +425,14 @@ main(
     return (1);
   }
 
+  /* the transport's direction contexts: a refusal is returned, and
+   * chanBlb does not check for one */
+  if (!(oc = chanBlbTrnFdDatagramOutputCtx(ctx, &fd4, fd6 >= 0 ? &fd6 : 0, fd4 >= 0 ? 1 : 0, fd6 >= 0 ? 1 : 0))
+   || !(ic = chanBlbTrnFdDatagramInputCtx(ctx, &fd4, fd6 >= 0 ? &fd6 : 0, fd4 >= 0 ? 1 : 0, fd6 >= 0 ? 1 : 0))) {
+    perror("chanBlbTrnFdDatagramOutputCtx/InputCtx");
+    return (1);
+  }
+
 #ifdef RSEC
   {
     static struct chanBlbChnRsecEgrCtx egrCtx;
@@ -470,8 +480,8 @@ main(
     /* opaque[] is zero (file-scope statics) -- framer threads init/fini */
     /* start chanBlb with RSEC framing for both directions */
     if (!chanBlb(realloc, free
-        ,OutChan, chanBlbTrnFdDatagramOutputCtx(ctx, &fd4, fd6 >= 0 ? &fd6 : 0, fd4 >= 0 ? 1 : 0, fd6 >= 0 ? 1 : 0), chanBlbTrnFdDatagramOutput, chanBlbTrnFdDatagramOutputClose, &egrCtx, chanBlbChnRsecEgr
-        ,InChan, chanBlbTrnFdDatagramInputCtx(ctx, &fd4, fd6 >= 0 ? &fd6 : 0, fd4 >= 0 ? 1 : 0, fd6 >= 0 ? 1 : 0), chanBlbTrnFdDatagramInput, chanBlbTrnFdDatagramInputClose, &igrCtx, chanBlbChnRsecIgr, 0
+        ,OutChan, oc, chanBlbTrnFdDatagramOutput, chanBlbTrnFdDatagramOutputClose, &egrCtx, chanBlbChnRsecEgr
+        ,InChan, ic, chanBlbTrnFdDatagramInput, chanBlbTrnFdDatagramInputClose, &igrCtx, chanBlbChnRsecIgr, 0
         ,ctx, chanBlbTrnFdDatagramFinalClose
         ,0)) {
       perror("chanBlb");
@@ -481,8 +491,8 @@ main(
 #else
   /* start chanBlb for both directions */
   if (!chanBlb(realloc, free
-      ,OutChan, chanBlbTrnFdDatagramOutputCtx(ctx, &fd4, fd6 >= 0 ? &fd6 : 0, fd4 >= 0 ? 1 : 0, fd6 >= 0 ? 1 : 0), chanBlbTrnFdDatagramOutput, chanBlbTrnFdDatagramOutputClose, 0, 0
-      ,InChan, chanBlbTrnFdDatagramInputCtx(ctx, &fd4, fd6 >= 0 ? &fd6 : 0, fd4 >= 0 ? 1 : 0, fd6 >= 0 ? 1 : 0), chanBlbTrnFdDatagramInput, chanBlbTrnFdDatagramInputClose, 0, 0, 0
+      ,OutChan, oc, chanBlbTrnFdDatagramOutput, chanBlbTrnFdDatagramOutputClose, 0, 0
+      ,InChan, ic, chanBlbTrnFdDatagramInput, chanBlbTrnFdDatagramInputClose, 0, 0, 0
       ,ctx, chanBlbTrnFdDatagramFinalClose
       ,0)) {
     perror("chanBlb");
