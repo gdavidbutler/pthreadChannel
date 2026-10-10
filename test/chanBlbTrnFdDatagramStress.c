@@ -72,6 +72,13 @@ unsigned int chanBlbTrnFdDatagramBurstLen = 0;
 unsigned int chanBlbTrnFdDatagramBurstDrop = 80;
 unsigned int chanBlbTrnFdDatagramBwLimit = 0;
 
+/* The bus's own count: datagrams enqueued to an ingress ctx and datagrams
+ * an Input dequeued.  The difference is what sits in the in-memory queues
+ * -- unbounded, so a harness that cuts a run can read what is still in
+ * flight rather than infer it from the framers' counters. */
+unsigned long chanBlbTrnFdDatagramBusIn = 0;
+unsigned long chanBlbTrnFdDatagramBusOut = 0;
+
 #define CHAN_BLB_TRN_FD_DATAGRAM_OBS_MAX 1024
 struct chanBlbTrnFdDatagramObsEntry {
   struct timespec ts;
@@ -276,6 +283,7 @@ deliverLoopback(
   }
   pthread_cond_signal(&tgt->igrCv);
   pthread_mutex_unlock(&tgt->igrM);
+  ++chanBlbTrnFdDatagramBusIn;
   pthread_mutex_unlock(&BusLock);
   return (1);
 }
@@ -519,6 +527,9 @@ chanBlbTrnFdDatagramInput(
   if (!V->igrHead)
     V->igrTail = 0;
   pthread_cleanup_pop(1); /* unlock V->igrM */
+  pthread_mutex_lock(&BusLock);
+  ++chanBlbTrnFdDatagramBusOut;
+  pthread_mutex_unlock(&BusLock);
 
   rv = m->len;
   if (rv > l)
