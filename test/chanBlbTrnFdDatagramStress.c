@@ -885,12 +885,12 @@ chanBlbTrnFdDatagramOutput(
   if (chanBlbTrnFdDatagramObsEnable
    && chanBlbTrnFdDatagramObsCnt < CHAN_BLB_TRN_FD_DATAGRAM_OBS_MAX
    && l >= 1
-   && l > 1 + (unsigned int)b[0]) {
+   && l >= 1U + b[0]) {
     struct chanBlbTrnFdDatagramObsEntry *e;
 
     e = &chanBlbTrnFdDatagramObs[chanBlbTrnFdDatagramObsCnt];
     clock_gettime(CLOCK_MONOTONIC, &e->ts);
-    e->len = l - 1 - (unsigned int)b[0];
+    e->len = l - 1 - b[0];
     ++chanBlbTrnFdDatagramObsCnt;
   }
 
@@ -898,7 +898,7 @@ chanBlbTrnFdDatagramOutput(
    * probabilistic loss knobs even roll */
   if (chanBlbTrnFdDatagramPartCnt > 0
    && l >= 1
-   && l > 1 + (unsigned int)b[0]
+   && l >= 1U + b[0]
    && partDrop(V, b))
     return (l);
 

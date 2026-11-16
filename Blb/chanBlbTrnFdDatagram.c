@@ -226,7 +226,7 @@ chanBlbTrnFdDatagramOutput(
   if (l < 1
    || b[0] < sizeof (sa_family_t)
    || b[0] > sizeof (struct sockaddr_storage)
-   || l <= 1U + b[0])
+   || l < 1U + b[0])
     return (0);
   /* no-fd-for-family and unknown family are drop-and-continue:
    * a stray blob must not tear down the egress */

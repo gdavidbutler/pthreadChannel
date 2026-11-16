@@ -28,28 +28,26 @@
 #include "rsec.h"
 #include "chanBlbChnRsec.h"
 
+/* a after b */
+#define TSAFTER(a, b) ((a).tv_sec > (b).tv_sec \
+ || ((a).tv_sec == (b).tv_sec && (a).tv_nsec > (b).tv_nsec))
+
 /*
- * Overhead in a single-fragment datagram:
- *   tagSize + 3 (k-1, m, si) + 1 (padding byte) + 2 (max shardlen VLQ)
- *   + frgHmacSize (per-fragment AUTH)
- *   + dtgHmacSize (trailing datagram AUTH)
- *   + dtgHashSize (trailing datagram GATE)
- * = tagSize + frgHmacSize + dtgHmacSize + dtgHashSize + 6
- * (padding is a fixed byte: padding = k*ceil(L/k) - L in [0, k-1], k <= 256.)
+ * A fragment's fixed overhead: [k-1][m][si][pad], a VLQ of at most 2,
+ * and the tag and the gate.  A minimal fragment, a 1-byte VLQ and no
+ * shard, is one less.
  */
 unsigned int
 chanBlbChnRsecShard(
   unsigned int dgramMax
  ,unsigned int tagSize
- ,unsigned int frgHmacSize
- ,unsigned int dtgHmacSize
  ,unsigned int dtgHashSize
 ){
   unsigned int overhead;
 
-  overhead = tagSize + frgHmacSize + dtgHmacSize + dtgHashSize + 6;
+  overhead = tagSize + dtgHashSize + 6;
   if (dgramMax <= overhead
-   || dgramMax - overhead > 16384) /* max 2-byte VLQ */
+   || dgramMax - overhead > 16384)
     return (0);
   return (dgramMax - overhead);
 }
@@ -58,101 +56,38 @@ unsigned int
 chanBlbChnRsecMax(
   unsigned int dgramMax
  ,unsigned int tagSize
- ,unsigned int frgHmacSize
- ,unsigned int dtgHmacSize
  ,unsigned int dtgHashSize
  ,unsigned char m
 ){
-  unsigned int overhead;
+  unsigned int s;
 
-  overhead = tagSize + frgHmacSize + dtgHmacSize + dtgHashSize + 6;
-  if (dgramMax <= overhead
-   || dgramMax - overhead > 16384) /* max 2-byte VLQ */
+  if (!(s = chanBlbChnRsecShard(dgramMax, tagSize, dtgHashSize)))
     return (0);
-  return ((256 - m) * (dgramMax - overhead));
+  return ((256 - m) * s);
 }
 
 /*
- * Private state behind opaque of each ctx.  The framer thread
- * allocates this on entry using v->realloc and frees it on exit
- * using v->free.  Application code never sees these structs and
- * cannot read or write the counters through the public ctx struct.
- *
- * Memory ordering for Snap (called by some other thread):
- *   The framer thread, immediately after pthread_mutex_init+memset
- *   and before publishing opaque, does a self lock+unlock cycle.
- *   A later Snap loads opaque; if non-NULL, its pthread_mutex_lock
- *   acquires and pairs with the framer's release-unlock, making the
- *   mutex_init writes and counter zeroing visible on weakly-ordered
- *   architectures.
+ * The counters behind opaque, the framer's: allocated on its entry,
+ * freed at its exit.  The framer counts in its own copy and publishes
+ * it whole before each wait.  One mutex for every framer guards each
+ * published copy and opaque itself, so a Snap never meets counters
+ * freed under it, whenever and however the framer ends.
  */
-struct egrPriv {
-  pthread_mutex_t m;
-  struct chanBlbChnRsecEgrCtrs ctrs;
-};
-
-struct igrPriv {
-  pthread_mutex_t m;
-  struct chanBlbChnRsecIgrCtrs ctrs;
-};
-
-/*
- * pthread_cleanup_push targets that release priv on framer exit
- * (normal return or cancellation).  Pushed inside v->fin so they
- * run before chanBlb's per-thread teardown.  v carries v->frmCtx
- * (the public ctx) and v->free (the chanBlb allocator pair).
- */
-static void
-egrFinPriv(
-  void *v
-#define V ((struct chanBlbEgrCtx *)v)
-){
-  struct chanBlbChnRsecEgrCtx *ctx;
-  struct egrPriv *p;
-
-  ctx = V->frmCtx;
-  p = ctx->opaque;
-  if (!p)
-    return;
-  ctx->opaque = 0;
-  pthread_mutex_destroy(&p->m);
-  V->free(p);
-#undef V
-}
-
-static void
-igrFinPriv(
-  void *v
-#define V ((struct chanBlbIgrCtx *)v)
-){
-  struct chanBlbChnRsecIgrCtx *ctx;
-  struct igrPriv *p;
-
-  ctx = V->frmCtx;
-  p = ctx->opaque;
-  if (!p)
-    return;
-  ctx->opaque = 0;
-  pthread_mutex_destroy(&p->m);
-  V->free(p);
-#undef V
-}
+static pthread_mutex_t Mu = PTHREAD_MUTEX_INITIALIZER;
 
 void
 chanBlbChnRsecEgrSnap(
   struct chanBlbChnRsecEgrCtx *ctx
  ,struct chanBlbChnRsecEgrCtrs *out
 ){
-  struct egrPriv *p;
+  struct chanBlbChnRsecEgrCtrs *p;
 
-  p = ctx->opaque;
-  if (!p) {
+  pthread_mutex_lock(&Mu);
+  if ((p = ctx->opaque))
+    *out = *p;
+  else
     memset(out, 0, sizeof (*out));
-    return;
-  }
-  pthread_mutex_lock(&p->m);
-  *out = p->ctrs;
-  pthread_mutex_unlock(&p->m);
+  pthread_mutex_unlock(&Mu);
 }
 
 void
@@ -160,242 +95,79 @@ chanBlbChnRsecIgrSnap(
   struct chanBlbChnRsecIgrCtx *ctx
  ,struct chanBlbChnRsecIgrCtrs *out
 ){
-  struct igrPriv *p;
+  struct chanBlbChnRsecIgrCtrs *p;
 
-  p = ctx->opaque;
-  if (!p) {
+  pthread_mutex_lock(&Mu);
+  if ((p = ctx->opaque))
+    *out = *p;
+  else
     memset(out, 0, sizeof (*out));
-    return;
-  }
-  pthread_mutex_lock(&p->m);
-  *out = p->ctrs;
-  pthread_mutex_unlock(&p->m);
+  pthread_mutex_unlock(&Mu);
 }
 
-struct egrEntry {
-  unsigned char *work;  /* NULL = empty slot */
-  struct timespec delay;/* per-message inter-shard delay */
+/*
+ * Egress.  A slot holds a message's k + m shards, each a fragment ready
+ * but for the gate, stride bytes apart:
+ *   [addrlen][addr][tag][k-1][m][si][pad][shard_len_vlq][shard_data]
+ * One schedule, sorted by due time, interleaves every slot's shards.
+ * A slot is a tag at an address, so a datagram packs at most one
+ * fragment a slot and no two fragments of it share a tag.
+ */
+struct egrEnt {
+  unsigned char *work;  /* 0: a free slot */
+  struct timespec delay;/* a shard's */
   unsigned int stride;
   unsigned int km;
-  unsigned int sent;    /* shards sent so far */
+  unsigned int sent;    /* shards packed so far */
 };
 
-struct shardItem {
-  struct timespec ts;   /* scheduled send time */
-  unsigned int entry;   /* index into egress table */
-  unsigned int shard;   /* shard index within work buffer */
+struct egrShd {
+  struct timespec ts;   /* due */
+  unsigned int ent;
+  unsigned int shard;
+};
+
+/*
+ * What the egress holds, for its cleanup handler, run at its exit and
+ * at a cancel alike: the thread's own locals, so whatever it holds
+ * across a wait goes with it.
+ */
+struct egrHold {
+  struct chanBlbEgrCtx *v;
+  struct egrEnt **tab;
+  struct egrShd **shd;
+  unsigned char **pack;
+  unsigned char **seen;
+  chanBlb_t **pending;
+  unsigned int tableSize;
 };
 
 static void
-shardInsert(
-  struct shardItem *base
- ,unsigned long nel
- ,const struct shardItem *item
+egrFin(
+  void *a
 ){
-  unsigned long lo;
-  unsigned long hi;
-  unsigned long mid;
+  struct egrHold *h;
+  struct chanBlbChnRsecEgrCtx *ctx;
+  void *p;
+  unsigned int i;
 
-  lo = 0;
-  hi = nel;
-  while (lo < hi) {
-    mid = lo + (hi - lo) / 2;
-    if (item->ts.tv_sec < base[mid].ts.tv_sec
-     || (item->ts.tv_sec == base[mid].ts.tv_sec
-      && item->ts.tv_nsec < base[mid].ts.tv_nsec))
-      hi = mid;
-    else
-      lo = mid + 1;
-  }
-  if (lo < nel)
-    memmove(base + lo + 1, base + lo, (nel - lo) * sizeof (*base));
-  base[lo] = *item;
+  h = a;
+  ctx = h->v->frmCtx;
+  pthread_mutex_lock(&Mu);
+  p = ctx->opaque;
+  ctx->opaque = 0;
+  pthread_mutex_unlock(&Mu);
+  h->v->free(p);
+  h->v->free(*h->pending);
+  if (*h->tab)
+    for (i = 0; i < h->tableSize; ++i)
+      h->v->free((*h->tab)[i].work);
+  h->v->free(*h->shd);
+  h->v->free(*h->seen);
+  h->v->free(*h->pack);
+  h->v->free(*h->tab);
 }
 
-/*
- * Pack and send one datagram starting from the head of the shard
- * schedule.  Packs additional due shards from different messages
- * to the same address.  *packDelay (out): SUM of the packed
- * shards' delay.  Returns 0 on output failure.
- *
- * Sum, not max: delay is a bandwidth pace, and bandwidth is
- * per-byte, not per-datagram.  Each shard's schedule slot stands
- * for a delay-wide slice of wire time; packing lets shards
- * ride early in one datagram, so the wait after it must cover
- * every slice consumed or packing mints free bandwidth -- a
- * full-packed datagram under a max rule exceeded the sender's
- * declared rate by the packing factor.  Sum >= max, so the
- * per-message inter-shard spacing guarantee is preserved.
- *
- * No locks held: callbacks (dtgHmacSign, dtgHashSign, v->out, v->free) and the
- * slot-free pass run unlocked.  The caller flushes the returned
- * counter deltas into priv->ctrs.frg / priv->ctrs.msg under
- * priv->m so the batch is atomic w.r.t. snapshot.
- */
-static int
-egrSendPack(
-  struct chanBlbEgrCtx *v
- ,struct chanBlbChnRsecEgrCtx *ctx
- ,struct egrEntry *table
- ,unsigned int tableSize
- ,unsigned char *packBuf
- ,unsigned char *packSeen
- ,unsigned int *frgOff
- ,struct shardItem *shards
- ,unsigned long *shardCount
- ,struct timespec *packDelay
- ,unsigned int *frgAdd
- ,unsigned int *msgAdd
-){
-  static long nsps = 1000000000L;
-  unsigned int dgramMax;
-  unsigned int dtgHmacSize;
-  unsigned int dtgHashSize;
-  unsigned long si2;
-  unsigned int ei;
-  unsigned int si;
-  unsigned int wp;
-  unsigned int packPos;
-  unsigned int fragLen;
-  unsigned int ti;
-  unsigned int frgLocal;
-  unsigned int msgLocal;
-  struct timespec now;
-
-  dgramMax = ctx->dgramMax;
-  dtgHmacSize = ctx->dtgHmacSize;
-  dtgHashSize = ctx->dtgHashSize;
-  ei = shards[0].entry;
-  si = shards[0].shard;
-  frgLocal = 0;
-  msgLocal = 0;
-
-  /* start pack: copy addr prefix */
-  wp = 1 + table[ei].work[0];
-  memcpy(packBuf, table[ei].work, wp);
-  packPos = wp;
-  memset(packSeen, 0, tableSize);
-
-  /* add first fragment (its tag offset within src is 0) */
-  fragLen = table[ei].stride - wp;
-  frgOff[0] = packPos - wp;
-  memcpy(packBuf + packPos,
-    table[ei].work + (unsigned long)si * table[ei].stride + wp,
-    fragLen);
-  packPos += fragLen;
-  packSeen[ei] = 1;
-  *packDelay = table[ei].delay;
-
-  /* pop head */
-  --(*shardCount);
-  if (*shardCount > 0)
-    memmove(shards, shards + 1, *shardCount * sizeof (struct shardItem));
-  ++frgLocal;
-  ++table[ei].sent;
-
-  /* scan remaining due shards for packing */
-  clock_gettime(CLOCK_MONOTONIC, &now);
-  si2 = 0;
-  while (si2 < *shardCount
-   && (shards[si2].ts.tv_sec < now.tv_sec
-    || (shards[si2].ts.tv_sec == now.tv_sec
-     && shards[si2].ts.tv_nsec <= now.tv_nsec))) {
-    unsigned int ei2;
-    unsigned int wp2;
-    unsigned int fragLen2;
-
-    unsigned int fi;
-
-    ei2 = shards[si2].entry;
-    wp2 = 1 + table[ei2].work[0];
-    fragLen2 = table[ei2].stride - wp2;
-
-    /* same address, not same message, fits (room for both trailers).
-     * "Same message" is the TAG, not the slot: a retry-based sender
-     * re-sends one message under one tag from a second slot, and its
-     * shards feed the one reassembly the first slot's do, so packing
-     * them together would put two shards of one train under one
-     * loss.  Each packed fragment's tag is at packBuf + wp + frgOff. */
-    for (fi = 0; fi < frgLocal; ++fi)
-      if (memcmp(packBuf + wp + frgOff[fi], table[ei2].work + wp2, ctx->tagSize) == 0)
-        break;
-    if (wp2 == wp
-     && memcmp(table[ei2].work, packBuf, wp) == 0
-     && !packSeen[ei2]
-     && fi == frgLocal
-     && packPos + fragLen2 + dtgHmacSize + dtgHashSize <= wp + dgramMax) {
-      frgOff[frgLocal] = packPos - wp;
-      memcpy(packBuf + packPos,
-        table[ei2].work + (unsigned long)shards[si2].shard * table[ei2].stride + wp2,
-        fragLen2);
-      packPos += fragLen2;
-      packSeen[ei2] = 1;
-      packDelay->tv_sec += table[ei2].delay.tv_sec;
-      packDelay->tv_nsec += table[ei2].delay.tv_nsec;
-      if (packDelay->tv_nsec >= nsps) {
-        packDelay->tv_sec++;
-        packDelay->tv_nsec -= nsps;
-      }
-      ++frgLocal;
-      ++table[ei2].sent;
-      /* pop this item */
-      --(*shardCount);
-      if (si2 < *shardCount)
-        memmove(shards + si2, shards + si2 + 1,
-          (*shardCount - si2) * sizeof (struct shardItem));
-      /* don't increment si2: next item slid into this position */
-    } else {
-      ++si2;
-    }
-  }
-
-  /* append datagram AUTH (keyed, per-datagram) over all fragments,
-   * handing the callback the packed fragment structure (offsets+count) */
-  if (dtgHmacSize > 0)
-    ctx->dtgHmacSign(ctx->dtgHmacCtx, packBuf,
-      packBuf + packPos, packBuf + wp, packPos - wp, frgOff, frgLocal);
-  packPos += dtgHmacSize;
-
-  /* append datagram GATE (keyed, per-datagram) over all fragments AND
-   * the dtgHmac just appended; the gate is outermost, verified first */
-  if (dtgHashSize > 0)
-    ctx->dtgHashSign(ctx->dtgHashCtx, packBuf,
-      packBuf + packPos, packBuf + wp, packPos - wp);
-  packPos += dtgHashSize;
-
-  if (!v->out(v->outCtx, packBuf, packPos)) {
-    *frgAdd = frgLocal;
-    *msgAdd = 0;
-    return (0);
-  }
-
-  /* check all packed entries for completion */
-  for (ti = 0; ti < tableSize; ++ti) {
-    if (packSeen[ti] && table[ti].work
-     && table[ti].sent >= table[ti].km) {
-      ++msgLocal;
-      v->free(table[ti].work);
-      table[ti].work = 0;
-    }
-  }
-  *frgAdd = frgLocal;
-  *msgAdd = msgLocal;
-  return (1);
-}
-
-/*
- * Transport buffer (packed), as handed to v->out:
- *   [addrlen(1)][addr][frag1][frag2]...[fragN][dtgHmac(dtgHmacSize)][dtgHash(dtgHashSize)]
- * The [addrlen][addr] prefix is a transport-local frame: the datagram
- * transport consumes it as the sendto() destination and strips it before
- * transmission, so it is NOT on the wire and NOT under any MAC.  The
- * dtgHmac (datagram AUTH) covers [frag1]..[fragN]; the dtgHash (datagram
- * GATE) covers [frag1]..[fragN][dtgHmac] (outermost, verified first).
- * Each fragment:
- *   [tag(tagSize)][k-1(1)][m(1)][si(1)][pad(1)][shard_len_vlq(1-2)][shard_data(shard_len)][frgHmac(frgHmacSize)]
- * See chanBlbChnRsec.h for the k-1/m/si/pad and VLQ field encodings.
- * Work buffer per shard slot (no datagram trailers): [addrlen][addr][tag][k-1][m][si][pad(1)][shard_len_vlq][shard_data(msgShardSize)][frgHmac]
- */
 void *
 chanBlbChnRsecEgr(
   struct chanBlbEgrCtx *v
@@ -403,751 +175,618 @@ chanBlbChnRsecEgr(
   static unsigned int egrhdr = 5; /* [m(1)][delay_us(4)] after [addrlen][addr][tag] */
   static unsigned long usps = 1000000L;
   static long nsps = 1000000000L;
+  const unsigned char *dp[256];
+  unsigned char *pp[256];
   struct chanBlbChnRsecEgrCtx *ctx;
-  struct egrPriv *priv;
-  struct egrEntry *table;
-  struct shardItem *shards;
-  unsigned char *packBuf;
-  unsigned char *packSeen;
-  unsigned int *frgOff;
+  struct chanBlbChnRsecEgrCtrs *priv;
+  struct egrHold h;
+  struct egrEnt *tab;
+  struct egrShd *shd;
+  unsigned char *pack;
+  unsigned char *seen;
   chanBlb_t *pending;
   chanArr_t p[1];
-  unsigned int tagSize;
-  unsigned int frgHmacSize;
-  unsigned int tableSize;
-  unsigned int dgramMax;
-  unsigned int overhead;
-  unsigned int maxShardSize;
-  unsigned long shardCount;
-  unsigned long shardAlloc;
-  unsigned int ti;
-  struct timespec lastEmit;
+  struct chanBlbChnRsecEgrCtrs c;
+  struct timespec lastSent;
   struct timespec lastPackD;
-  unsigned char hasEmit;
+  struct timespec target;
+  unsigned long shdCnt;
+  unsigned long shdCap;
+  unsigned int maxShard;
+  unsigned int tagSize;
+  unsigned int tableSize;
+  unsigned int ti;
+  unsigned char hasSent;
   unsigned char pendingFresh;
+  unsigned char shut;
 
   ctx = v->frmCtx;
   tagSize = ctx->tagSize;
-  frgHmacSize = ctx->frgHmacSize;
   tableSize = ctx->tableSize;
-  dgramMax = ctx->dgramMax;
-  overhead = tagSize + frgHmacSize + ctx->dtgHmacSize + ctx->dtgHashSize + 6;
-  maxShardSize = (dgramMax > overhead) ? dgramMax - overhead : 0;
-
-  priv = 0;
-  table = 0;
-  packBuf = 0;
-  packSeen = 0;
-  frgOff = 0;
-  shards = 0;
-  shardCount = 0;
-  shardAlloc = 0;
+  tab = 0;
+  shd = 0;
+  pack = 0;
+  seen = 0;
   pending = 0;
-  lastPackD.tv_sec = 0;
-  lastPackD.tv_nsec = 0;
-  hasEmit = 0;
-  pendingFresh = 0;
-
-  if (!maxShardSize || maxShardSize > 16384 || !tableSize)
-    goto error;
-
-  /* private state.  The self lock+unlock dance creates a release
-   * edge that pairs with any later Snap caller's lock acquire
-   * (visibility of mutex_init + counter zero-fill). */
-  if (!(priv = v->realloc(0, sizeof (*priv))))
-    goto error;
-  if (pthread_mutex_init(&priv->m, 0)) {
-    v->free(priv);
-    priv = 0;
-    goto error;
-  }
-  memset(&priv->ctrs, 0, sizeof (priv->ctrs));
-  pthread_mutex_lock(&priv->m);
-  pthread_mutex_unlock(&priv->m);
-  ctx->opaque = priv;
-
-  if (!(table = v->realloc(0,
-        tableSize * sizeof (struct egrEntry))))
-    goto error;
-  for (ti = 0; ti < tableSize; ++ti)
-    table[ti].work = 0;
-
-  /* pack buffer: addr prefix (1+255 max) + wire payload (dgramMax) */
-  if (!(packBuf = v->realloc(0, 1 + 255 + dgramMax)))
-    goto error;
-
-  /* same-message avoidance: one byte per table entry */
-  if (!(packSeen = v->realloc(0, tableSize)))
-    goto error;
-
-  /* packed-fragment tag offsets for the datagram AUTH callback:
-   * at most one fragment per table entry per datagram */
-  if (!(frgOff = v->realloc(0,
-        tableSize * sizeof (unsigned int))))
-    goto error;
-
+  h.v = v;
+  h.tab = &tab;
+  h.shd = &shd;
+  h.pack = &pack;
+  h.seen = &seen;
+  h.pending = &pending;
+  h.tableSize = tableSize;
   pthread_cleanup_push(v->fin, v);
-  pthread_cleanup_push(egrFinPriv, v);
+  pthread_cleanup_push(egrFin, &h);
+  if (!tableSize
+   || (ctx->dtgHashSize && !ctx->dtgHashSign)
+   || !(maxShard = chanBlbChnRsecShard(ctx->dgramMax, tagSize, ctx->dtgHashSize))
+   || !(priv = v->realloc(0, sizeof (*priv))))
+    goto exit;
+  memset(priv, 0, sizeof (*priv));
+  pthread_mutex_lock(&Mu);
+  ctx->opaque = priv;
+  pthread_mutex_unlock(&Mu);
+  if (!(tab = v->realloc(0, tableSize * sizeof (*tab))))
+    goto exit;
+  for (ti = 0; ti < tableSize; ++ti)
+    tab[ti].work = 0;
+  if (!(pack = v->realloc(0, 1 + 255 + ctx->dgramMax))
+   || !(seen = v->realloc(0, tableSize)))
+    goto exit;
+  shdCnt = 0;
+  shdCap = 0;
+  hasSent = 0;
+  pendingFresh = 0;
+  shut = 0;
+  memset(&c, 0, sizeof (c));
   p[0].c = v->chan;
   p[0].v = (void **)&pending;
   p[0].o = chanOpGet;
 
   for (;;) {
-    long ns;
     struct timespec now;
-    struct timespec target;
+    long ns;
+    int got;
 
-    /* Emission target: the later of the head shard's scheduled
-     * ts (per-message pacing) and lastEmit + lastPackD (inter-
-     * packet wire pacing; lastPackD is the SUM of the previous
-     * datagram's packed delays).  target is only valid when
-     * shardCount is non-zero; reused below after chanOne to gate
-     * emission. */
-    if (!shardCount) {
+    /* the next datagram's time: the later of the head shard's due time
+     * and the last datagram's send plus its packed delays */
+    if (!shdCnt)
       ns = 0; /* block forever */
-    } else {
-      target = shards[0].ts;
-      if (hasEmit) {
-        struct timespec nextAllowed;
+    else {
+      target = shd[0].ts;
+      if (hasSent) {
+        struct timespec t;
 
-        nextAllowed = lastEmit;
-        nextAllowed.tv_sec += lastPackD.tv_sec;
-        nextAllowed.tv_nsec += lastPackD.tv_nsec;
-        if (nextAllowed.tv_nsec >= nsps) {
-          nextAllowed.tv_sec++;
-          nextAllowed.tv_nsec -= nsps;
+        t = lastSent;
+        t.tv_sec += lastPackD.tv_sec;
+        if ((t.tv_nsec += lastPackD.tv_nsec) >= nsps) {
+          ++t.tv_sec;
+          t.tv_nsec -= nsps;
         }
-        if (nextAllowed.tv_sec > target.tv_sec
-         || (nextAllowed.tv_sec == target.tv_sec
-          && nextAllowed.tv_nsec > target.tv_nsec))
-          target = nextAllowed;
+        if (TSAFTER(t, target))
+          target = t;
       }
       clock_gettime(CLOCK_MONOTONIC, &now);
-      if (target.tv_sec < now.tv_sec
-       || (target.tv_sec == now.tv_sec
-        && target.tv_nsec <= now.tv_nsec)) {
+      if (!TSAFTER(target, now))
         ns = -1; /* due now, poll */
-      } else {
-        time_t dsec;
-
-        dsec = target.tv_sec - now.tv_sec;
-        if (dsec > 1)
-          ns = nsps; /* cap at 1s for ILP32 portability */
-        else {
-          ns = dsec * nsps
-             + (target.tv_nsec - now.tv_nsec);
-          if (ns <= 0) ns = 1;
-        }
-      }
+      else if (target.tv_sec - now.tv_sec > 1)
+        ns = nsps; /* cap at 1s for ILP32 portability */
+      else if ((ns = (target.tv_sec - now.tv_sec) * nsps + (target.tv_nsec - now.tv_nsec)) <= 0)
+        ns = 1;
     }
-
-    if (!chanOne(ns, sizeof (p) / sizeof (p[0]), p))
-      break;
-
-    if (p[0].s == chanOsGet) {
-      /* pending now holds the blob; pause gets, monitor shutdown */
-      p[0].v = 0;
-      p[0].o = chanOpSht;
-      pendingFresh = 1;
-    } else if (p[0].s != chanOsTmo) {
-      break; /* shutdown */
-    }
-
-    /* Emit at most one packet per pass.  shardCount>0 here implies
-     * target was computed above; pending processing only runs
-     * afterward so shardCount cannot grow between then and now. */
-    if (shardCount) {
-      clock_gettime(CLOCK_MONOTONIC, &now);
-      if (target.tv_sec < now.tv_sec
-       || (target.tv_sec == now.tv_sec
-        && target.tv_nsec <= now.tv_nsec)) {
-        struct timespec packD;
-        unsigned int frgAdd;
-        unsigned int msgAdd;
-        int sent;
-
-        frgAdd = 0;
-        msgAdd = 0;
-        sent = egrSendPack(v, ctx, table, tableSize, packBuf, packSeen, frgOff,
-                           shards, &shardCount, &packD, &frgAdd, &msgAdd);
-        if (frgAdd || msgAdd) {
-          pthread_mutex_lock(&priv->m);
-          priv->ctrs.frg += frgAdd;
-          priv->ctrs.msg += msgAdd;
-          pthread_mutex_unlock(&priv->m);
-        }
-        if (!sent)
-          goto exit;
-        clock_gettime(CLOCK_MONOTONIC, &lastEmit);
-        lastPackD = packD;
-        hasEmit = 1;
-      }
-    }
-
-    /* process pending blob if slot available */
-    if (pending) {
-      unsigned int slot;
-
-      slot = tableSize;
-      for (ti = 0; ti < tableSize; ++ti) {
-        if (!table[ti].work) {
-          slot = ti;
-          break;
-        }
-      }
-
-      if (pendingFresh) {
-        if (slot >= tableSize) {
-          pthread_mutex_lock(&priv->m);
-          ++priv->ctrs.full;
-          pthread_mutex_unlock(&priv->m);
-        }
-        pendingFresh = 0;
-      }
-
-      if (slot < tableSize) {
-        unsigned long delayUs;
-        unsigned int addrlen;
-        unsigned int prefixSize;
-        unsigned int payloadLen;
-        unsigned int k;
-        unsigned int km;
-        unsigned int msgShardSize;
-        unsigned int padding;
-        unsigned int shardVlqLen;
-        unsigned int headerGap;
-        unsigned int stride;
-        unsigned int i;
-        unsigned char mVal;
-        unsigned char shardVlq[2];
-        unsigned char *work;
-        const unsigned char **dataPtrs;
-        unsigned char **parityPtrs;
-        struct timespec delay;
-        struct shardItem item;
-        struct shardItem *tmp;
-
-        /* parse blob prefix: [addrlen(1)][addr(addrlen)][tag(tagSize)][m(1)][delay_us(4)][payload] */
-        if (pending->l < 1) {
-          /* malformed blob; drop and keep running */
-          v->free(pending);
-          pending = 0;
-          p[0].v = (void **)&pending;
-          p[0].o = chanOpGet;
-          continue;
-        }
-        addrlen = pending->b[0];
-        prefixSize = 1 + addrlen + tagSize;
-        if (pending->l < prefixSize + egrhdr) {
-          /* malformed blob; drop and keep running */
-          v->free(pending);
-          pending = 0;
-          p[0].v = (void **)&pending;
-          p[0].o = chanOpGet;
-          continue;
-        }
-        mVal = pending->b[prefixSize];
-        delayUs = (unsigned long)pending->b[prefixSize + 1] << 24
-                | (unsigned long)pending->b[prefixSize + 2] << 16
-                | (unsigned long)pending->b[prefixSize + 3] << 8
-                | pending->b[prefixSize + 4];
-        delay.tv_sec = delayUs / usps;
-        delay.tv_nsec = (long)(delayUs % usps) * 1000L;
-        payloadLen = pending->l - (prefixSize + egrhdr);
-
-        /* k bound checked in bytes: the ceiling sum below can wrap
-         * when payloadLen is within maxShardSize of UINT_MAX */
-        if (payloadLen > 256 * maxShardSize) {
-          /* payload exceeds chanBlbChnRsecMax(ctx, 0); drop and keep running */
-          v->free(pending);
-          pending = 0;
-          p[0].v = (void **)&pending;
-          p[0].o = chanOpGet;
-          continue;
-        }
-        /* compute k using maxShardSize */
-        k = payloadLen > 0 ? (payloadLen + maxShardSize - 1) / maxShardSize : 1;
-        km = k + mVal;
-        if (km > 256) {
-          mVal = (256 - k);
-          km = 256;
-        }
-
-        /* per-message shard size: tighter than maxShardSize */
-        msgShardSize = payloadLen > 0 ? (payloadLen + k - 1) / k : 0;
-
-        /* padding fits one byte: k*ceil(L/k) - L in [0, k-1], k <= 256 */
-        padding = k * msgShardSize - payloadLen;
-
-        /* shard_len VLQ encode */
-        if (msgShardSize < 128) {
-          shardVlq[0] = msgShardSize;
-          shardVlqLen = 1;
-        } else {
-          shardVlq[0] = (0x80 | ((msgShardSize - 1) >> 7));
-          shardVlq[1] = ((msgShardSize - 1) & 0x7f);
-          shardVlqLen = 2;
-        }
-
-        /* work slot layout: [addrlen][addr][tag][k-1][m][si][pad(1)][shard_len_vlq][shard_data(msgShardSize)][hmac] */
-        headerGap = prefixSize + 4 + shardVlqLen;
-        stride = headerGap + msgShardSize + frgHmacSize;
-
-        /* allocate pointer arrays separately from the byte work buffer so
-         * the pointer arrays are suitably aligned regardless of stride. */
-        dataPtrs = v->realloc(0,
-          k * sizeof (const unsigned char *)
-          + mVal * sizeof (unsigned char *));
-        if (!dataPtrs) {
-          /* drop blob and keep running */
-          v->free(pending);
-          pending = 0;
-          p[0].v = (void **)&pending;
-          p[0].o = chanOpGet;
-          continue;
-        }
-        parityPtrs = (unsigned char **)(dataPtrs + k);
-
-        work = v->realloc(0, (unsigned long)km * stride);
-        if (!work) {
-          v->free(dataPtrs);
-          v->free(pending);
-          pending = 0;
-          p[0].v = (void **)&pending;
-          p[0].o = chanOpGet;
-          continue;
-        }
-
-        /* build header template in first slot */
-        memcpy(work, pending->b, prefixSize); /* [addrlen][addr][tag] common prefix */
-        work[prefixSize] = (k - 1);       /* k-1 on wire */
-        work[prefixSize + 1] = mVal;                     /* m */
-        work[prefixSize + 2] = 0;                        /* shard_index placeholder */
-        work[prefixSize + 3] = padding;   /* padding byte */
-        memcpy(work + prefixSize + 4, shardVlq, shardVlqLen);
-
-        /* replicate header into all slots, set shard_index, copy payload */
-        for (i = 0; i < km; ++i) {
-          unsigned char *s;
-
-          s = work + (unsigned long)i * stride;
-          if (i > 0)
-            memcpy(s, work, headerGap);
-          s[prefixSize + 2] = i;
-
-          if (i < k) {
-            unsigned int off;
-            unsigned int len;
-
-            off = i * msgShardSize;
-            len = payloadLen - off;
-            if (len > msgShardSize)
-              len = msgShardSize;
-            if (len > 0)
-              memcpy(s + headerGap, pending->b + prefixSize + egrhdr + off, len);
-            if (len < msgShardSize)
-              memset(s + headerGap + len, 0, msgShardSize - len);
-            dataPtrs[i] = s + headerGap;
-          } else {
-            parityPtrs[i - k] = s + headerGap;
-          }
-        }
-
-        /* encode parity */
-        if (mVal > 0 && msgShardSize > 0
-         && rsecEncode(dataPtrs, parityPtrs, msgShardSize, k, mVal)) {
-          /* unexpected encode failure: drop and keep running */
-          v->free(dataPtrs);
-          v->free(work);
-          v->free(pending);
-          pending = 0;
-          p[0].v = (void **)&pending;
-          p[0].o = chanOpGet;
-          continue;
-        }
-        /* pointer arrays no longer needed after encode */
-        v->free(dataPtrs);
-
-        /* sign each slot (fragment AUTH) */
-        for (i = 0; i < km; ++i) {
-          unsigned char *s;
-          unsigned int wp;
-
-          s = work + (unsigned long)i * stride;
-          wp = 1 + addrlen;
-          /* frgHmac covers wire payload: tag through shard_data */
-          if (frgHmacSize > 0)
-            ctx->frgHmacSign(ctx->frgHmacCtx, s,
-              s + headerGap + msgShardSize,
-              s + wp, headerGap + msgShardSize - wp);
-        }
-
-        v->free(pending);
-        pending = 0;
-
-        /* store in table */
-        table[slot].work = work;
-        table[slot].stride = stride;
-        table[slot].km = km;
-        table[slot].sent = 0;
-        table[slot].delay = delay;
-
-        /* grow shard schedule if needed */
-        if (shardCount + km > shardAlloc) {
-          tmp = v->realloc(shards,
-            (shardCount + km) * sizeof (struct shardItem));
-          if (!tmp) {
-            /* drop this message and keep running (pending already freed) */
-            v->free(table[slot].work);
-            table[slot].work = 0;
-            p[0].v = (void **)&pending;
-            p[0].o = chanOpGet;
-            continue;
-          }
-          shards = tmp;
-          shardAlloc = shardCount + km;
-        }
-
-        /* insert km shard items into schedule */
-        clock_gettime(CLOCK_MONOTONIC, &now);
-        item.entry = slot;
-        item.ts = now;
-        for (i = 0; i < km; ++i) {
-          item.ts.tv_sec += delay.tv_sec;
-          item.ts.tv_nsec += delay.tv_nsec;
-          if (item.ts.tv_nsec >= nsps) {
-            item.ts.tv_sec++;
-            item.ts.tv_nsec -= nsps;
-          }
-          item.shard = i;
-          shardInsert(shards, shardCount, &item);
-          ++shardCount;
-        }
-
-        /* resume gets */
+    /* once the channel is shut, what it still holds is taken and every
+     * message taken goes out at its pace before the framer ends, as a
+     * stream's close sends what was written: the Store is read without
+     * waiting and the pace kept by sleeping */
+    got = 0;
+    if (!shut) {
+      if (!chanOne(ns, sizeof (p) / sizeof (p[0]), p))
+        break;
+      if (p[0].s == chanOsGet)
+        got = 1;
+      else if (p[0].s != chanOsTmo)
+        shut = 1;
+    } else {
+      if (!pending) {
         p[0].v = (void **)&pending;
         p[0].o = chanOpGet;
+        if (!(got = chanOne(-1, sizeof (p) / sizeof (p[0]), p) == 1 && p[0].s == chanOsGet)
+         && !shdCnt)
+          break;
       }
+      if (!got && ns > 0) {
+        struct timespec t;
+
+        t.tv_sec = ns / nsps;
+        t.tv_nsec = ns % nsps;
+        nanosleep(&t, 0);
+      }
+    }
+    if (got) {
+      unsigned int prefix;
+
+      /* none (a demand probe), malformed or past chanBlbChnRsecMax at
+       * m = 0 (in bytes: the ceiling of k below wraps within maxShard of
+       * UINT_MAX): dropped; else held, gets paused and shutdown watched,
+       * until it is taken */
+      if (pending
+       && (pending->l < 1
+        || pending->l < (prefix = 1 + pending->b[0] + tagSize) + egrhdr
+        || pending->l - (prefix + egrhdr) > 256 * maxShard)) {
+        v->free(pending);
+        pending = 0;
+      }
+      if (pending) {
+        p[0].v = 0;
+        p[0].o = chanOpSht;
+        pendingFresh = 1;
+      }
+    }
+
+    /* At most one datagram a pass, so the pace is read again at each
+     * wake.  The pack: the head shard, then every shard due now to the
+     * same address from a slot not yet in it, while there is room for
+     * the gate.  The wait after it is the SUM of the packed shards'
+     * delays. */
+    if (shdCnt) {
+      struct timespec packD;
+      unsigned long si;
+      unsigned int frg;
+      unsigned int pos;
+      unsigned int wp;
+      unsigned int ei;
+
+      clock_gettime(CLOCK_MONOTONIC, &now);
+      if (TSAFTER(target, now))
+        goto take;
+      ei = shd[0].ent;
+      wp = 1 + tab[ei].work[0];
+      memcpy(pack, tab[ei].work, wp);
+      memset(seen, 0, tableSize);
+      memcpy(pack + wp, tab[ei].work + (unsigned long)shd[0].shard * tab[ei].stride + wp, tab[ei].stride - wp);
+      pos = tab[ei].stride;
+      seen[ei] = 1;
+      packD = tab[ei].delay;
+      frg = 1;
+      ++tab[ei].sent;
+      if (--shdCnt)
+        memmove(shd, shd + 1, shdCnt * sizeof (*shd));
+      for (si = 0; si < shdCnt && !TSAFTER(shd[si].ts, now);) {
+        unsigned int ej;
+        unsigned int wj;
+        unsigned int fl;
+
+        ej = shd[si].ent;
+        wj = 1 + tab[ej].work[0];
+        fl = tab[ej].stride - wj;
+        if (wj == wp
+         && !memcmp(tab[ej].work, pack, wp)
+         && !seen[ej]
+         && pos + fl + ctx->dtgHashSize <= wp + ctx->dgramMax) {
+          memcpy(pack + pos, tab[ej].work + (unsigned long)shd[si].shard * tab[ej].stride + wj, fl);
+          pos += fl;
+          seen[ej] = 1;
+          packD.tv_sec += tab[ej].delay.tv_sec;
+          if ((packD.tv_nsec += tab[ej].delay.tv_nsec) >= nsps) {
+            ++packD.tv_sec;
+            packD.tv_nsec -= nsps;
+          }
+          ++frg;
+          ++tab[ej].sent;
+          if (si < --shdCnt)
+            memmove(shd + si, shd + si + 1, (shdCnt - si) * sizeof (*shd));
+        } else
+          ++si;
+      }
+      if (ctx->dtgHashSize)
+        ctx->dtgHashSign(ctx->dtgHashCtx, pack, pack + pos, pack + wp, pos - wp);
+      pos += ctx->dtgHashSize;
+      if (!v->out(v->outCtx, pack, pos))
+        goto exit;
+      clock_gettime(CLOCK_MONOTONIC, &lastSent);
+      lastPackD = packD;
+      hasSent = 1;
+      c.frg += frg;
+      for (ti = 0; ti < tableSize; ++ti)
+        if (seen[ti] && tab[ti].work && tab[ti].sent >= tab[ti].km) {
+          ++c.msg;
+          v->free(tab[ti].work);
+          tab[ti].work = 0;
+        }
+      pthread_mutex_lock(&Mu);
+      *priv = c;
+      pthread_mutex_unlock(&Mu);
+    }
+
+    /* the blob held: its address and tag still in the table is that
+     * message, still going, so it waits for its slot to free, as it
+     * does for a free slot on a full table */
+take:
+    if (pending) {
+      struct timespec delay;
+      struct timespec ts;
+      unsigned char vlq[2];
+      unsigned char *work;
+      unsigned long delayUs;
+      unsigned int prefix;
+      unsigned int payLen;
+      unsigned int slot;
+      unsigned int k;
+      unsigned int m;
+      unsigned int km;
+      unsigned int sz;
+      unsigned int pad;
+      unsigned int vlqLen;
+      unsigned int gap;
+      unsigned int stride;
+      unsigned int i;
+
+      prefix = 1 + pending->b[0] + tagSize;
+      for (slot = tableSize, ti = 0; ti < tableSize; ++ti)
+        if (!tab[ti].work) {
+          if (slot == tableSize)
+            slot = ti;
+        } else if (tab[ti].work[0] == pending->b[0]
+                && !memcmp(tab[ti].work, pending->b, prefix))
+          break;
+      if (ti < tableSize || slot == tableSize) {
+        if (pendingFresh) {
+          pendingFresh = 0;
+          if (ti < tableSize)
+            ++c.again;
+          else
+            ++c.full;
+          pthread_mutex_lock(&Mu);
+          *priv = c;
+          pthread_mutex_unlock(&Mu);
+        }
+        continue;
+      }
+      pendingFresh = 0;
+      m = pending->b[prefix];
+      delayUs = (unsigned long)pending->b[prefix + 1] << 24
+              | (unsigned long)pending->b[prefix + 2] << 16
+              | (unsigned long)pending->b[prefix + 3] << 8
+              | pending->b[prefix + 4];
+      delay.tv_sec = delayUs / usps;
+      delay.tv_nsec = delayUs % usps * 1000;
+      payLen = pending->l - (prefix + egrhdr);
+      k = payLen ? (payLen + maxShard - 1) / maxShard : 1;
+      if ((km = k + m) > 256) {
+        m = 256 - k;
+        km = 256;
+      }
+      /* the message's own shard size, tighter than maxShard */
+      sz = payLen ? (payLen + k - 1) / k : 0;
+      pad = k * sz - payLen;
+      if (sz < 128) {
+        vlq[0] = sz;
+        vlqLen = 1;
+      } else {
+        vlq[0] = 0x80 | ((sz - 1) >> 7);
+        vlq[1] = (sz - 1) & 0x7f;
+        vlqLen = 2;
+      }
+      gap = prefix + 4 + vlqLen;
+      stride = gap + sz;
+      if (shdCnt + km > shdCap) {
+        struct egrShd *t;
+
+        if (!(t = v->realloc(shd, (shdCnt + km) * sizeof (*shd))))
+          goto refused;
+        shd = t;
+        shdCap = shdCnt + km;
+      }
+      if (!(work = v->realloc(0, (unsigned long)km * stride)))
+        goto refused;
+      memcpy(work, pending->b, prefix);
+      work[prefix] = k - 1;
+      work[prefix + 1] = m;
+      work[prefix + 2] = 0;
+      work[prefix + 3] = pad;
+      memcpy(work + prefix + 4, vlq, vlqLen);
+      for (i = 0; i < km; ++i) {
+        unsigned char *s;
+
+        s = work + (unsigned long)i * stride;
+        if (i)
+          memcpy(s, work, gap);
+        s[prefix + 2] = i;
+        if (i < k) {
+          unsigned int off;
+          unsigned int len;
+
+          off = i * sz;
+          if ((len = payLen - off) > sz)
+            len = sz;
+          if (len)
+            memcpy(s + gap, pending->b + prefix + egrhdr + off, len);
+          if (len < sz)
+            memset(s + gap + len, 0, sz - len);
+          dp[i] = s + gap;
+        } else
+          pp[i - k] = s + gap;
+      }
+      if (m && sz && rsecEncode(dp, pp, sz, k, m)) {
+        v->free(work);
+        goto refused;
+      }
+      tab[slot].work = work;
+      tab[slot].delay = delay;
+      tab[slot].stride = stride;
+      tab[slot].km = km;
+      tab[slot].sent = 0;
+      /* shard i due at now + (i + 1) x delay, after any already due then */
+      clock_gettime(CLOCK_MONOTONIC, &ts);
+      for (i = 0; i < km; ++i) {
+        unsigned long lo;
+        unsigned long hi;
+
+        ts.tv_sec += delay.tv_sec;
+        if ((ts.tv_nsec += delay.tv_nsec) >= nsps) {
+          ++ts.tv_sec;
+          ts.tv_nsec -= nsps;
+        }
+        lo = 0;
+        hi = shdCnt;
+        while (lo < hi) {
+          unsigned long mid;
+
+          mid = lo + (hi - lo) / 2;
+          if (TSAFTER(shd[mid].ts, ts))
+            hi = mid;
+          else
+            lo = mid + 1;
+        }
+        if (lo < shdCnt)
+          memmove(shd + lo + 1, shd + lo, (shdCnt - lo) * sizeof (*shd));
+        shd[lo].ts = ts;
+        shd[lo].ent = slot;
+        shd[lo].shard = i;
+        ++shdCnt;
+      }
+refused:
+      v->free(pending);
+      pending = 0;
+      p[0].v = (void **)&pending;
+      p[0].o = chanOpGet;
     }
   }
 
 exit:
-  v->free(pending);
-  for (ti = 0; ti < tableSize; ++ti) {
-    if (table[ti].work)
-      v->free(table[ti].work);
-  }
-  v->free(shards);
-  v->free(frgOff);
-  v->free(packSeen);
-  v->free(packBuf);
-  v->free(table);
-  pthread_cleanup_pop(1); /* egrFinPriv */
+  pthread_cleanup_pop(1); /* egrFin(&h) */
   pthread_cleanup_pop(1); /* v->fin(v) */
-  return (0);
-
-error:
-  if (priv) {
-    ctx->opaque = 0;
-    pthread_mutex_destroy(&priv->m);
-  }
-  v->free(priv);
-  v->free(table);
-  v->free(packBuf);
-  v->free(packSeen);
-  v->free(frgOff);
-  v->fin(v);
   return (0);
 }
 
-struct igrEntry {
+/*
+ * Ingress.  A reassembly: blob is the message being assembled, data
+ * shards in place behind its [addrlen][addr][tag][rm][um] prefix, and 0
+ * once it is delivered; the parity shards and the tag ride in mem.
+ */
+struct igrEnt {
   chanBlb_t *blob;
-  unsigned char *parity;   /* m * shardSize bytes */
-  unsigned char *tag;      /* tagSize bytes, points into allocation tail */
+  unsigned char *parity;   /* m x shardSize, in mem */
+  unsigned char *tag;      /* tagSize, in mem after the parity */
   unsigned int k;
   unsigned int m;
   unsigned int shardSize;
   unsigned int padding;
-  unsigned int received;
+  unsigned int received;   /* distinct fragments of its train */
   unsigned int age;
-  unsigned int prefixSize; /* 1 + addrlen + tagSize + igrhdr (includes rm + um) */
+  unsigned int prefix;     /* 1 + addrlen + tagSize + 2 */
   unsigned char present[256];
+  unsigned char mem[1];
 };
 
-/*
- * Transport buffer (packed), as delivered by v->inp / chanBlbIgrBlb:
- *   [addrlen(1)][addr][frag1][frag2]...[fragN][dtgHmac(dtgHmacSize)][dtgHash(dtgHashSize)]
- * The [addrlen][addr] prefix is re-derived from recvfrom() by the
- * transport; it is NOT on the wire and NOT under any MAC.  The dtgHash
- * (GATE) covers [frag1]..[fragN][dtgHmac] and is verified first; the
- * dtgHmac (AUTH) covers [frag1]..[fragN].  Each fragment:
- *   [tag(tagSize)][k-1(1)][m(1)][si(1)][pad(1)][shard_len_vlq(1-2)][shard_data(shard_len)][frgHmac(frgHmacSize)]
- * See chanBlbChnRsec.h for the k-1/m/si/pad and VLQ field encodings.
- */
-/*
- * Bump one counter under the private mutex.  Used to keep the
- * snapshot coherent without holding the mutex across blocking
- * chanOne calls.
- */
-#define IGR_BUMP(c) do {                  \
-  pthread_mutex_lock(&priv->m);           \
-  ++(c);                                  \
-  pthread_mutex_unlock(&priv->m);         \
-} while (0)
+/* What the ingress holds, for its cleanup handler, as egrHold */
+struct igrHold {
+  struct chanBlbIgrCtx *v;
+  struct igrEnt ***tab;
+  unsigned char **buf;
+  chanBlb_t **dlv;         /* a blob being put, else 0 */
+  unsigned int *used;
+};
+
+static void
+igrFin(
+  void *a
+){
+  struct igrHold *h;
+  struct chanBlbChnRsecIgrCtx *ctx;
+  void *p;
+  unsigned int i;
+
+  h = a;
+  ctx = h->v->frmCtx;
+  pthread_mutex_lock(&Mu);
+  p = ctx->opaque;
+  ctx->opaque = 0;
+  pthread_mutex_unlock(&Mu);
+  h->v->free(p);
+  h->v->free(*h->dlv);
+  for (i = 0; i < *h->used; ++i) {
+    h->v->free((*h->tab)[i]->blob);
+    h->v->free((*h->tab)[i]);
+  }
+  h->v->free(*h->buf);
+  h->v->free(*h->tab);
+}
 
 void *
 chanBlbChnRsecIgr(
   struct chanBlbIgrCtx *v
 ){
-  static unsigned int igrhdr = 2; /* [rm(1)][um(1)] after [addrlen][addr][tag] */
+  unsigned int held[256];  /* tagOwner: the entries by sender */
   struct chanBlbChnRsecIgrCtx *ctx;
-  struct igrPriv *priv;
-  struct igrEntry **table;
+  struct chanBlbChnRsecIgrCtrs *priv;
+  struct igrHold h;
+  struct igrEnt **tab;     /* sorted by tag, used of them */
+  struct igrEnt *ent;
   unsigned char *buf;
-  unsigned char *hdr;
-  unsigned int *frgOff;
+  chanBlb_t *dlv;
   chanArr_t p[1];
+  struct chanBlbChnRsecIgrCtrs c;
   unsigned int tagSize;
   unsigned int tableSize;
-  unsigned int frgHmacSize;
-  unsigned int dtgHmacSize;
+  unsigned int tagOwner;
   unsigned int dtgHashSize;
+  unsigned int maxShard;   /* a fragment's geometry is egress's for its length */
   unsigned int bufSize;
-  unsigned int tableUsed;
-  unsigned int age;
-  unsigned int ti;
+  unsigned int used;
+  unsigned int age;        /* fragments parsed, halved with every entry's */
+  unsigned int i;
 
   ctx = v->frmCtx;
   tagSize = ctx->tagSize;
   tableSize = ctx->tableSize;
-  frgHmacSize = ctx->frgHmacSize;
-  dtgHmacSize = ctx->dtgHmacSize;
+  tagOwner = ctx->tagOwner;
   dtgHashSize = ctx->dtgHashSize;
-
-  priv = 0;
-  table = 0;
+  tab = 0;
   buf = 0;
-  hdr = 0;
-  frgOff = 0;
-
-  /* private state.  See chanBlbChnRsecEgr for the self lock+unlock
-   * rationale. */
-  if (!(priv = v->realloc(0, sizeof (*priv))))
-    goto error;
-  if (pthread_mutex_init(&priv->m, 0)) {
-    v->free(priv);
-    priv = 0;
-    goto error;
-  }
-  memset(&priv->ctrs, 0, sizeof (priv->ctrs));
-  pthread_mutex_lock(&priv->m);
-  pthread_mutex_unlock(&priv->m);
-  ctx->opaque = priv;
-
-  /* collection table (sorted by tag, compact) */
-  if (!(table = v->realloc(0,
-        tableSize * sizeof (struct igrEntry *))))
-    goto error;
-
-  /* receive buffer: full address range (addrlen up to 255) */
-  bufSize = 1 + 255 + ctx->dgramMax;
-  if (!(buf = v->realloc(0, bufSize)))
-    goto error;
-
-  /* hdr reconstruction buffer for the fragment AUTH callback */
-  if (!(hdr = v->realloc(0, (unsigned long)(1 + 255) + tagSize + 3)))
-    goto error;
-
-  /* packed-fragment tag offsets for the datagram AUTH callback.  A
-   * minimal fragment is >= 5 bytes (k-1, m, si, pad, 1-byte VLQ), so a
-   * datagram of dgramMax wire bytes holds at most dgramMax/5 + 1. */
-  if (!(frgOff = v->realloc(0,
-        ((unsigned long)ctx->dgramMax / 5 + 1) * sizeof (unsigned int))))
-    goto error;
-
+  dlv = 0;
+  used = 0;
+  h.v = v;
+  h.tab = &tab;
+  h.buf = &buf;
+  h.dlv = &dlv;
+  h.used = &used;
   pthread_cleanup_push(v->fin, v);
-  pthread_cleanup_push(igrFinPriv, v);
-  p[0].c = v->chan;
-  p[0].v = 0;
-  p[0].o = chanOpPut;
-  tableUsed = 0;
+  pthread_cleanup_push(igrFin, &h);
+  if (!tableSize || tagOwner > tagSize
+   || (dtgHashSize && !ctx->dtgHashVrfy)
+   || !(maxShard = chanBlbChnRsecShard(ctx->dgramMax, tagSize, dtgHashSize))
+   || !(priv = v->realloc(0, sizeof (*priv))))
+    goto done;
+  memset(priv, 0, sizeof (*priv));
+  pthread_mutex_lock(&Mu);
+  ctx->opaque = priv;
+  pthread_mutex_unlock(&Mu);
+  /* the full address range, and one byte past dgramMax, so a datagram
+   * the transport cut at the buffer is seen as longer */
+  bufSize = 1 + 255 + ctx->dgramMax + 1;
+  if (!(tab = v->realloc(0, tableSize * sizeof (*tab)))
+   || !(buf = v->realloc(0, bufSize)))
+    goto done;
+  memset(held, 0, sizeof (held));
+  memset(&c, 0, sizeof (c));
   age = 0;
+  p[0].c = v->chan;
+  p[0].v = (void **)&dlv;
+  p[0].o = chanOpPut;
 
   for (;;) {
     unsigned int n;
-    unsigned int addrlen;
     unsigned int wp;
     unsigned int pos;
+    unsigned int slot;
+    unsigned int lru;
+    unsigned int back;     /* after a delivery: 0 the next fragment; an
+                            * eviction's, 1 the mismatch, 2 the full table */
 
-    /* read one datagram */
-    n = v->blb ? chanBlbIgrBlb(v->free, &v->blb, buf, bufSize)
-               : v->inp(v->inpCtx, buf, bufSize);
-    if (!n)
+    pthread_mutex_lock(&Mu);
+    *priv = c;
+    pthread_mutex_unlock(&Mu);
+    if (!(n = v->blb ? chanBlbIgrBlb(v->free, &v->blb, buf, bufSize)
+                     : v->inp(v->inpCtx, buf, bufSize)))
       break;
-    addrlen = buf[0];
-    wp = 1 + addrlen;
-
-    /* need at least addr prefix + one minimal fragment + both datagram MACs */
-    if (n < wp + tagSize + 3 + 1 + 1 + frgHmacSize + dtgHmacSize + dtgHashSize)
+    wp = 1 + buf[0];
+    /* past the wire's size or short of one fragment: not of this wire */
+    if (n < wp
+     || n - wp > ctx->dgramMax
+     || n - wp < tagSize + 5 + dtgHashSize)
       continue;
 
-    /* validate datagram GATE at end (cheap keyed DoS gate, outermost) */
-    if (dtgHashSize > 0
-     && !ctx->dtgHashVrfy(ctx->dtgHashCtx, buf,
-                       buf + n - dtgHashSize, buf + wp, n - wp - dtgHashSize)) {
-      IGR_BUMP(priv->ctrs.hash);
-      continue;
-    }
-    n -= dtgHashSize; /* strip trailing GATE */
-
-    /* validate datagram AUTH (keyed, per-datagram) over all fragments.
-     * Pre-scan the VLQ framing to collect each fragment's tag offset
-     * (relative to the first fragment) so the callback can enforce
-     * sender uniformity, then verify the MAC.  Failure (bad MAC or the
-     * app rejecting a mixed-sender datagram) drops the whole datagram. */
-    if (dtgHmacSize > 0) {
-      unsigned int fend;
-      unsigned int sp;
-      unsigned int frgCnt;
-
-      fend = n - dtgHmacSize;
-      sp = wp;
-      frgCnt = 0;
-      while (sp + tagSize + 3 + 1 + 1 + frgHmacSize <= fend) {
-        unsigned int sk;
-        unsigned int ssz;
-        unsigned int svlq;
-        unsigned int vlqOff;
-        unsigned int send;
-
-        sk = buf[sp + tagSize] + 1;
-        if (sk + buf[sp + tagSize + 1] > 256)
-          break;
-        vlqOff = sp + tagSize + 4;
-        if (buf[vlqOff] & 0x80) {
-          if (vlqOff + 2 > fend)
-            break;
-          ssz = (buf[vlqOff] & 0x7f);
-          ssz = ((ssz << 7) | (buf[vlqOff + 1] & 0x7f)) + 1;
-          svlq = 2;
-        } else {
-          ssz = buf[vlqOff];
-          svlq = 1;
-        }
-        send = sp + tagSize + 4 + svlq + ssz + frgHmacSize;
-        if (send > fend)
-          break;
-        frgOff[frgCnt++] = sp - wp;
-        sp = send;
-      }
-      if (!ctx->dtgHmacVrfy(ctx->dtgHmacCtx, buf,
-                            buf + n - dtgHmacSize, buf + wp, fend - wp,
-                            frgOff, frgCnt)) {
-        IGR_BUMP(priv->ctrs.dhmac);
+    /* the GATE, outermost, before any other work */
+    if (dtgHashSize) {
+      if (!ctx->dtgHashVrfy(ctx->dtgHashCtx, buf, buf + n - dtgHashSize, buf + wp, n - wp - dtgHashSize)) {
+        ++c.hash;
         continue;
       }
-      n = fend; /* strip trailing AUTH */
+      n -= dtgHashSize;
     }
 
-    /* parse fragments within the datagram */
-    pos = wp;
-    while (pos + tagSize + 3 + 1 + 1 + frgHmacSize <= n) {
+    for (pos = wp; pos + tagSize + 5 <= n;) {
+      unsigned long ml;
       unsigned int k;
-      unsigned int mVal;
-      unsigned int shardIdx;
+      unsigned int m;
+      unsigned int si;
       unsigned int padding;
-      unsigned int fragShardSize;
-      unsigned int shardVlqLen;
-      unsigned int headerLen;
+      unsigned int sz;
+      unsigned int vlqLen;
+      unsigned int hl;
       unsigned int fragEnd;
-      struct igrEntry *ent;
-      unsigned int slot;
-      int decoded;
+      unsigned int vo;
+      unsigned int dataPresent;
       int found;
 
-      IGR_BUMP(priv->ctrs.frg);
-
-      /* parse fragment header */
+      /* the gate's key is the first fragment's sender: a fragment
+       * claiming another is a holder of that key speaking for someone
+       * else */
+      if (tagOwner && buf[pos + tagOwner - 1] != buf[wp + tagOwner - 1]) {
+        ++c.hash;
+        break;
+      }
+      ++c.frg;
       k = buf[pos + tagSize] + 1;
-      mVal = buf[pos + tagSize + 1];
-      shardIdx = buf[pos + tagSize + 2];
-
-      if (k + mVal > 256 || shardIdx >= k + mVal) {
-        break; /* malformed: stop parsing this datagram */
+      m = buf[pos + tagSize + 1];
+      si = buf[pos + tagSize + 2];
+      /* a fragment malformed or cut: the rest of its datagram with it */
+      if (k + m > 256 || si >= k + m) {
+        ++c.shape;
+        break;
       }
-
-      /* padding is a fixed byte (guaranteed present by the while guard) */
       padding = buf[pos + tagSize + 3];
-
-      /* decode shard_len VLQ */
-      {
-        unsigned int vlqOff;
-
-        vlqOff = pos + tagSize + 4;
-        if (vlqOff >= n)
+      vo = pos + tagSize + 4;
+      if (buf[vo] & 0x80) {
+        if (vo + 2 > n) {
+          ++c.shape;
           break;
-        if (buf[vlqOff] & 0x80) {
-          if (vlqOff + 2 > n)
-            break;
-          fragShardSize = (buf[vlqOff] & 0x7f);
-          fragShardSize = ((fragShardSize << 7) | (buf[vlqOff + 1] & 0x7f)) + 1;
-          shardVlqLen = 2;
-        } else {
-          fragShardSize = buf[vlqOff];
-          shardVlqLen = 1;
         }
+        sz = (((buf[vo] & 0x7f) << 7) | (buf[vo + 1] & 0x7f)) + 1;
+        vlqLen = 2;
+      } else {
+        sz = buf[vo];
+        vlqLen = 1;
       }
-
-      headerLen = tagSize + 4 + shardVlqLen;
-      fragEnd = pos + headerLen + fragShardSize + frgHmacSize;
-      if (fragEnd > n)
-        break; /* fragment extends past datagram */
-
-      /* validate padding against total data capacity */
-      if (padding > k * fragShardSize) {
+      hl = tagSize + 4 + vlqLen;
+      if ((fragEnd = pos + hl + sz) > n) {
+        ++c.shape;
+        break;
+      }
+      /* the geometry egress derives from a message's length and nothing
+       * else: what a decode and an entry cost is the message's, never a
+       * fragment's to choose.  With the padding under k, the shard is
+       * ceil(L / k) */
+      ml = (unsigned long)k * sz;
+      if (padding >= k || padding > ml
+       || ((ml -= padding) ? (ml + maxShard - 1) / maxShard : 1) != k
+       || (ctx->msgMax && ml > ctx->msgMax)) {
+        ++c.shape;
         pos = fragEnd;
         continue;
       }
-
-      /* reconstruct hdr: [addrlen][addr][tag][k-1][m][si] */
-      memcpy(hdr, buf, wp); /* addr prefix from datagram */
-      memcpy(hdr + wp, buf + pos, tagSize + 3); /* tag + k-1 + m + si */
-
-      /* validate fragment AUTH if enabled */
-      if (frgHmacSize > 0) {
-        if (!ctx->frgHmacVrfy(ctx->frgHmacCtx, hdr,
-                           buf + pos + headerLen + fragShardSize,
-                           buf + pos, headerLen + fragShardSize)) {
-          IGR_BUMP(priv->ctrs.hmac);
-          pos = fragEnd;
-          continue;
-        }
-      }
-
-      ++age;
-      /* halve all ages to prevent wraparound on 32-bit */
-      if (age >= (unsigned int)-1 / 2) {
-        for (ti = 0; ti < tableUsed; ++ti)
-          table[ti]->age >>= 1;
+      /* halved with every entry's before it can wrap */
+      if (++age >= ~0U / 2) {
+        for (i = 0; i < used; ++i)
+          tab[i]->age >>= 1;
         age >>= 1;
       }
-
-      /* binary search for tag in sorted table */
       {
         unsigned int lo;
         unsigned int hi;
-        unsigned int mid;
-        int c;
 
         lo = 0;
-        hi = tableUsed;
+        hi = used;
         found = 0;
         while (lo < hi) {
+          unsigned int mid;
+          int r;
+
           mid = lo + (hi - lo) / 2;
-          c = memcmp(buf + pos, table[mid]->tag, tagSize);
-          if (c < 0)
+          if ((r = memcmp(buf + pos, tab[mid]->tag, tagSize)) < 0)
             hi = mid;
-          else if (c > 0)
+          else if (r > 0)
             lo = mid + 1;
           else {
             found = 1;
@@ -1158,353 +797,216 @@ chanBlbChnRsecIgr(
         slot = lo;
       }
 
-      /* handle found entry with parameter mismatch.  Padding is a
-       * parameter too: it sets the delivered length, and two same-tag
-       * payloads whose lengths differ by fewer than k bytes agree on
-       * k, m and shard size while disagreeing on it -- stored by index
-       * into one entry they would reassemble to bytes neither sent. */
-      if (found) {
-        if (table[slot]->k != k || table[slot]->m != mVal
-         || table[slot]->shardSize != fragShardSize
-         || table[slot]->padding != padding) {
-          /* mismatch: evict -- deliver loss notification */
-          if (table[slot]->blob) {
-            chanBlb_t *lb;
-
-            IGR_BUMP(priv->ctrs.evict);
-            lb = table[slot]->blob;
-            lb->l = table[slot]->prefixSize;
-            lb->b[table[slot]->prefixSize - igrhdr] = 0;
-            lb->b[table[slot]->prefixSize - igrhdr + 1] =
-              table[slot]->received;
-            p[0].v = (void **)&lb;
-            if (chanOne(0, sizeof (p) / sizeof (p[0]), p) != 1
-             || p[0].s != chanOsPut)
-              v->free(lb);
-          }
-          v->free(table[slot]);
-          --tableUsed;
-          if (slot < tableUsed)
-            memmove(table + slot, table + slot + 1,
-              (tableUsed - slot) * sizeof (*table));
-          found = 0;
-          /* slot still holds the correct insert position */
-        }
-      }
-
-      /* Completed-entry dedup horizon, derived from the entry's OWN shard
-       * train.  A delivered entry may still legitimately receive the rest
-       * of the transmission that produced it: it completed at k received,
-       * so (k + m) - k more fragments of that train can still be in
-       * flight.  `received` keeps counting them (the late path below), and
-       * once it reaches k + m the train is fully accounted for -- no
-       * straggler of that transmission can remain, so the next same-tag
-       * fragment can only be a NEW transmission (a retry-based sender
-       * re-sends under the same tag).  Drop the entry silently (no data
-       * loss; same class as the LRU eviction of a completed entry) and let
-       * that fragment start a fresh reassembly, so the re-send is
-       * DELIVERED AGAIN rather than eaten forever.
-       *
-       * The bound must be the entry's own traffic, never AMBIENT traffic:
-       * a horizon counted in arrivals-at-this-ingress goes unbounded
-       * exactly when the sender is idle, because then the re-sends are
-       * both the thing being eaten AND the only thing advancing the clock
-       * -- an idle retry was eaten for (k + m) * tableSize consecutive
-       * re-sends before one got through.  A k = 1, m = 0 message (the
-       * common small act) now expires on the FIRST re-send, which is
-       * exactly right: a one-shard message has no possible straggler. */
-      if (found && !table[slot]->blob
-       && table[slot]->received
-        >= (unsigned int)table[slot]->k + table[slot]->m) {
-        v->free(table[slot]);
-        --tableUsed;
-        if (slot < tableUsed)
-          memmove(table + slot, table + slot + 1,
-            (tableUsed - slot) * sizeof (*table));
+      /* a mismatch evicts: padding counts, since it sets the delivered
+       * length, and two same-tag payloads fewer than k bytes apart agree
+       * on k, m and shard size */
+      if (found
+       && (tab[slot]->k != k || tab[slot]->m != m
+        || tab[slot]->shardSize != sz || tab[slot]->padding != padding)) {
+        i = slot;
         found = 0;
-        /* slot still holds the correct insert position */
+        back = 1;
+        goto evict;
+      }
+mismatched:
+
+      /* a train delivered whose k + m fragments have come: the next
+       * fragment under its tag can only be a re-send's, a new train */
+      if (found && !tab[slot]->blob
+       && tab[slot]->received >= tab[slot]->k + tab[slot]->m) {
+        if (tagOwner)
+          --held[tab[slot]->tag[tagOwner - 1]];
+        v->free(tab[slot]);
+        if (slot < --used)
+          memmove(tab + slot, tab + slot + 1, (used - slot) * sizeof (*tab));
+        found = 0;
       }
 
-      /* if not found, create entry and insert at sorted position */
-      if (!found) {
-        unsigned int insertPos;
+      /* a new tag on a full table evicts an entry whose train's fragments
+       * have all come first, which holds nothing, then the least recently
+       * fed, of the sender holding the most where the tag names its
+       * sender: one delivered first, which costs nothing, then one in
+       * flight, a loss */
+      if (!found && used >= tableSize) {
+        for (lru = used, i = 0; i < used; ++i)
+          if (!tab[i]->blob && tab[i]->received >= tab[i]->k + tab[i]->m
+           && (lru == used || tab[i]->age < tab[lru]->age))
+            lru = i;
+        if (lru == used) {
+          unsigned int own;
 
-        insertPos = slot;
-
-        /* evict LRU if table full */
-        if (tableUsed >= tableSize) {
-          unsigned int lruIdx;
-          unsigned int minAge;
-
-          lruIdx = 0;
-          minAge = table[0]->age;
-          for (ti = 1; ti < tableUsed; ++ti) {
-            if (table[ti]->age < minAge) {
-              minAge = table[ti]->age;
-              lruIdx = ti;
-            }
+          own = 0;
+          if (tagOwner) {
+            own = buf[pos + tagOwner - 1];
+            for (i = 0; i < 256; ++i)
+              if (held[i] > held[own])
+                own = i;
           }
-          /* LRU evict -- deliver loss notification */
-          if (table[lruIdx]->blob) {
-            chanBlb_t *lb;
-
-            IGR_BUMP(priv->ctrs.evict);
-            lb = table[lruIdx]->blob;
-            lb->l = table[lruIdx]->prefixSize;
-            lb->b[table[lruIdx]->prefixSize - igrhdr] = 0;
-            lb->b[table[lruIdx]->prefixSize - igrhdr + 1] =
-              table[lruIdx]->received;
-            p[0].v = (void **)&lb;
-            if (chanOne(0, sizeof (p) / sizeof (p[0]), p) != 1
-             || p[0].s != chanOsPut)
-              v->free(lb);
-          }
-          v->free(table[lruIdx]);
-          --tableUsed;
-          if (lruIdx < tableUsed)
-            memmove(table + lruIdx, table + lruIdx + 1,
-              (tableUsed - lruIdx) * sizeof (*table));
-          if (lruIdx < insertPos)
-            --insertPos;
+          for (i = 0; i < used; ++i)
+            if ((!tagOwner || tab[i]->tag[tagOwner - 1] == own) && !tab[i]->blob
+             && (lru == used || tab[i]->age < tab[lru]->age))
+              lru = i;
+          if (lru == used)
+            for (i = 0; i < used; ++i)
+              if ((!tagOwner || tab[i]->tag[tagOwner - 1] == own)
+               && (lru == used || tab[i]->age < tab[lru]->age))
+                lru = i;
         }
+        if ((i = lru) < slot)
+          --slot;
+        back = 2;
+        goto evict;
+      }
+evicted:
 
-        /* create new entry: struct + parity storage + tag copy */
-        ent = v->realloc(0,
-          sizeof (struct igrEntry)
-          + (unsigned long)mVal * fragShardSize + tagSize);
-        if (!ent)
+      if (!found) {
+        if (!(ent = v->realloc(0, sizeof (*ent) + (unsigned long)m * sz + tagSize)))
           break;
-        ent->blob = 0;
-        ent->parity = (unsigned char *)ent + sizeof (struct igrEntry);
-        ent->tag = ent->parity + (unsigned long)mVal * fragShardSize;
+        ent->parity = ent->mem;
+        ent->tag = ent->mem + (unsigned long)m * sz;
         ent->k = k;
-        ent->m = mVal;
-        ent->shardSize = fragShardSize;
+        ent->m = m;
+        ent->shardSize = sz;
         ent->padding = padding;
         ent->received = 0;
         ent->age = age;
-        ent->prefixSize = 1 + addrlen + tagSize + igrhdr;
+        ent->prefix = wp + tagSize + 2;
         memcpy(ent->tag, buf + pos, tagSize);
         memset(ent->present, 0, sizeof (ent->present));
-
-        /* allocate output blob */
-        ent->blob = v->realloc(0,
-          chanBlb_tSize(ent->prefixSize + k * fragShardSize));
-        if (!ent->blob) {
+        if (!(ent->blob = v->realloc(0, chanBlb_tSize(ent->prefix + k * sz)))) {
           v->free(ent);
           break;
         }
-        /* write blob prefix: [addrlen][addr][tag][rm][um] */
-        memcpy(ent->blob->b, buf, 1 + addrlen);
-        memcpy(ent->blob->b + 1 + addrlen, buf + pos, tagSize);
-        ent->blob->b[1 + addrlen + tagSize] = 0;
-        ent->blob->b[1 + addrlen + tagSize + 1] = 0;
-
-        /* insert at sorted position */
-        if (insertPos < tableUsed)
-          memmove(table + insertPos + 1, table + insertPos,
-            (tableUsed - insertPos) * sizeof (*table));
-        table[insertPos] = ent;
-        ++tableUsed;
-        slot = insertPos;
+        memcpy(ent->blob->b, buf, wp);
+        memcpy(ent->blob->b + wp, buf + pos, tagSize);
+        ent->blob->b[wp + tagSize] = 0;
+        ent->blob->b[wp + tagSize + 1] = 0;
+        if (slot < used)
+          memmove(tab + slot + 1, tab + slot, (used - slot) * sizeof (*tab));
+        tab[slot] = ent;
+        ++used;
+        if (tagOwner)
+          ++held[ent->tag[tagOwner - 1]];
       }
+      ent = tab[slot];
 
-      ent = table[slot];
-
-      /* Already delivered: eat this straggler, and count it against the
-       * transmission's shard train -- when `received` reaches k + m the
-       * train is spent and the expiry above retires the entry, so the
-       * next same-tag fragment (which can only be a re-send) reassembles
-       * afresh. */
+      /* delivered: a straggler, counted against the train, a copy
+       * toward nothing */
       if (!ent->blob) {
-        IGR_BUMP(priv->ctrs.late);
-        ++ent->received;
+        ++c.late;
+        if (!ent->present[si]) {
+          ent->present[si] = 1;
+          ++ent->received;
+        }
         pos = fragEnd;
         continue;
       }
-
-      /* ignore duplicate shard */
-      if (ent->present[shardIdx]) {
-        IGR_BUMP(priv->ctrs.dup);
+      if (ent->present[si]) {
+        ++c.dup;
         pos = fragEnd;
         continue;
       }
-
-      /* store shard */
-      if (shardIdx < k) {
-        memcpy(ent->blob->b + ent->prefixSize
-          + (unsigned long)shardIdx * ent->shardSize,
-          buf + pos + headerLen, fragShardSize);
-      } else {
-        memcpy(ent->parity
-          + (unsigned long)(shardIdx - k) * ent->shardSize,
-          buf + pos + headerLen, fragShardSize);
-      }
-      ent->present[shardIdx] = 1;
-      ent->received++;
+      if (si < k)
+        memcpy(ent->blob->b + ent->prefix + (unsigned long)si * sz, buf + pos + hl, sz);
+      else
+        memcpy(ent->parity + (unsigned long)(si - k) * sz, buf + pos + hl, sz);
+      ent->present[si] = 1;
+      ++ent->received;
       ent->age = age;
-
       pos = fragEnd;
-
-      /* not enough shards yet */
       if (ent->received < k)
         continue;
 
-      decoded = 0;
+      for (dataPresent = 0, i = 0; i < k; ++i)
+        if (ent->present[i])
+          ++dataPresent;
+      if (dataPresent < k) {
+        const unsigned char *rp[256];
+        unsigned char *op[256];
+        unsigned char idx[256];
+        unsigned char *ws;
+        unsigned char *cp;
+        unsigned int ri;
 
-      /* reassemble: check if all data shards present */
-      {
-        unsigned int dataPresent;
-
-        dataPresent = 0;
-        for (ti = 0; ti < k; ++ti) {
-          if (ent->present[ti])
-            ++dataPresent;
+        if (!(ws = v->realloc(0, RS_WORK_SIZE(k) + (unsigned long)dataPresent * sz)))
+          goto drop;
+        /* the data shards present are copied out: the output is the blob */
+        cp = ws + RS_WORK_SIZE(k);
+        for (ri = 0, i = 0; i < k; ++i)
+          if (ent->present[i]) {
+            memcpy(cp + (unsigned long)ri * sz, ent->blob->b + ent->prefix + (unsigned long)i * sz, sz);
+            rp[ri] = cp + (unsigned long)ri * sz;
+            idx[ri++] = i;
+          }
+        for (i = k; i < k + m && ri < k; ++i)
+          if (ent->present[i]) {
+            rp[ri] = ent->parity + (unsigned long)(i - k) * sz;
+            idx[ri++] = i;
+          }
+        for (i = 0; i < k; ++i)
+          op[i] = ent->blob->b + ent->prefix + (unsigned long)i * sz;
+        if (rsecDecode(rp, idx, op, sz, k, m, ws)) {
+          v->free(ws);
+          goto drop;
         }
-
-        if (dataPresent == k) {
-          /* all data shards present, payload already in place */
-          ent->blob->l = ent->prefixSize + k * ent->shardSize - ent->padding;
-        } else {
-          /* need RSEC decode */
-          unsigned long wsSize;
-          unsigned char *workspace;
-          const unsigned char **recvPtrs;
-          unsigned char **outPtrs;
-          unsigned char *indices;
-          unsigned char *workArea;
-          unsigned char *shardCopies;
-          unsigned int ri;
-          unsigned int ci;
-
-          wsSize = k * sizeof (const unsigned char *)
-                 + k * sizeof (unsigned char *)
-                 + k + RS_WORK_SIZE(k)
-                 + (unsigned long)dataPresent * ent->shardSize;
-          workspace = v->realloc(0, wsSize);
-          if (!workspace) {
-            v->free(ent->blob);
-            v->free(ent);
-            --tableUsed;
-            if (slot < tableUsed)
-              memmove(table + slot, table + slot + 1,
-                (tableUsed - slot) * sizeof (*table));
-            continue;
-          }
-          recvPtrs = (const unsigned char **)workspace;
-          outPtrs = (unsigned char **)((unsigned char *)recvPtrs
-            + k * sizeof (const unsigned char *));
-          indices = (unsigned char *)outPtrs
-            + k * sizeof (unsigned char *);
-          workArea = indices + k;
-          shardCopies = workArea + RS_WORK_SIZE(k);
-
-          /* collect any k received shards */
-          /* copy present data shards to avoid aliasing with outPtrs */
-          ri = 0;
-          ci = 0;
-          for (ti = 0; ti < k && ri < k; ++ti) {
-            if (ent->present[ti]) {
-              memcpy(shardCopies + (unsigned long)ci * ent->shardSize,
-                ent->blob->b + ent->prefixSize
-                  + (unsigned long)ti * ent->shardSize,
-                ent->shardSize);
-              recvPtrs[ri] = shardCopies
-                + (unsigned long)ci * ent->shardSize;
-              indices[ri] = ti;
-              ++ri;
-              ++ci;
-            }
-          }
-          for (ti = k; ti < k + ent->m && ri < k; ++ti) {
-            if (ent->present[ti]) {
-              recvPtrs[ri] = ent->parity
-                + (unsigned long)(ti - k) * ent->shardSize;
-              indices[ri] = ti;
-              ++ri;
-            }
-          }
-
-          /* output pointers: decoded data lands directly in blob */
-          for (ti = 0; ti < k; ++ti)
-            outPtrs[ti] = ent->blob->b + ent->prefixSize
-              + (unsigned long)ti * ent->shardSize;
-
-          if (rsecDecode(recvPtrs, indices, outPtrs,
-                         ent->shardSize, k, ent->m, workArea)) {
-            v->free(workspace);
-            v->free(ent->blob);
-            v->free(ent);
-            --tableUsed;
-            if (slot < tableUsed)
-              memmove(table + slot, table + slot + 1,
-                (tableUsed - slot) * sizeof (*table));
-            continue;
-          }
-          v->free(workspace);
-          ent->blob->l = ent->prefixSize + k * ent->shardSize - ent->padding;
-          decoded = 1;
-        }
+        v->free(ws);
+        ++c.dcd;
       }
-
-      /* rm = sender's m, um = parity shards used (missing data shards) */
-      {
-        unsigned int dp;
-
-        dp = 0;
-        for (ti = 0; ti < k; ++ti)
-          dp += ent->present[ti] ? 1 : 0;
-        ent->blob->b[ent->prefixSize - igrhdr] = ent->m;
-        ent->blob->b[ent->prefixSize - igrhdr + 1] = (ent->k - dp);
-      }
-
-      /* put blob on channel */
-      p[0].v = (void **)&ent->blob;
-      if (chanOne(0, sizeof (p) / sizeof (p[0]), p) != 1
-       || p[0].s != chanOsPut) {
-        v->free(ent->blob);
-        v->free(ent);
-        --tableUsed;
-        if (slot < tableUsed)
-          memmove(table + slot, table + slot + 1,
-            (tableUsed - slot) * sizeof (*table));
-        goto done;
-      }
-      /* blob ownership transferred; keep entry for de-dup of late fragments */
-      pthread_mutex_lock(&priv->m);
-      ++priv->ctrs.msg;
-      if (decoded)
-        ++priv->ctrs.dcd;
-      pthread_mutex_unlock(&priv->m);
+      ent->blob->b[ent->prefix - 2] = m;
+      ent->blob->b[ent->prefix - 1] = k - dataPresent;
+      ent->blob->l = ent->prefix + k * sz - padding;
+      ++c.msg;
+      dlv = ent->blob;
       ent->blob = 0;
+      back = 0;
+      goto deliver;
+
+      /* no memory to decode: a loss, as an eviction */
+drop:
+      i = slot;
+      back = 0;
+
+      /* the entry at i evicted, a loss when not yet delivered; slot is
+       * the new entry's place once it is gone */
+evict:
+      ent = tab[i];
+      if (i < --used)
+        memmove(tab + i, tab + i + 1, (used - i) * sizeof (*tab));
+      if (tagOwner)
+        --held[ent->tag[tagOwner - 1]];
+      dlv = ent->blob;
+      if (dlv) {
+        ++c.evict;
+        if (back == 2)
+          ++c.evictFull;
+        dlv->b[ent->prefix - 2] = 0;
+        dlv->b[ent->prefix - 1] = ent->received;
+        dlv->l = ent->prefix;
+      }
+      v->free(ent);
+      if (!dlv)
+        goto delivered;
+
+      /* dlv to the channel, then back: an eviction goes on to the
+       * fragment that made it, a delivery to the next */
+deliver:
+      pthread_mutex_lock(&Mu);
+      *priv = c;
+      pthread_mutex_unlock(&Mu);
+      if (chanOne(0, sizeof (p) / sizeof (p[0]), p) != 1
+       || p[0].s != chanOsPut)
+        goto done;
+      dlv = 0;
+delivered:
+      if (back == 1)
+        goto mismatched;
+      if (back == 2)
+        goto evicted;
     }
   }
 
 done:
-  /* free remaining entries and their blobs */
-  for (ti = 0; ti < tableUsed; ++ti) {
-    if (table[ti]->blob)
-      v->free(table[ti]->blob);
-    v->free(table[ti]);
-  }
-  v->free(frgOff);
-  v->free(hdr);
-  v->free(buf);
-  v->free(table);
-  pthread_cleanup_pop(1); /* igrFinPriv */
+  pthread_cleanup_pop(1); /* igrFin(&h) */
   pthread_cleanup_pop(1); /* v->fin(v) */
-  return (0);
-
-error:
-  if (priv) {
-    ctx->opaque = 0;
-    pthread_mutex_destroy(&priv->m);
-  }
-  v->free(priv);
-  v->free(table);
-  v->free(buf);
-  v->free(hdr);
-  v->free(frgOff);
-  v->fin(v);
   return (0);
 }

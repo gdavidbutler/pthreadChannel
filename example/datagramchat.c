@@ -35,6 +35,7 @@
 #include "chanBlb.h"
 #include "chanBlbTrnFdDatagram.h"
 #ifdef RSEC
+#include <time.h>
 #include "chanBlbChnRsec.h"
 #include "rmd128.h"
 #endif
@@ -49,7 +50,11 @@ static int Npeers;
 static chan_t *OutChan;
 static chan_t *InChan;
 #ifdef RSEC
-static unsigned int TagSize = 2;
+/* a tag is [this run's 4 bytes, of its start time and pid][a line
+ * counter(2)]: it names the sender, so two peers' lines do not share
+ * one at a third */
+static unsigned int TagSize = 6;
+static unsigned char Sender[4];
 static unsigned int DgramMax = 508;
 static unsigned int TableSize = 64;
 static unsigned int ParityShards = 1;
@@ -57,31 +62,32 @@ static unsigned long DelayUs = 100;
 static unsigned short TagCounter;
 static char *HmacKey;
 
-/* rmd128hmac HMAC callbacks for chanBlbChnRsec */
+/* -k: an RMD128-HMAC a datagram as chanBlbChnRsec's GATE, every peer
+ * holding the one key */
 struct hmacKeyCtx {
   const unsigned char *key;
   unsigned int keyLen;
 };
 
 static void
-hmacSignCb(
+gateSignCb(
   void *ctx
- ,const unsigned char *hdr
+ ,const unsigned char *adr
  ,unsigned char *dst
  ,const unsigned char *src
  ,unsigned int len
 ){
   struct hmacKeyCtx *k;
 
-  (void)hdr;
-  k = (struct hmacKeyCtx *)ctx;
+  (void)adr;
+  k = ctx;
   rmd128hmac(k->key, k->keyLen, src, len, dst);
 }
 
 static int
-hmacVrfyCb(
+gateVrfyCb(
   void *ctx
- ,const unsigned char *hdr
+ ,const unsigned char *adr
  ,const unsigned char *mac
  ,const unsigned char *src
  ,unsigned int len
@@ -91,124 +97,27 @@ hmacVrfyCb(
   unsigned char diff;
   unsigned int i;
 
-  (void)hdr;
-  k = (struct hmacKeyCtx *)ctx;
+  (void)adr;
+  k = ctx;
   rmd128hmac(k->key, k->keyLen, src, len, computed);
-  diff = 0;
-  for (i = 0; i < RMD128_SZ; ++i)
+  for (diff = 0, i = 0; i < sizeof (computed) / sizeof (computed[0]); ++i)
     diff |= mac[i] ^ computed[i];
-  return (diff == 0);
-}
-
-/*
- * Datagram-level HMAC callbacks for chanBlbChnRsec.  Same rmd128hmac, but
- * keyed ONCE over the whole datagram (every packed fragment) instead of per
- * fragment.  The verify is additionally handed each packed fragment's tag
- * offset (frgOff[0..frgCnt-1]); a quorum protocol would walk them to enforce
- * sender uniformity, but a chat app has no third-party identity to forge, so
- * this just covers the bytes and ignores the structure.
- */
-static void
-dtgHmacSignCb(
-  void *ctx
- ,const unsigned char *adr
- ,unsigned char *dst
- ,const unsigned char *src
- ,unsigned int len
- ,const unsigned int *frgOff
- ,unsigned int frgCnt
-){
-  struct hmacKeyCtx *k;
-
-  (void)adr;
-  (void)frgOff;
-  (void)frgCnt;
-  k = (struct hmacKeyCtx *)ctx;
-  rmd128hmac(k->key, k->keyLen, src, len, dst);
-}
-
-static int
-dtgHmacVrfyCb(
-  void *ctx
- ,const unsigned char *adr
- ,const unsigned char *mac
- ,const unsigned char *src
- ,unsigned int len
- ,const unsigned int *frgOff
- ,unsigned int frgCnt
-){
-  struct hmacKeyCtx *k;
-  unsigned char computed[RMD128_SZ];
-  unsigned char diff;
-  unsigned int i;
-
-  (void)adr;
-  (void)frgOff;
-  (void)frgCnt;
-  k = (struct hmacKeyCtx *)ctx;
-  rmd128hmac(k->key, k->keyLen, src, len, computed);
-  diff = 0;
-  for (i = 0; i < RMD128_SZ; ++i)
-    diff |= mac[i] ^ computed[i];
-  return (diff == 0);
-}
-
-/*
- * Datagram-level GATE callbacks for chanBlbChnRsec.  A deliberately tiny
- * 1-byte keyed hash (dtgHashSize = 1): a cheap first-line DoS gate checked
- * once per datagram, before the heavier per-datagram/per-fragment HMAC work
- * runs, so floods lacking the shared key are dropped at one byte of
- * overhead and a single pass.  NOT a strong MAC -- just enough to shed
- * unkeyed noise; the HMAC tiers provide the real authentication.
- */
-static unsigned char
-gateHash(
-  const unsigned char *key
- ,unsigned int keyLen
- ,const unsigned char *src
- ,unsigned int len
-){
-  unsigned char h;
-  unsigned int kl;
-  unsigned int i;
-
-  kl = keyLen ? keyLen : 1;
-  h = (unsigned char)kl;
-  for (i = 0; i < len; ++i)
-    h = (unsigned char)((h + src[i]) * 31 + key[i % kl]);
-  return (h);
-}
-
-static void
-hashSignCb(
-  void *ctx
- ,const unsigned char *adr
- ,unsigned char *dst
- ,const unsigned char *src
- ,unsigned int len
-){
-  struct hmacKeyCtx *k;
-
-  (void)adr;
-  k = (struct hmacKeyCtx *)ctx;
-  *dst = gateHash(k->key, k->keyLen, src, len);
-}
-
-static int
-hashVrfyCb(
-  void *ctx
- ,const unsigned char *adr
- ,const unsigned char *mac
- ,const unsigned char *src
- ,unsigned int len
-){
-  struct hmacKeyCtx *k;
-
-  (void)adr;
-  k = (struct hmacKeyCtx *)ctx;
-  return (*mac == gateHash(k->key, k->keyLen, src, len));
+  return (!diff);
 }
 #endif
+
+/*
+ * The egress's close, when its thread has ended: everything put on the
+ * egress channel has been sent, so the ingress channel is shut, the
+ * display thread ends, and main's join of it returns.
+ */
+static void
+outClose(
+  void *v
+){
+  chanBlbTrnFdDatagramOutputClose(v);
+  chanShut(InChan);
+}
 
 /* display thread: read from ingress channel, print [source]: message */
 static void *
@@ -241,6 +150,12 @@ displayT(
      && !getnameinfo((struct sockaddr *)(m->b + 1), al
          ,host, sizeof (host), serv, sizeof (serv)
          ,NI_NUMERICHOST | NI_NUMERICSERV)) {
+#ifdef RSEC
+      /* a loss notification: rm 0, um the fragments the lost one had */
+      if (ml == 0 && !m->b[1 + al + TagSize] && m->b[1 + al + TagSize + 1])
+        printf("[%s:%s]: (a message lost)\n", host, serv);
+      else
+#endif
       if (ml == 0)
         printf("[%s:%s]: left\n", host, serv);
       else
@@ -267,10 +182,11 @@ usage(
    "  Broadcast chat using unbound datagram sockets\n"
 #ifdef RSEC
    "  -m  parity shards (default 1)\n"
-   "  -f  max datagram payload size (default 548, IPv4/UDP fragment-free)\n"
+   "  -f  max datagram payload size (default 508, IPv4/UDP fragment-free)\n"
    "  -d  inter-shard delay (microseconds, default 100)\n"
-   "  -t  ingress table size (default 64)\n"
-   "  -k  HMAC shared key (enables rmd128 authentication)\n"
+   "  -t  table size, each direction (default 64)\n"
+   "  -k  shared key: an rmd128 HMAC on every datagram, a datagram\n"
+   "      without it dropped\n"
 #endif
   ,ProgName
   );
@@ -307,7 +223,8 @@ main(
     break;
 #ifdef RSEC
   case 'm':
-    ParityShards = (unsigned int)atoi(optarg);
+    if ((ParityShards = atoi(optarg)) > 255)
+      return (usage());
     break;
   case 'f':
     DgramMax = (unsigned int)atoi(optarg);
@@ -328,6 +245,17 @@ main(
   }
 
   argc -= optind;
+#ifdef RSEC
+  {
+    unsigned long r;
+
+    r = (unsigned long)time(0) * 2654435761UL ^ getpid();
+    Sender[0] = r >> 24 & 0xff;
+    Sender[1] = r >> 16 & 0xff;
+    Sender[2] = r >> 8 & 0xff;
+    Sender[3] = r & 0xff;
+  }
+#endif
   argv += optind;
 
   if (!lport || argc < 1)
@@ -445,42 +373,15 @@ main(
     if (HmacKey) {
       hmacKeyCtx.key = (const unsigned char *)HmacKey;
       hmacKeyCtx.keyLen = strlen(HmacKey);
-      /*
-       * This example wires up ALL THREE keyed tiers at once to exercise
-       * them; a real deployment keeps the GATE plus only ONE of the two
-       * AUTH tiers:
-       *   - datagram GATE (dtgHash): a tiny 1-byte keyed hash checked once
-       *     per datagram before any heavier work -- a cheap first-line DoS
-       *     filter that sheds unkeyed floods.  Keep it.
-       *   - fragment AUTH (frgHmac): a strong MAC per fragment.  A forged
-       *     or corrupt fragment is dropped individually while its datagram
-       *     siblings survive (fine-grained), at one MAC per fragment.
-       *   - datagram AUTH (dtgHmac): one strong MAC per datagram over every
-       *     packed fragment.  Cheaper on the wire (one MAC, not one per
-       *     packed fragment) but coarse (a bad MAC drops the whole
-       *     datagram).  Its verify is handed the packed-fragment offsets,
-       *     so a quorum protocol could enforce sender uniformity; with it,
-       *     fragment AUTH can be dropped entirely (set frgHmacSize = 0).
-       * One key is reused across all three here only for brevity; each
-       * tier may use independent keys and contexts.
-       */
-      egrCtx.dtgHashSize = igrCtx.dtgHashSize = 1;
+      egrCtx.dtgHashSize = igrCtx.dtgHashSize = RMD128_SZ;
       egrCtx.dtgHashCtx = igrCtx.dtgHashCtx = &hmacKeyCtx;
-      egrCtx.dtgHashSign = hashSignCb;
-      igrCtx.dtgHashVrfy = hashVrfyCb;
-      egrCtx.frgHmacSize = igrCtx.frgHmacSize = RMD128_SZ;
-      egrCtx.frgHmacCtx = igrCtx.frgHmacCtx = &hmacKeyCtx;
-      egrCtx.frgHmacSign = hmacSignCb;
-      igrCtx.frgHmacVrfy = hmacVrfyCb;
-      egrCtx.dtgHmacSize = igrCtx.dtgHmacSize = RMD128_SZ;
-      egrCtx.dtgHmacCtx = igrCtx.dtgHmacCtx = &hmacKeyCtx;
-      egrCtx.dtgHmacSign = dtgHmacSignCb;
-      igrCtx.dtgHmacVrfy = dtgHmacVrfyCb;
+      egrCtx.dtgHashSign = gateSignCb;
+      igrCtx.dtgHashVrfy = gateVrfyCb;
     }
-    /* opaque[] is zero (file-scope statics) -- framer threads init/fini */
+    /* opaque is zero (file-scope statics) -- framer threads init/fini */
     /* start chanBlb with RSEC framing for both directions */
     if (!chanBlb(realloc, free
-        ,OutChan, oc, chanBlbTrnFdDatagramOutput, chanBlbTrnFdDatagramOutputClose, &egrCtx, chanBlbChnRsecEgr
+        ,OutChan, oc, chanBlbTrnFdDatagramOutput, outClose, &egrCtx, chanBlbChnRsecEgr
         ,InChan, ic, chanBlbTrnFdDatagramInput, chanBlbTrnFdDatagramInputClose, &igrCtx, chanBlbChnRsecIgr, 0
         ,ctx, chanBlbTrnFdDatagramFinalClose
         ,0)) {
@@ -491,7 +392,7 @@ main(
 #else
   /* start chanBlb for both directions */
   if (!chanBlb(realloc, free
-      ,OutChan, oc, chanBlbTrnFdDatagramOutput, chanBlbTrnFdDatagramOutputClose, 0, 0
+      ,OutChan, oc, chanBlbTrnFdDatagramOutput, outClose, 0, 0
       ,InChan, ic, chanBlbTrnFdDatagramInput, chanBlbTrnFdDatagramInputClose, 0, 0, 0
       ,ctx, chanBlbTrnFdDatagramFinalClose
       ,0)) {
@@ -540,8 +441,9 @@ main(
         m->b[0] = (unsigned char)al;
         memcpy(m->b + 1, &Peers[i].addr, al);
         off = 1 + al;
-        m->b[off] = (unsigned char)(TagCounter & 0xff);
-        m->b[off + 1] = (unsigned char)((TagCounter >> 8) & 0xff);
+        memcpy(m->b + off, Sender, sizeof (Sender));
+        m->b[off + 4] = TagCounter & 0xff;
+        m->b[off + 5] = TagCounter >> 8 & 0xff;
         off += TagSize;
         m->b[off] = (unsigned char)ParityShards;
         m->b[off + 1] = (unsigned char)((DelayUs >> 24) & 0xff);
@@ -591,8 +493,9 @@ main(
       m->b[0] = (unsigned char)al;
       memcpy(m->b + 1, &Peers[i].addr, al);
       off = 1 + al;
-      m->b[off] = (unsigned char)(TagCounter & 0xff);
-      m->b[off + 1] = (unsigned char)((TagCounter >> 8) & 0xff);
+      memcpy(m->b + off, Sender, sizeof (Sender));
+      m->b[off + 4] = TagCounter & 0xff;
+      m->b[off + 5] = TagCounter >> 8 & 0xff;
       off += TagSize;
       m->b[off] = (unsigned char)ParityShards;
       m->b[off + 1] = (unsigned char)((DelayUs >> 24) & 0xff);
@@ -615,7 +518,6 @@ main(
   }
 
   chanShut(OutChan);
-  chanShut(InChan);
   pthread_join(dt, 0);
   chanClose(OutChan);
   chanClose(InChan);
