@@ -365,16 +365,18 @@ main(
   {
     static struct chanBlbChnRsecEgrCtx egrCtx;
     static struct chanBlbChnRsecIgrCtx igrCtx;
-    static struct hmacKeyCtx hmacKeyCtx;
+    static struct hmacKeyCtx egrKeyCtx; /* one per direction: no callback */
+    static struct hmacKeyCtx igrKeyCtx; /* context crosses threads */
 
     egrCtx.tagSize = igrCtx.tagSize = TagSize;
     egrCtx.dgramMax = igrCtx.dgramMax = DgramMax;
     egrCtx.tableSize = igrCtx.tableSize = TableSize;
     if (HmacKey) {
-      hmacKeyCtx.key = (const unsigned char *)HmacKey;
-      hmacKeyCtx.keyLen = strlen(HmacKey);
+      egrKeyCtx.key = igrKeyCtx.key = (const unsigned char *)HmacKey;
+      egrKeyCtx.keyLen = igrKeyCtx.keyLen = strlen(HmacKey);
       egrCtx.dtgHashSize = igrCtx.dtgHashSize = RMD128_SZ;
-      egrCtx.dtgHashCtx = igrCtx.dtgHashCtx = &hmacKeyCtx;
+      egrCtx.dtgHashCtx = &egrKeyCtx;
+      igrCtx.dtgHashCtx = &igrKeyCtx;
       egrCtx.dtgHashSign = gateSignCb;
       igrCtx.dtgHashVrfy = gateVrfyCb;
     }

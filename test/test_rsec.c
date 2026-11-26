@@ -307,7 +307,8 @@ struct rsecPair {
   unsigned int tagOwner;   /* ingress only */
   /* datagram GATE (dtgHash) */
   unsigned int dtgHashSize;
-  void *dtgHashCtx;
+  void *egrHashCtx; /* each direction its own: no callback */
+  void *igrHashCtx; /* context crosses threads */
   void (*dtgHashSign)(void *, const unsigned char *, unsigned char *, const unsigned char *, unsigned int);
   int  (*dtgHashVrfy)(void *, const unsigned char *, const unsigned char *, const unsigned char *, unsigned int);
   /* counter snapshot -- populated by rsecSnap() */
@@ -360,7 +361,8 @@ setup(
   rsecCtx->igr.msgMax       = rsecCtx->msgMax;
   rsecCtx->igr.tagOwner     = rsecCtx->tagOwner;
   rsecCtx->egr.dtgHashSize  = rsecCtx->igr.dtgHashSize  = rsecCtx->dtgHashSize;
-  rsecCtx->egr.dtgHashCtx   = rsecCtx->igr.dtgHashCtx   = rsecCtx->dtgHashCtx;
+  rsecCtx->egr.dtgHashCtx   = rsecCtx->egrHashCtx;
+  rsecCtx->igr.dtgHashCtx   = rsecCtx->igrHashCtx;
   rsecCtx->egr.dtgHashSign  = rsecCtx->dtgHashSign;
   rsecCtx->igr.dtgHashVrfy  = rsecCtx->dtgHashVrfy;
   rsecCtx->egr.opaque       = 0;
@@ -1148,6 +1150,7 @@ testStressMultiShardGate(void)
   struct testEnv env;
   struct rsecPair rsecCtx;
   struct hashKeyCtx hk;
+  struct hashKeyCtx hkI;
   chanBlb_t *m;
   unsigned int i;
   unsigned int ok;
@@ -1168,7 +1171,9 @@ testStressMultiShardGate(void)
   for (i = 0; i < sizeof (hk.key); ++i)
     hk.key[i] = 0x69 ^ i;
   rsecCtx.dtgHashSize = HALFSIPHASH_HSH_SZ;
-  rsecCtx.dtgHashCtx = &hk;
+  hkI = hk;
+  rsecCtx.egrHashCtx = &hk;
+  rsecCtx.igrHashCtx = &hkI;
   rsecCtx.dtgHashSign = hashSignCb;
   rsecCtx.dtgHashVrfy = hashVrfyCb;
 
@@ -1830,6 +1835,7 @@ testGateHmacRsDecode(void)
   struct testEnv env;
   struct rsecPair rsecCtx;
   struct hmacKeyCtx hk;
+  struct hmacKeyCtx hkI;
   chanBlb_t *m;
   unsigned int i;
   unsigned int j;
@@ -1852,7 +1858,9 @@ testGateHmacRsDecode(void)
   hk.key = key;
   hk.keyLen = sizeof (key) - 1;
   rsecCtx.dtgHashSize = RMD128_SZ;
-  rsecCtx.dtgHashCtx = &hk;
+  hkI = hk;
+  rsecCtx.egrHashCtx = &hk;
+  rsecCtx.igrHashCtx = &hkI;
   rsecCtx.dtgHashSign = hmacGateSignCb;
   rsecCtx.dtgHashVrfy = hmacGateVrfyCb;
 
@@ -2063,6 +2071,7 @@ testPackOwnerGate(void)
   struct testEnv env;
   struct rsecPair rsecCtx;
   struct hashKeyCtx hk;
+  struct hashKeyCtx hkI;
   chanBlb_t *m;
   unsigned int i;
   unsigned int ok;
@@ -2082,7 +2091,9 @@ testPackOwnerGate(void)
   for (i = 0; i < sizeof (hk.key); ++i)
     hk.key[i] = 0x2d ^ i;
   rsecCtx.dtgHashSize = HALFSIPHASH_HSH_SZ;
-  rsecCtx.dtgHashCtx = &hk;
+  hkI = hk;
+  rsecCtx.egrHashCtx = &hk;
+  rsecCtx.igrHashCtx = &hkI;
   rsecCtx.dtgHashSign = ownerSignCb;
   rsecCtx.dtgHashVrfy = ownerVrfyCb;
 
@@ -2793,6 +2804,7 @@ testIgrHashReject(void)
   struct testEnv env;
   struct rsecPair rsecCtx;
   struct hashKeyCtx hk;
+  struct hashKeyCtx hkI;
   chanBlb_t *m;
   unsigned char tag[2];
   unsigned char shard[3];
@@ -2808,7 +2820,9 @@ testIgrHashReject(void)
   for (i = 0; i < sizeof (hk.key); ++i)
     hk.key[i] = (unsigned char)(0xa5 ^ i);
   rsecCtx.dtgHashSize = HALFSIPHASH_HSH_SZ;
-  rsecCtx.dtgHashCtx  = &hk;
+  hkI = hk;
+  rsecCtx.egrHashCtx = &hk;
+  rsecCtx.igrHashCtx = &hkI;
   rsecCtx.dtgHashSign = hashSignCb;
   rsecCtx.dtgHashVrfy = hashVrfyCb;
 
@@ -2842,6 +2856,7 @@ testHashMatch(void)
   struct testEnv env;
   struct rsecPair rsecCtx;
   struct hashKeyCtx hk;
+  struct hashKeyCtx hkI;
   chanBlb_t *m;
   const char *msg = "datagram GATE enabled";
   unsigned int i;
@@ -2854,7 +2869,9 @@ testHashMatch(void)
   for (i = 0; i < sizeof (hk.key); ++i)
     hk.key[i] = (unsigned char)(0x5a ^ i);
   rsecCtx.dtgHashSize = HALFSIPHASH_HSH_SZ;
-  rsecCtx.dtgHashCtx  = &hk;
+  hkI = hk;
+  rsecCtx.egrHashCtx = &hk;
+  rsecCtx.igrHashCtx = &hkI;
   rsecCtx.dtgHashSign = hashSignCb;
   rsecCtx.dtgHashVrfy = hashVrfyCb;
 
@@ -3638,6 +3655,7 @@ testConfigRefused(void)
   struct testEnv env;
   struct rsecPair rsecCtx;
   struct hashKeyCtx hk;
+  struct hashKeyCtx hkI;
 
   printf("=== Test: a configuration the framer cannot run shuts its channel ===\n");
   memset(&hk, 0, sizeof (hk));
@@ -3668,7 +3686,9 @@ testConfigRefused(void)
   rsecCtx.tableSize = 8;
 
   rsecCtx.dtgHashSize = HALFSIPHASH_HSH_SZ;
-  rsecCtx.dtgHashCtx = &hk;
+  hkI = hk;
+  rsecCtx.egrHashCtx = &hk;
+  rsecCtx.igrHashCtx = &hkI;
   rsecCtx.dtgHashVrfy = hashVrfyCb;
   if (!setup(&env, &rsecCtx)) { check("setup", 0); return; }
   check("a gate without its sign: egress shut", shutWithin(env.outChan));
